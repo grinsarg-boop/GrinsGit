@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Read(//Users/franciscoandreudegasperi/**)",
+      "Read(//Users/franciscoandreudegasperi/Library/**)",
+      "Read(//usr/local/**)",
+      "Bash(curl -sI https://nodejs.org/dist/v22.17.0/node-v22.17.0-darwin-arm64.tar.gz)",
+      "Bash(mkdir -p ~/.local)",
+      "Bash(curl -sO https://nodejs.org/dist/v22.17.0/node-v22.17.0-darwin-arm64.tar.gz)",
+      "Bash(tar xzf *)",
+      "Bash(rm node-v22.17.0-darwin-arm64.tar.gz)",
+      "Bash(~/.local/node-v22.17.0-darwin-arm64/bin/node --version)",
+      "Bash(docker info *)"
+    ]
+  }
+}

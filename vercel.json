@@ -1,0 +1,8 @@
+{
+  "crons": [
+    { "path": "/api/sync/meta", "schedule": "0 * * * *" },
+    { "path": "/api/sync/urbano", "schedule": "0,45 * * * *" },
+    { "path": "/api/sync/fixy", "schedule": "0,45 * * * *" },
+    { "path": "/api/sync/shopify-backfill", "schedule": "0 3 * * *" }
+  ]
+}
