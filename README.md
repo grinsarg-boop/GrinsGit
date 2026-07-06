@@ -35,6 +35,10 @@ Poner el **signing secret** que muestra Shopify en `SHOPIFY_WEBHOOK_SECRET` (la 
 rechaza firmas inválidas con 401). El backfill diario de las 03:00 reconcilia lo que
 los webhooks pierdan.
 
+La Admin API usa **client credentials grant** (`SHOPIFY_CLIENT_ID` /
+`SHOPIFY_CLIENT_SECRET` de la app): el token de 24 h se pide, cachea y renueva solo —
+no hay token permanente que configurar.
+
 ## Schedules (n8n o Vercel Cron)
 
 Cada endpoint es un POST (o GET) con header `Authorization: Bearer $CRON_SECRET`:
@@ -74,4 +78,4 @@ Contra un Supabase real: `psql $DATABASE_URL -f supabase/tests/pnl_check.sql`
 2. Doc/response de la API de Fixy → completar `lib/couriers/fixy.ts` (mientras: XLSX).
 3. Completar `courier_status_map` contra el mapa operativo (aparecen en `/sync`).
 4. Cargar `product_costs` reales (por ahora se extrapolan del pack 1, flageados).
-5. Token de Meta + webhook secret de Shopify en el `.env`.
+5. Token de Meta + client id/secret y webhook secret de Shopify en el `.env`.

@@ -1,4 +1,4 @@
-import { SHOPIFY_API_VERSION, upsertShipmentFromFulfillment } from "@/lib/shopify";
+import { SHOPIFY_API_VERSION, shopifyFetch, upsertShipmentFromFulfillment } from "@/lib/shopify";
 import { badCronAuth, logSyncRun, supabaseAdmin } from "@/lib/supabase";
 
 // Reconciliación diaria 03:00: los webhooks se pierden (§5.2).
@@ -17,9 +17,7 @@ export async function POST(req: Request) {
       new URLSearchParams({ status: "any", limit: "250", updated_at_min: since });
 
     while (url) {
-      const res: Response = await fetch(url, {
-        headers: { "X-Shopify-Access-Token": process.env.SHOPIFY_ADMIN_TOKEN! },
-      });
+      const res: Response = await shopifyFetch(url);
       if (!res.ok) throw new Error(`Shopify ${res.status}: ${await res.text()}`);
       const { orders } = await res.json();
 

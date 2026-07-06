@@ -3,6 +3,46 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 export const SHOPIFY_API_VERSION = "2024-10";
 
+// Client credentials grant: el access_token dura 24 h.
+// Cache en memoria del proceso (alcanza: cada corrida de sync pide 1 token como mucho).
+let cachedToken: { token: string; expiresAt: number } | null = null;
+
+export async function getShopifyToken(force = false): Promise<string> {
+  if (!force && cachedToken && cachedToken.expiresAt - Date.now() > 5 * 60_000) {
+    return cachedToken.token;
+  }
+  const res = await fetch(
+    `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/oauth/access_token`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: process.env.SHOPIFY_CLIENT_ID!,
+        client_secret: process.env.SHOPIFY_CLIENT_SECRET!,
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(`Shopify token ${res.status}: ${await res.text()}`);
+  const { access_token, expires_in } = await res.json();
+  cachedToken = { token: access_token, expiresAt: Date.now() + (expires_in ?? 86400) * 1000 };
+  return access_token;
+}
+
+// Todo llamado a la Admin API pasa por acá: token cacheado, y si da 401
+// (token revocado antes de tiempo) renueva y reintenta una sola vez.
+export async function shopifyFetch(url: string): Promise<Response> {
+  let res = await fetch(url, {
+    headers: { "X-Shopify-Access-Token": await getShopifyToken() },
+  });
+  if (res.status === 401) {
+    res = await fetch(url, {
+      headers: { "X-Shopify-Access-Token": await getShopifyToken(true) },
+    });
+  }
+  return res;
+}
+
 export function verifyShopifyHmac(rawBody: string, hmacHeader: string): boolean {
   const digest = createHmac("sha256", process.env.SHOPIFY_WEBHOOK_SECRET!)
     .update(rawBody, "utf8")
