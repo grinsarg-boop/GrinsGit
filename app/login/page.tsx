@@ -4,8 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
-// Login por código OTP al mail (sin callback de magic link — menos config en Vercel).
-// La whitelist la aplica el middleware: loguearse sin estar en ALLOWED_EMAILS no sirve de nada.
+// Email + contraseña. Sin signup ni reset: los 2 usuarios se crean/resetean a mano
+// en el dashboard de Supabase (Auth → Users). La whitelist la aplica el middleware.
 export default function LoginPage() {
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -13,53 +13,37 @@ export default function LoginPage() {
   );
   const router = useRouter();
   const [email, setEmail] = useState("");
-  const [token, setToken] = useState("");
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function sendCode(e: React.FormEvent) {
+  async function login(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true); setError(null);
-    const { error } = await supabase.auth.signInWithOtp({ email });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     setBusy(false);
-    if (error) setError(error.message);
-    else setSent(true);
-  }
-
-  async function verify(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true); setError(null);
-    const { error } = await supabase.auth.verifyOtp({ email, token, type: "email" });
-    setBusy(false);
-    if (error) setError(error.message);
+    if (error) setError("Mail o contraseña incorrectos");
     else router.push("/");
   }
 
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
-      <form onSubmit={sent ? verify : sendCode} className="w-full max-w-sm space-y-4">
+      <form onSubmit={login} className="w-full max-w-sm space-y-4">
         <h1 className="text-xl font-semibold">BioLabs Finanzas</h1>
-        {!sent ? (
-          <input
-            type="email" required value={email} placeholder="tu@mail.com"
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-md border px-3 py-2 text-sm"
-          />
-        ) : (
-          <>
-            <p className="text-sm text-muted-foreground">Código enviado a {email}</p>
-            <input
-              required value={token} placeholder="123456" inputMode="numeric"
-              onChange={(e) => setToken(e.target.value)}
-              className="w-full rounded-md border px-3 py-2 text-sm"
-            />
-          </>
-        )}
+        <input
+          type="email" required value={email} placeholder="tu@mail.com"
+          autoComplete="email"
+          onChange={(e) => setEmail(e.target.value)}
+          className="w-full rounded-md border px-3 py-2 text-sm"
+        />
+        <input
+          type="password" required value={password} placeholder="contraseña"
+          autoComplete="current-password"
+          onChange={(e) => setPassword(e.target.value)}
+          className="w-full rounded-md border px-3 py-2 text-sm"
+        />
         {error && <p className="text-sm text-destructive">{error}</p>}
-        <Button type="submit" disabled={busy} className="w-full">
-          {sent ? "Entrar" : "Enviar código"}
-        </Button>
+        <Button type="submit" disabled={busy} className="w-full">Entrar</Button>
       </form>
     </main>
   );

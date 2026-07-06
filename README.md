@@ -11,7 +11,9 @@ fórmulas viven en SQL** (`supabase/migrations/002_rpcs.sql`).
    - `supabase/migrations/001_init.sql`
    - `supabase/migrations/002_rpcs.sql`
 
-   En Auth → Providers dejar **Email** habilitado (login por código OTP, sin config extra).
+   En Auth → Providers dejar **Email** habilitado y crear los 2 usuarios a mano en
+   Auth → Users (con contraseña). No hay signup ni "olvidé mi contraseña": altas y
+   resets se hacen desde ese mismo dashboard.
 
 2. **Env vars**: copiar `.env.example` a `.env.local` y completar. Las mismas variables
    van en Vercel (Project → Settings → Environment Variables).
