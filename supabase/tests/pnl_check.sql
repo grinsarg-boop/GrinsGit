@@ -85,6 +85,22 @@ begin
   assert (select cod_amount = 40000 and deposit_amount = 10000 from orders where shopify_id = 1002),
          'R2/§4.3: sena:10000 → deposit 10000, cod 40000';
 
+  ----------------- R9: fallback de flete SIN ningún promedio disponible
+  -- U0 (despacho d−1, fuera del rango del P&L de abajo) llega antes de que exista
+  -- tarifa real alguna → urbano_freight_fallback = 10200 como COSTO FINAL, sin ×1.29
+  -- (el 10200 ya incluye impuestos).
+  perform upsert_order(jsonb_build_object(
+    'id', 1000, 'name', '#1000', 'created_at', d - 2, 'financial_status', 'pending',
+    'tags', '', 'total_price', '40000',
+    'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000","phone":"351-0","name":"Cliente U0"}'::jsonb,
+    'line_items', '[{"title":"Natures","variant_title":null,"quantity":1,"price":"40000"}]'::jsonb));
+  perform upsert_shipment_events(jsonb_build_array(
+    jsonb_build_object('courier','urbano','tracking','U0','order_ref','1000','status_raw','MA',
+                       'occurred_at',(d-1)::text || 'T08:00:00Z')));
+  assert (select freight_is_estimated and round(freight_cost, 2) = 10200.00
+            from shipments where tracking = 'U0'),
+         'R9: sin promedio rolling → fallback 10200 directo (costo final, no tarifa ×1.29)';
+
   ------------------------------------------------------------------ eventos
   perform upsert_shipment_events(jsonb_build_array(
     -- U1: despacho + entrega con tarifa real

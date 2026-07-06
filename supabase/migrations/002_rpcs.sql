@@ -2,7 +2,8 @@
 -- Reemplaza los stubs de 001 según SPEC §4 (fórmulas LOCKED) y §5.1 (contratos).
 -- Toda la lógica de negocio vive acá; los route handlers solo normalizan y llaman.
 
--- Fallback de tarifa Urbano cuando no hay ni facturación ni promedio rolling (§4.1).
+-- Fallback de flete Urbano cuando no hay ni facturación ni promedio rolling (§4.1).
+-- Es COSTO FINAL (~$10.200 promedio con impuestos incluidos): no se multiplica ×1.29.
 insert into settings (key, value) values ('urbano_freight_fallback', '10200')
 on conflict (key) do nothing;
 
@@ -54,18 +55,22 @@ language sql stable as $$
   limit 1
 $$;
 
--- Tarifa estimada Urbano (§4.1): promedio real por provincia (rolling) → global → fallback.
-create or replace function estimate_urbano_tarifa(p_province text) returns numeric
+-- Flete estimado Urbano (§4.1), como COSTO FINAL: promedio real por provincia (rolling)
+-- ×1.29 → promedio global ×1.29 → fallback tal cual (ya incluye impuestos).
+create or replace function estimate_urbano_freight(p_province text) returns numeric
 language sql stable as $$
-  with w as (select (value::text)::int days from settings where key = 'freight_avg_window_days')
+  with s as (select
+    (select (value::text)::int     from settings where key = 'freight_avg_window_days') as days,
+    (select (value::text)::numeric from settings where key = 'urbano_freight_mult')     as mult)
   select coalesce(
-    (select avg(freight_tarifa) from shipments, w
+    (select avg(freight_tarifa) * s.mult from shipments
       where courier = 'urbano' and freight_tarifa is not null
-        and province = p_province and dispatched_at >= current_date - w.days),
-    (select avg(freight_tarifa) from shipments, w
+        and province = p_province and dispatched_at >= current_date - s.days),
+    (select avg(freight_tarifa) * s.mult from shipments
       where courier = 'urbano' and freight_tarifa is not null
-        and dispatched_at >= current_date - w.days),
+        and dispatched_at >= current_date - s.days),
     (select (value::text)::numeric from settings where key = 'urbano_freight_fallback'))
+  from s
 $$;
 
 -- ============ RPCs (§5.1) ============
@@ -191,7 +196,7 @@ begin
 
   -- Flete estimado por provincia para urbano sin facturar (§4.1)
   update shipments
-     set freight_cost = estimate_urbano_tarifa(province) * v_mult, freight_is_estimated = true
+     set freight_cost = estimate_urbano_freight(province), freight_is_estimated = true
   where courier = 'urbano' and freight_tarifa is null
     and (freight_cost is null or freight_is_estimated);
 
@@ -254,7 +259,6 @@ language plpgsql as $fn$
 declare
   v_comm jsonb   := (select value from settings where key = 'commission_pct');
   v_mp   numeric := (select (value::text)::numeric from settings where key = 'mp_fee_pct');
-  v_mult numeric := (select (value::text)::numeric from settings where key = 'urbano_freight_mult');
   v_fw   numeric := (select (value::text)::numeric from settings where key = 'fixy_cpa_multiplier');
 begin
   -- Pack sin fila en product_costs → extrapolar del pack 1 × unidades, is_estimated (§4.4)
@@ -271,7 +275,7 @@ begin
 
   -- Refrescar flete estimado urbano sin facturar (§4.1)
   update shipments
-     set freight_cost = estimate_urbano_tarifa(province) * v_mult, freight_is_estimated = true
+     set freight_cost = estimate_urbano_freight(province), freight_is_estimated = true
   where courier = 'urbano' and freight_tarifa is null
     and dispatched_at between p_from and p_to;
 
