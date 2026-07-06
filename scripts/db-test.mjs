@@ -27,7 +27,8 @@ try {
   await client.connect();
   await client.query(bootstrap);
   for (const f of ['supabase/migrations/001_init.sql', 'supabase/migrations/002_rpcs.sql',
-                   'supabase/tests/pnl_check.sql']) {
+                   'supabase/migrations/003_matching_shopify_id.sql',
+                   'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');
