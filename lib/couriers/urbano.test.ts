@@ -28,7 +28,9 @@ describe("parseUrbanoResponse", () => {
     const [desp, estado] = ev;
     expect(desp.status_raw).toBe(CICLO_STATUS);
     expect(desp.occurred_at).toBe("2026-05-01T12:00:00Z"); // ciclo
-    expect(estado.status_raw).toBe("RC - Conformes y devoluciones rendidos al remitente");
+    expect(estado.status_raw).toBe("RC"); // código extraído, no la descripción del WS
+    expect((estado.raw as { estado_desc: string }).estado_desc)
+      .toBe("RC - Conformes y devoluciones rendidos al remitente");
     expect(estado.occurred_at).toBe("2026-05-06T12:00:00Z"); // fechaEstado
 
     // Opción A: tracking = id Shopify; gui_numero real en raw
@@ -40,9 +42,9 @@ describe("parseUrbanoResponse", () => {
     }
   });
 
-  it('normaliza estado con desc vacía ("DL - " → "DL -")', () => {
+  it('extrae el código con desc vacía ("DL - " → "DL")', () => {
     const ev = parseUrbanoResponse(page(trDL), "6870864625904");
-    expect(ev.map((e) => e.status_raw)).toEqual([CICLO_STATUS, "DL -"]);
+    expect(ev.map((e) => e.status_raw)).toEqual([CICLO_STATUS, "DL"]);
   });
 
   it("guía inexistente (sin filas) → []", () => {

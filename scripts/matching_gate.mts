@@ -6,9 +6,9 @@ import * as XLSX from "xlsx";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseUrbanoResponse } from "../lib/couriers/urbano.ts";
-import { parseFixyXlsx } from "../lib/couriers/fixy.ts";
-import { getShopifyToken, SHOPIFY_API_VERSION } from "../lib/shopify.ts";
+import { parseUrbanoResponse } from "../lib/couriers/urbano";
+import { parseFixyXlsx } from "../lib/couriers/fixy";
+import { getShopifyToken, SHOPIFY_API_VERSION } from "../lib/shopify";
 
 const FACT = "datos/facturacion_urbano_may-jun.xlsx";
 const FIXY = "datos/fixy_guias_may-jul.xlsx";
@@ -63,7 +63,7 @@ try {
   await pg.initialise(); await pg.start(); await pg.createDatabase("app");
   const db = pg.getPgClient("app"); await db.connect();
   await db.query(bootstrap);
-  for (const f of ["001_init", "002_rpcs", "003_matching_shopify_id", "004_fixy_status_map"])
+  for (const f of ["001_init", "002_rpcs", "003_matching_shopify_id", "004_fixy_status_map", "005_urbano_status_map"])
     await db.query(readFileSync(`supabase/migrations/${f}.sql`, "utf8"));
 
   const token = await getShopifyToken();

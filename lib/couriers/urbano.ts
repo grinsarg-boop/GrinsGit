@@ -34,14 +34,18 @@ export function parseUrbanoResponse(html: string, cliCodigo: string): CourierEve
     let o: Record<string, string>;
     try { o = JSON.parse(decodeEntities(m[1])); } catch { continue; }
     gui = o.gui_numero || gui;
-    const raw = { gui_numero: o.gui_numero, servicio: o.servicio, producto: o.proCodigo, linea: o.linea };
 
-    // Estado actual del paso. Normalizado: colapsa espacios y trim ("DL - " y "DL -" → un solo raw).
-    const status = (o.estado ?? "").replace(/\s+/g, " ").trim();
+    // status_raw = CÓDIGO del estado (ej. "DL", "RC", "RM"): la descripción del WS varía y no
+    // coincide con la del mapa operativo, pero el código sí. map_status lo resuelve por exact
+    // (seed 005), prioritario sobre keyword. La descripción cruda se guarda en raw.
+    const full = (o.estado ?? "").replace(/\s+/g, " ").trim();
+    const code = /^([A-Za-z0-9]+)\s*-/.exec(full)?.[1]?.toUpperCase() ?? full;
+    const raw = { gui_numero: o.gui_numero, servicio: o.servicio, producto: o.proCodigo,
+      linea: o.linea, estado_desc: full };
     const at = parseUrbanoDate(o.fechaEstado ?? "");
-    if (status && at) {
+    if (full && at) {
       events.push({ courier: "urbano", tracking: cliCodigo, order_ref: cliCodigo,
-        status_raw: status, occurred_at: at, raw });
+        status_raw: code, occurred_at: at, raw });
     }
     if (!ciclo && o.ciclo) ciclo = parseUrbanoDate(o.ciclo);
   }

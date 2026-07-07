@@ -25,27 +25,42 @@ begin
 
   ---------------------------------------- Urbano: eventos como los emite urbano.ts (Opción A)
   -- tracking = shopify_id, order_ref = shopify_id, gui_numero en raw, 2 eventos: ciclo + estado.
+  -- urbano.ts emite status_raw = CÓDIGO (RC, DL…); el evento de despacho usa CICLO_STATUS.
   perform upsert_shipment_events(jsonb_build_array(
     jsonb_build_object('courier','urbano','tracking','6854687555824','order_ref','6854687555824',
       'status_raw','CICLO - Despacho','occurred_at', d::text || 'T09:00:00Z',
       'raw', jsonb_build_object('gui_numero','231541972')),
     jsonb_build_object('courier','urbano','tracking','6854687555824','order_ref','6854687555824',
-      'status_raw','RC - Conformes y devoluciones rendidos al remitente',
-      'occurred_at',(d+18)::text || 'T14:00:00Z',
+      'status_raw','RC','occurred_at',(d+18)::text || 'T14:00:00Z',
       'raw', jsonb_build_object('gui_numero','231541972'))));
 
   select * into v_ship from shipments where courier='urbano' and tracking='6854687555824';
   assert v_ship.order_id is not null, '003: Urbano linkea por shopify_id (order_ref 13 díg = shopify_id)';
   assert v_ship.order_id = (select id from orders where shopify_id=6854687555824), '003: linkeó al pedido correcto';
-  -- "RC - Conformes y devoluciones rendidos al remitente": keyword DEVOLUCION (más largo) gana
-  -- sobre REMITENTE → en_devolucion. Resuelto y P&L-equivalente a devuelto; el dueño afina el
-  -- exact 'RC - ...' → devuelto en /config si quiere distinguir terminal.
-  assert v_ship.status_canonical = 'en_devolucion', '003: RC...remitente → en_devolucion';
+  assert v_ship.status_canonical = 'devuelto', '005: código RC → devuelto (exact, prioritario sobre keyword)';
   assert v_ship.dispatched_at = d, '003: dispatched_at = ciclo (no la fecha del último estado)';
   assert v_ship.province = 'Córdoba', '003: provincia heredada del pedido';
   assert v_ship.raw->>'gui_numero' = '231541972', '003: gui_numero real guardado en raw';
   assert not exists (select 1 from v_estados_sin_mapear
     where courier='urbano' and status_raw='CICLO - Despacho'), '003: el evento sintético NO ensucia sin_mapear';
+
+  -- 005: DL (código de "entrega efectiva") → entregado. El dato más material de la reconciliación.
+  -- Flujo real del backfill: Shopify primero (upsert_order), después el WS (upsert_shipment_events).
+  perform upsert_order(jsonb_build_object(
+    'id', 6867776209136, 'name', '#5004', 'created_at', d - 1, 'financial_status', 'pending',
+    'tags', '', 'total_price', '49990',
+    'shipping_address', '{"province":"Córdoba","city":"Río Cuarto","zip":"5800","phone":"351-4","name":"Cliente DL"}'::jsonb,
+    'line_items', '[{"title":"Natures","variant_title":null,"quantity":1,"price":"49990"}]'::jsonb));
+  perform upsert_shipment_events(jsonb_build_array(
+    jsonb_build_object('courier','urbano','tracking','6867776209136','order_ref','6867776209136',
+      'status_raw','CICLO - Despacho','occurred_at', d::text || 'T09:00:00Z', 'raw', '{}'::jsonb),
+    jsonb_build_object('courier','urbano','tracking','6867776209136','order_ref','6867776209136',
+      'status_raw','DL','occurred_at',(d+5)::text || 'T14:00:00Z', 'raw', '{}'::jsonb)));
+  select * into v_ship from shipments where courier='urbano' and tracking='6867776209136';
+  assert v_ship.status_canonical = 'entregado', '005: DL → entregado';
+  assert v_ship.resolved_at is not null, '005: DL (entregado) es terminal → resolved_at';
+  assert v_ship.order_id = (select id from orders where shopify_id=6867776209136),
+         '003: link por shopify_id en upsert_shipment_events (flujo backfill: pedido primero)';
 
   ------------------------------------------------- Regresión + 004: Fixy por order_number, códigos reales
   -- POD-ENTREGADA → entregado; motivo en raw; order_ref = Remito = order_number.
