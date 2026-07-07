@@ -4,7 +4,8 @@
 -- Rama del flujo (grp/tipo del mapa) → canónico:
 --   ingreso/transito/distribucion (sano) → en_transito · salida a ruta/entrega informada → en_reparto
 --   exito → entregado · incidencia/quiebre → incidencia · guarda → en_sucursal
---   rescate/devolución → en_devolucion · RC (terminal-devolución) → devuelto
+--   rescate → incidencia (desenlace desconocido, NO resuelto — el prior lo estima)
+--   devolución → en_devolucion · RC (terminal-devolución) → devuelto
 
 insert into courier_status_map (courier, status_raw, status_canonical, match_type) values
   ('urbano', 'PI', 'en_transito',   'exact'),  -- Pedido de ingreso
@@ -24,9 +25,9 @@ insert into courier_status_map (courier, status_raw, status_canonical, match_typ
   ('urbano', 'NT', 'incidencia',    'exact'),  -- No tramitado
   ('urbano', 'ST', 'incidencia',    'exact'),  -- Sin tramitar
   ('urbano', 'SP', 'en_sucursal',   'exact'),  -- Servicio pendiente (guarda)
-  ('urbano', 'SR', 'en_devolucion', 'exact'),  -- Solicitud de rescate
-  ('urbano', 'RP', 'en_devolucion', 'exact'),  -- Rescate pendiente
-  ('urbano', 'RR', 'en_devolucion', 'exact'),  -- Rescate realizado
+  ('urbano', 'SR', 'incidencia',    'exact'),  -- Solicitud de rescate (desenlace desconocido)
+  ('urbano', 'RP', 'incidencia',    'exact'),  -- Rescate pendiente
+  ('urbano', 'RR', 'incidencia',    'exact'),  -- Rescate realizado
   ('urbano', 'DV', 'en_devolucion', 'exact'),  -- Devolución
   ('urbano', 'RM', 'en_devolucion', 'exact'),  -- Rendición a matriz (aún en central Urbano)
   ('urbano', 'RC', 'devuelto',      'exact')   -- Rendición a cliente (devuelto terminal)
