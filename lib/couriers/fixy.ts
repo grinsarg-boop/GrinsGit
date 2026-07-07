@@ -25,7 +25,7 @@ export function parseFixyXlsx(buf: Buffer): CourierEvent[] {
   const col = (...kws: string[]) =>
     keys.find((k) => kws.some((kw) => k.toLowerCase().includes(kw)));
   const cTracking = col("tracking", "guia", "guía", "envio", "envío", "seguimiento");
-  const cRef = col("referencia", "pedido", "orden", "order");
+  const cRef = col("remito", "referencia", "pedido", "orden", "order"); // Remito = order_number Shopify
   const cEstado = col("estado", "status");
   const cMotivo = col("motivo");
   const cFecha = col("fecha");
@@ -38,17 +38,19 @@ export function parseFixyXlsx(buf: Buffer): CourierEvent[] {
 
   return rows.flatMap((r) => {
     const tracking = String(r[cTracking] ?? "").trim();
-    const estado = String(r[cEstado] ?? "").trim();
+    // estado = código canónico Fixy (POD-ENTREGADA, CSYDV-…): mapeado por seed 004.
+    const estado = String(r[cEstado] ?? "").replace(/\s+/g, " ").trim();
     if (!tracking || !estado) return [];
-    const motivo = cMotivo ? String(r[cMotivo] ?? "").trim() : "";
+    // Motivo NO va en status_raw (rompería el mapeo por código); se preserva en raw (granularidad).
+    const motivo = cMotivo ? String(r[cMotivo] ?? "").replace(/\s+/g, " ").trim() : "";
     return [{
       courier: "fixy" as const,
       tracking,
       order_ref: cRef ? String(r[cRef] ?? "").trim() || undefined : undefined,
-      status_raw: motivo ? `${estado} - ${motivo}` : estado,
+      status_raw: estado,
       occurred_at: toIso(cFecha ? r[cFecha] : undefined),
       importe: cImporte ? num(r[cImporte]) : undefined,
-      raw: cCod ? { contrareembolso: num(r[cCod]) } : undefined,
+      raw: { motivo: motivo || undefined, contrareembolso: cCod ? num(r[cCod]) : undefined },
     }];
   });
 }

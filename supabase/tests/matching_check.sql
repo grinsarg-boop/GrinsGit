@@ -47,17 +47,43 @@ begin
   assert not exists (select 1 from v_estados_sin_mapear
     where courier='urbano' and status_raw='CICLO - Despacho'), '003: el evento sintético NO ensucia sin_mapear';
 
-  ------------------------------------------------- Regresión: Fixy sigue por order_number
+  ------------------------------------------------- Regresión + 004: Fixy por order_number, códigos reales
+  -- POD-ENTREGADA → entregado; motivo en raw; order_ref = Remito = order_number.
   perform upsert_shipment_events(jsonb_build_array(
     jsonb_build_object('courier','fixy','tracking','FX5002','order_ref','5002',
-      'status_raw','Entregado','occurred_at',(d+2)::text || 'T14:00:00Z','importe',5000)));
+      'status_raw','POD-ENTREGADA','occurred_at',(d+2)::text || 'T14:00:00Z','importe',7420,
+      'raw', jsonb_build_object('motivo', null::text))));
   select * into v_ship from shipments where courier='fixy' and tracking='FX5002';
   assert v_ship.order_id = (select id from orders where shopify_id=6870864625904),
          'regresión: Fixy linkea por order_number (#NNNN) igual que en 002';
-  assert v_ship.status_canonical = 'entregado', 'regresión: Fixy estado OK';
+  assert v_ship.status_canonical = 'entregado', '004: POD-ENTREGADA → entregado';
+  assert (select order_ref from shipments where tracking='FX5002') = '5002',
+         'guard: order_ref corto de Fixy NO dispara la rama shopify_id (≥10 díg)';
 
-  -- El order_ref corto de Fixy NO dispara la rama shopify_id (guard ≥10 díg)
-  assert (select order_ref from shipments where tracking='FX5002') = '5002', 'ok';
+  ------------------- 004 + alerta flete: CSYDV (devuelto) cobra flete → suma al flete confirmado
+  perform upsert_order(jsonb_build_object(
+    'id', 6870864625905, 'name', '#5003', 'created_at', d - 1, 'financial_status', 'pending',
+    'tags', '', 'total_price', '49990',
+    'shipping_address', '{"province":"Ciudad Autónoma de Buenos Aires","city":"CABA","zip":"1407","phone":"11-8","name":"Cliente FIX2"}'::jsonb,
+    'line_items', '[{"title":"Natures","variant_title":null,"quantity":1,"price":"49990"}]'::jsonb));
+  perform upsert_shipment_events(jsonb_build_array(
+    jsonb_build_object('courier','fixy','tracking','FX5003','order_ref','5003',
+      'status_raw','CSYDV-COBRO DE SERVICIO Y DEVOLUCION DE MERCADERIA A LA EMPRESA',
+      'occurred_at',(d+3)::text || 'T14:00:00Z','importe',5198,
+      'raw', jsonb_build_object('motivo','PLAZO DE REPROGRAMACION VENCIDO'))));
+  select * into v_ship from shipments where courier='fixy' and tracking='FX5003';
+  assert v_ship.status_canonical = 'devuelto', '004: CSYDV → devuelto';
+  assert v_ship.freight_cost = 5198, '004: Fixy importe = flete tal cual, también en devueltas';
+  assert v_ship.raw->>'motivo' = 'PLAZO DE REPROGRAMACION VENCIDO', 'motivo preservado en raw';
+
+  -- Flete confirmado del cohorte Fixy suma AMBAS (entregada 7420 + devuelta 5198), no solo la entregada.
+  perform recompute_daily_pnl(d, d + 3);
+  assert (select flete from daily_pnl where dispatch_date = d + 2 and courier='fixy'
+            and product_id=(select id from products where name='Natures')) = 7420,
+         'flete: entregada del d+2';
+  assert (select flete from daily_pnl where dispatch_date = d + 3 and courier='fixy'
+            and product_id=(select id from products where name='Natures')) = 5198,
+         'alerta flete: la DEVUELTA (CSYDV) suma su importe al flete confirmado del cohorte';
 
   ---------------------------------------------- Facturación Urbano por shopify_id
   perform import_urbano_freight(jsonb_build_array(
