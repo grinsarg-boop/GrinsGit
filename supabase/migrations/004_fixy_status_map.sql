@@ -13,4 +13,5 @@ insert into courier_status_map (courier, status_raw, status_canonical, match_typ
   ('fixy', 'ANULADO-', 'cancelado',   'keyword'),
   ('fixy', 'REPRO-',   'en_transito', 'keyword'),   -- repactado listo para despacho
   ('fixy', '9WVR-',    'incidencia',  'keyword')    -- falla mecánica
-on conflict (courier, status_raw) do nothing;
+on conflict (courier, status_raw)
+  do update set status_canonical = excluded.status_canonical, match_type = excluded.match_type;
