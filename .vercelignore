@@ -1,0 +1,7 @@
+# Vercel sube todo lo que no esté acá (NO respeta .gitignore). Excluimos lo que no va al runtime:
+datos/            # cache WS (6366 archivos), XLSX, snapshots — data local, no app
+scripts/          # tooling de dev/reconciliación (tsx), no bundle
+supabase/         # migraciones y tests SQL, no se ejecutan desde la app
+.git/
+node_modules/
+.next/
