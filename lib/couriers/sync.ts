@@ -10,20 +10,18 @@ const TERMINALES = ["entregado", "devuelto", "siniestro", "cancelado"];
 // Vercel (Hobby 60s). Cada llamada procesa las `limit` guías MÁS STALE (menor updated_at); como
 // sincronizar bumpea updated_at, la próxima llamada agarra las siguientes → n8n lo llama en loop
 // (ceil(total/limit) veces) hasta refrescar todas. Sin cursor: la staleness auto-avanza.
-const TOTAL_FILTER = (q: any, courier: string, cutoff: string) => q
-  .eq("courier", courier)
-  .not("status_canonical", "in", `(${TERMINALES.join(",")})`)
-  .or(`dispatched_at.gte.${cutoff},dispatched_at.is.null`);
-
 export async function runCourierSync(courier: "urbano" | "fixy", client: CourierClient, limit = 300) {
   const db = supabaseAdmin();
   const started = Date.now();
   try {
     const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
-    const { count: total } = await TOTAL_FILTER(db.from("shipments").select("*", { count: "exact", head: true }), courier, cutoff);
-    const { data, error } = await TOTAL_FILTER(db.from("shipments").select("tracking"), courier, cutoff)
-      .order("updated_at", { ascending: true, nullsFirst: true })
-      .limit(limit);
+    const notTerminal = `(${TERMINALES.join(",")})`;
+    const orDate = `dispatched_at.gte.${cutoff},dispatched_at.is.null`;
+    const { count: total } = await db.from("shipments").select("*", { count: "exact", head: true })
+      .eq("courier", courier).not("status_canonical", "in", notTerminal).or(orDate);
+    const { data, error } = await db.from("shipments").select("tracking")
+      .eq("courier", courier).not("status_canonical", "in", notTerminal).or(orDate)
+      .order("updated_at", { ascending: true, nullsFirst: true }).limit(limit);
     if (error) throw new Error(error.message);
     const trackings = (data ?? []).map((s) => s.tracking);
     let rows = 0;
