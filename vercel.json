@@ -1,3 +1,1 @@
-{
-  "$comment": "Crons removidos: el plan Hobby sólo permite crons diarios (1×/día). El scheduling de los syncs (Urbano/Fixy cada 30-60min, Meta 1h) se resuelve en FASE 4 (Pro plan, o trigger externo n8n/cron-job.org contra /api/sync/* con CRON_SECRET — al repo le da igual quién dispara, SPEC §1)."
-}
+{}
