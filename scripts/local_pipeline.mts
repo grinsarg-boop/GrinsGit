@@ -30,6 +30,7 @@ const MIGRATIONS = [
   "supabase/migrations/001_init.sql", "supabase/migrations/002_rpcs.sql",
   "supabase/migrations/003_matching_shopify_id.sql", "supabase/migrations/004_fixy_status_map.sql",
   "supabase/migrations/005_urbano_status_map.sql", "supabase/migrations/006_pack_quantity.sql",
+  "supabase/migrations/007_dashboard_agg.sql", "supabase/migrations/008_fixy_api_status.sql",
 ];
 const BOOTSTRAP = `create role anon nologin; create role authenticated nologin;
   create role service_role nologin; create publication supabase_realtime;`;

@@ -21,11 +21,13 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
     const orDate = `dispatched_at.gte.${cutoff},dispatched_at.is.null`;
     const { count: total } = await db.from("shipments").select("*", { count: "exact", head: true })
       .eq("courier", courier).not("status_canonical", "in", notTerminal).or(orDate);
-    const { data, error } = await db.from("shipments").select("tracking")
+    const { data, error } = await db.from("shipments").select("tracking, order_ref")
       .eq("courier", courier).not("status_canonical", "in", notTerminal).or(orDate)
       .order("updated_at", { ascending: true, nullsFirst: true }).limit(limit);
     if (error) throw new Error(error.message);
-    const trackings = (data ?? []).map((s) => s.tracking);
+    // Urbano se consulta por tracking (= shopify_id, la masiva); Fixy por order_ref (= remito).
+    // Las fixy sin order_ref (otro canal) no se pueden consultar por API → se saltean.
+    const trackings = (data ?? []).map((s) => (courier === "fixy" ? s.order_ref : s.tracking)).filter((x): x is string => !!x);
     let rows = 0;
     const warnings: unknown[] = [];
     for (let i = 0; i < trackings.length; i += 200) {

@@ -1,13 +1,54 @@
 import * as XLSX from "xlsx";
 import type { CourierClient, CourierEvent } from "./types";
 
-// ponytail: completar con doc/response real de Fixy (SPEC §10.1).
-// Mientras tanto la app funciona día 1 con el export XLSX vía /api/import/fixy-xlsx.
+// API de tracking de Fixy (FASE 5, R8): POST /api/v2/seguimiento.json {api_token, remito}.
+// Consulta por REMITO (= order_number Shopify); el response trae guia.fechas[] con el Nro Guia,
+// estado (texto), codigo_estado (numérico) y fecha/hora. NO trae plata (importe/contrareembolso):
+// el flete/COD sigue saliendo del XLSX (/api/import/fixy-xlsx). status_raw = codigo_estado (mapeo
+// exact en 008). Emite SOLO el estado actual (fechas[0]) — más fresco que el XLSX; dispatched_at
+// ya viene del XLSX. Sólo lectura: NUNCA guias.json/solicitarRetiro/generar-recepcion (escritura).
+const API = (process.env.FIXY_API_URL ?? "https://fixy.epresis.com/").replace(/\/$/, "");
+const SEGUIMIENTO = `${API}/api/v2/seguimiento.json`;
+const CONCURRENCY = 5;
+
+type FixyFecha = { guia?: number; estado?: string; codigo_estado?: number; fecha?: string; hora?: string; detalles?: string };
+
+// "dd/mm/yyyy" + "HH:MM" → ISO con offset ART (-03:00).
+function fixyApiDate(fecha?: string, hora?: string): string | null {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((fecha ?? "").trim());
+  if (!m) return null;
+  const t = /^\d{1,2}:\d{2}/.test((hora ?? "").trim()) ? hora!.trim() : "12:00";
+  return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}T${t.padStart(5, "0")}:00-03:00`;
+}
+
+async function fetchRemito(remito: string): Promise<CourierEvent[]> {
+  const res = await fetch(SEGUIMIENTO, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ api_token: process.env.FIXY_API_TOKEN, remito }),
+  });
+  if (!res.ok) return [];
+  const j: { status?: string; guia?: { fechas?: FixyFecha[] } } = await res.json();
+  const f = j?.guia?.fechas?.[0]; // fechas[0] = estado actual (viene desc)
+  const at = fixyApiDate(f?.fecha, f?.hora);
+  if (!f || f.codigo_estado == null || !at) return [];
+  return [{
+    courier: "fixy", tracking: String(f.guia ?? ""), order_ref: remito,
+    status_raw: String(f.codigo_estado), occurred_at: at,
+    raw: { estado: f.estado, detalles: f.detalles, via: "api" },
+  }];
+}
+
+// trackings = REMITOS (order_number) — runCourierSync pasa order_ref para fixy. Tandas de CONCURRENCY.
 export const fixy: CourierClient = {
-  async fetchStatuses() {
-    throw new Error(
-      "Fixy API sin implementar: falta la doc (SPEC §10.1). Usar /api/import/fixy-xlsx",
-    );
+  async fetchStatuses(remitos: string[]): Promise<CourierEvent[]> {
+    const out: CourierEvent[] = [];
+    for (let i = 0; i < remitos.length; i += CONCURRENCY) {
+      const chunk = remitos.slice(i, i + CONCURRENCY);
+      const res = await Promise.all(chunk.map((r) =>
+        fetchRemito(r).catch((e) => { console.error("fixy API", r, String(e)); return [] as CourierEvent[]; })));
+      out.push(...res.flat());
+    }
+    return out;
   },
 };
 

@@ -32,6 +32,7 @@ try {
                    'supabase/migrations/005_urbano_status_map.sql',
                    'supabase/migrations/006_pack_quantity.sql',
                    'supabase/migrations/007_dashboard_agg.sql',
+                   'supabase/migrations/008_fixy_api_status.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
