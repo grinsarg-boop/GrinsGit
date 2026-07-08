@@ -11,6 +11,7 @@ insert into courier_status_map (courier, status_raw, status_canonical, match_typ
   ('fixy', '139', 'devuelto',    'exact'),   -- COBRO DE SERVICIO Y DEVOLUCION (= CSYDV del XLSX)
   ('fixy', '42',  'en_transito', 'exact'),   -- Esperando Programación (= EPR)
   ('fixy', '135', 'en_sucursal', 'exact'),   -- REINGRESO A DEPOSITO (= RAD; rescatable)
+  ('fixy', '52',  'en_transito', 'exact'),   -- Reprogramado por el comprador (sigue viniendo)
   ('fixy', '79',  'siniestro',   'exact')    -- Envío robado (= ROBO)
 on conflict (courier, status_raw)
   do update set status_canonical = excluded.status_canonical, match_type = 'exact';
