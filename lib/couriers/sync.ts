@@ -10,15 +10,22 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
   const started = Date.now();
   try {
     const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
-    const { data: ships, error } = await db
-      .from("shipments")
-      .select("tracking")
-      .eq("courier", courier)
-      .not("status_canonical", "in", `(${TERMINALES.join(",")})`)
-      .or(`dispatched_at.gte.${cutoff},dispatched_at.is.null`);
-    if (error) throw new Error(error.message);
-
-    const trackings = (ships ?? []).map((s) => s.tracking);
+    // Paginado: PostgREST corta en 1000 filas → sin esto, con >1000 guías no-terminales las
+    // restantes NUNCA se sincronizan (urbano ya supera 1000). .order para paginación estable.
+    const trackings: string[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await db
+        .from("shipments")
+        .select("tracking")
+        .eq("courier", courier)
+        .not("status_canonical", "in", `(${TERMINALES.join(",")})`)
+        .or(`dispatched_at.gte.${cutoff},dispatched_at.is.null`)
+        .order("id")
+        .range(from, from + 999);
+      if (error) throw new Error(error.message);
+      trackings.push(...(data ?? []).map((s) => s.tracking));
+      if (!data || data.length < 1000) break;
+    }
     let rows = 0;
     const warnings: unknown[] = [];
     for (let i = 0; i < trackings.length; i += 200) {

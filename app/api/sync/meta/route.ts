@@ -1,6 +1,8 @@
 import { fetchMetaInsights } from "@/lib/meta";
 import { badCronAuth, logSyncRun, supabaseAdmin } from "@/lib/supabase";
 
+export const maxDuration = 60; // Hobby máx 60s
+
 // Spend por ad, últimos 3 días (se reexpresa) — §5.3. Cron cada 1 h.
 export async function POST(req: Request) {
   const unauth = badCronAuth(req);
