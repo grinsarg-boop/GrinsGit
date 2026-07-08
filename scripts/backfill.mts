@@ -22,16 +22,21 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const today = () => new Date().toISOString().slice(0, 10);
 const WS = (id: string) => `https://www.urbano.com.ar/webservice/cespecifica/?shi_codigo=4362&cli_codigo=${id}`;
 
-// rpc con chequeo de error + reintento: un error transitorio de Supabase NO puede perder datos
-// en silencio (fue la causa del fallo de idempotencia: batches perdidos en la pasada larga).
+// rpc con reintento: un error transitorio de Supabase NO puede perder datos en silencio. Un
+// `fetch failed` de red a veces vuelve como {error} y a veces se LANZA (TypeError) → el try/catch
+// captura ambos. 8 reintentos con backoff capado a 10s (un blip de red no puede abortar 12k RPCs).
 async function rpc(fn: string, args: object) {
-  for (let a = 0; a < 5; a++) {
-    const { data, error } = await db.rpc(fn, args);
-    if (!error) return data;
-    console.log(`    ⚠ rpc ${fn} error (intento ${a + 1}): ${error.message.slice(0, 90)}`);
-    await sleep(1000 * 2 ** a);
+  for (let a = 0; a < 8; a++) {
+    try {
+      const { data, error } = await db.rpc(fn, args);
+      if (!error) return data;
+      console.log(`    ⚠ rpc ${fn} error (intento ${a + 1}): ${error.message.slice(0, 90)}`);
+    } catch (e) {
+      console.log(`    ⚠ rpc ${fn} throw (intento ${a + 1}): ${String((e as Error)?.message ?? e).slice(0, 90)}`);
+    }
+    await sleep(Math.min(1000 * 2 ** a, 10000));
   }
-  throw new Error(`rpc ${fn} falló tras 5 intentos`);
+  throw new Error(`rpc ${fn} falló tras 8 intentos`);
 }
 
 async function counts() {

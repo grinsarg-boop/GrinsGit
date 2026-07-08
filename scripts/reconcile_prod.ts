@@ -24,11 +24,23 @@ function printTable(rows: ReturnType<typeof row>[]) {
 }
 const sum = (rows: any[], f: (r: any) => number) => rows.reduce((s, r) => s + Number(f(r) ?? 0), 0);
 
+// PostgREST corta en 1000 filas por default → paginar con .range hasta agotar (ad_spend de mayo
+// son ~2525 filas). Sin esto la suma queda truncada.
+async function fetchAll(build: (q: any) => any): Promise<any[]> {
+  const out: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await build(db).range(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
 const main = async () => {
-  // daily_pnl de mayo (≈235 filas) → agrego en JS
-  const { data: pnl, error } = await db.from("daily_pnl").select("*").gte("dispatch_date", M0).lte("dispatch_date", M1);
-  if (error) throw new Error(`daily_pnl: ${error.message}`);
-  if (!pnl?.length) throw new Error("daily_pnl de mayo VACÍO → ¿corriste el backfill contra prod?");
+  // daily_pnl de mayo (≈235 filas) → agrego en JS (paginado por robustez)
+  const pnl = await fetchAll((q) => q.from("daily_pnl").select("*").gte("dispatch_date", M0).lte("dispatch_date", M1));
+  if (!pnl.length) throw new Error("daily_pnl de mayo VACÍO → ¿corriste el backfill contra prod?");
 
   const byCourier = (c: string) => pnl.filter((r) => r.courier === c);
   const line = (rows: any[]) => ({
@@ -37,7 +49,7 @@ const main = async () => {
     desp: sum(rows, (r) => r.despachadas), ent: sum(rows, (r) => r.entregadas),
   });
   const U = line(byCourier("urbano")), F = line(byCourier("fixy")), T = line(pnl);
-  const adsMayMapped = (await db.from("ad_spend").select("spend").gte("date", M0).lte("date", M1).not("product_id", "is", null)).data ?? [];
+  const adsMayMapped = await fetchAll((q) => q.from("ad_spend").select("spend").gte("date", M0).lte("date", M1).not("product_id", "is", null));
   const pauta = sum(adsMayMapped, (r) => r.spend);
 
   console.log("===== INTEGRIDAD PROD (mayo) =====");
