@@ -5,27 +5,27 @@ const TERMINALES = ["entregado", "devuelto", "siniestro", "cancelado"];
 
 // Corrida de sync de un courier (§5.4): guías no terminales < 60 d, batches ≤ 200.
 // Compartido por /api/sync/urbano y /api/sync/fixy.
-export async function runCourierSync(courier: "urbano" | "fixy", client: CourierClient) {
+//
+// BATCHES POR INVOCACIÓN (FASE 4d): con >1000 guías el sync completo no entra en el timeout de
+// Vercel (Hobby 60s). Cada llamada procesa las `limit` guías MÁS STALE (menor updated_at); como
+// sincronizar bumpea updated_at, la próxima llamada agarra las siguientes → n8n lo llama en loop
+// (ceil(total/limit) veces) hasta refrescar todas. Sin cursor: la staleness auto-avanza.
+const TOTAL_FILTER = (q: any, courier: string, cutoff: string) => q
+  .eq("courier", courier)
+  .not("status_canonical", "in", `(${TERMINALES.join(",")})`)
+  .or(`dispatched_at.gte.${cutoff},dispatched_at.is.null`);
+
+export async function runCourierSync(courier: "urbano" | "fixy", client: CourierClient, limit = 300) {
   const db = supabaseAdmin();
   const started = Date.now();
   try {
     const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
-    // Paginado: PostgREST corta en 1000 filas → sin esto, con >1000 guías no-terminales las
-    // restantes NUNCA se sincronizan (urbano ya supera 1000). .order para paginación estable.
-    const trackings: string[] = [];
-    for (let from = 0; ; from += 1000) {
-      const { data, error } = await db
-        .from("shipments")
-        .select("tracking")
-        .eq("courier", courier)
-        .not("status_canonical", "in", `(${TERMINALES.join(",")})`)
-        .or(`dispatched_at.gte.${cutoff},dispatched_at.is.null`)
-        .order("id")
-        .range(from, from + 999);
-      if (error) throw new Error(error.message);
-      trackings.push(...(data ?? []).map((s) => s.tracking));
-      if (!data || data.length < 1000) break;
-    }
+    const { count: total } = await TOTAL_FILTER(db.from("shipments").select("*", { count: "exact", head: true }), courier, cutoff);
+    const { data, error } = await TOTAL_FILTER(db.from("shipments").select("tracking"), courier, cutoff)
+      .order("updated_at", { ascending: true, nullsFirst: true })
+      .limit(limit);
+    if (error) throw new Error(error.message);
+    const trackings = (data ?? []).map((s) => s.tracking);
     let rows = 0;
     const warnings: unknown[] = [];
     for (let i = 0; i < trackings.length; i += 200) {
@@ -43,7 +43,8 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
     warnings.push(...(await estadosSinMapear(courier)));
     await db.rpc("recompute_daily_pnl", { p_from: cutoff, p_to: today() });
     await logSyncRun(courier, "ok", rows, warnings);
-    return Response.json({ ok: true, trackings: trackings.length, rows, warnings, ms: Date.now() - started });
+    // total/processed → n8n loopea ceil(total/limit) veces para cubrir todas las no-terminales.
+    return Response.json({ ok: true, total: total ?? 0, processed: trackings.length, rows, warnings, ms: Date.now() - started });
   } catch (e) {
     await logSyncRun(courier, "error", 0, [], String(e));
     return Response.json({ ok: false, error: String(e) }, { status: 500 });

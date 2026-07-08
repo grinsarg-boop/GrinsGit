@@ -6,7 +6,8 @@ import { badCronAuth } from "@/lib/supabase";
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
-  return badCronAuth(req) ?? runCourierSync("urbano", urbano);
+  const limit = Number(new URL(req.url).searchParams.get("limit")) || 300;
+  return badCronAuth(req) ?? runCourierSync("urbano", urbano, limit);
 }
 
 // Vercel Cron dispara GET con el mismo Bearer CRON_SECRET

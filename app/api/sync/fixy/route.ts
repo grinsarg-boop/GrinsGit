@@ -6,7 +6,8 @@ export const maxDuration = 60; // margen de volumen (Hobby máx 60s). Nota: fixy
 // implementa en FASE 5 — hasta entonces este sync loguea error (los estados Fixy salen del XLSX).
 
 export async function POST(req: Request) {
-  return badCronAuth(req) ?? runCourierSync("fixy", fixy);
+  const limit = Number(new URL(req.url).searchParams.get("limit")) || 300;
+  return badCronAuth(req) ?? runCourierSync("fixy", fixy, limit);
 }
 
 // Vercel Cron dispara GET con el mismo Bearer CRON_SECRET
