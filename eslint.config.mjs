@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Scripts de dev/reconciliación: se corren con tsx, no van en el bundle. Fuera del lint de la app.
+    "scripts/**",
   ]),
 ]);
 

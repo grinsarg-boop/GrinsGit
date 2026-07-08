@@ -9,26 +9,10 @@ import { cn } from "@/lib/utils";
 
 export const revalidate = 60; // R12
 
-type Row = {
-  dispatch_date: string; courier: string;
-  despachadas: number; entregadas: number; rehusadas: number; en_devolucion: number;
-  devueltas: number; siniestros: number;
-  revenue_confirmado: number; profit_confirmado: number; ads: number;
-};
-
 type Day = {
   date: string; despachadas: number; resueltas: number; entregadas: number;
   revenue: number; profit: number; ads: number;
 };
-
-function addTo(d: Day, r: Row) {
-  d.despachadas += r.despachadas;
-  d.resueltas += r.entregadas + r.rehusadas + r.en_devolucion + r.devueltas + r.siniestros;
-  d.entregadas += r.entregadas;
-  d.revenue += Number(r.revenue_confirmado);
-  d.profit += Number(r.profit_confirmado);
-  d.ads += Number(r.ads);
-}
 
 export default async function Resumen({
   searchParams,
@@ -39,24 +23,21 @@ export default async function Resumen({
   const db = supabaseAdmin();
   const from = daysAgoIso(30);
   const today = daysAgoIso(0);
+  const courierParam = courier === "urbano" || courier === "fixy" ? courier : null;
 
-  let q = db.from("daily_pnl").select("*").gte("dispatch_date", from)
-    .order("dispatch_date", { ascending: false });
-  if (courier === "urbano" || courier === "fixy") q = q.eq("courier", courier);
-  const { data: rows } = await q;
+  // Agregación server-side (007): la RPC devuelve el resumen por día ya sumado (across producto, y
+  // across courier si es null). El P&L por producto llega con /dia/[fecha] en Fase 2.
+  const { data: rows } = await db.rpc("dashboard_days", { p_from: from, p_courier: courierParam });
+  const list: Day[] = (rows ?? []).map((r: {
+    dispatch_date: string; despachadas: number; entregadas: number; resueltas: number;
+    revenue_confirmado: number; profit_confirmado: number; ads: number;
+  }) => ({
+    date: r.dispatch_date, despachadas: r.despachadas, resueltas: r.resueltas, entregadas: r.entregadas,
+    revenue: Number(r.revenue_confirmado), profit: Number(r.profit_confirmado), ads: Number(r.ads),
+  }));
 
   const { data: adsSinCohorte } = await db
     .from("v_ads_sin_cohorte").select("*").eq("date", today);
-
-  // agregada por día (el drill-down por producto llega con /dia/[fecha] en Fase 2)
-  const days = new Map<string, Day>();
-  for (const r of (rows ?? []) as Row[]) {
-    const d = days.get(r.dispatch_date) ??
-      { date: r.dispatch_date, despachadas: 0, resueltas: 0, entregadas: 0, revenue: 0, profit: 0, ads: 0 };
-    addTo(d, r);
-    days.set(r.dispatch_date, d);
-  }
-  const list = [...days.values()];
 
   const period = (daysBack: number) => {
     const cut = daysAgoIso(daysBack);

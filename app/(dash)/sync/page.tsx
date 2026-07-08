@@ -30,7 +30,9 @@ export default async function SyncPage() {
   const db = supabaseAdmin();
   const [{ data: runs }, { data: sinClasificar }] = await Promise.all([
     db.from("sync_runs").select("*").order("started_at", { ascending: false }).limit(50),
-    db.from("v_sin_clasificar").select("*").order("dispatched_at", { ascending: false }),
+    // limit explícito: lista de display (guías fuera del P&L para el operador). Si pasa 1000 es una
+    // alarma de datos, no algo a mostrar entero — el límite evita el truncado silencioso de PostgREST.
+    db.from("v_sin_clasificar").select("*").order("dispatched_at", { ascending: false }).limit(1000),
   ]);
 
   return (
