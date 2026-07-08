@@ -1,0 +1,54 @@
+{
+  "name": "BioLabs — Sync COD",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "cronExpression", "expression": "0,45 8-23 * * *" } ] }
+      },
+      "id": "sched-urbano",
+      "name": "Urbano cada 45min (8-23 ART)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop hasta cubrir todas las guías no-terminales: la masiva Urbano tarda ~0.3s/código,\n// cada invocación procesa 100 (~43s, entra en el timeout de Vercel). ceil(total/100) llamadas.\nconst BASE = $env.VERCEL_URL || 'https://biolabs-finanzas.vercel.app';\nconst hdr = { Authorization: 'Bearer ' + $env.CRON_SECRET };\nlet r = await this.helpers.httpRequest({ method: 'POST', url: BASE + '/api/sync/urbano?limit=100', headers: hdr, json: true });\nconst total = r.total || 0;\nlet done = r.processed || 0;\nconst loops = Math.max(0, Math.ceil(total / 100) - 1);\nfor (let i = 0; i < loops; i++) {\n  r = await this.helpers.httpRequest({ method: 'POST', url: BASE + '/api/sync/urbano?limit=100', headers: hdr, json: true });\n  done += r.processed || 0;\n}\nreturn [{ json: { total, invocaciones: loops + 1, procesadas: done } }];"
+      },
+      "id": "loop-urbano",
+      "name": "Urbano loop ceil(total/100)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "cronExpression", "expression": "0 * * * *" } ] }
+      },
+      "id": "sched-meta",
+      "name": "Meta cada 1h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.VERCEL_URL || 'https://biolabs-finanzas.vercel.app') + '/api/sync/meta' }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Authorization", "value": "=Bearer {{ $env.CRON_SECRET }}" } ] },
+        "options": { "timeout": 60000 }
+      },
+      "id": "http-meta",
+      "name": "Meta sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 220]
+    }
+  ],
+  "connections": {
+    "Urbano cada 45min (8-23 ART)": { "main": [ [ { "node": "Urbano loop ceil(total/100)", "type": "main", "index": 0 } ] ] },
+    "Meta cada 1h": { "main": [ [ { "node": "Meta sync", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
