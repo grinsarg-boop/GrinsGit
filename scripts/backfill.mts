@@ -1,15 +1,17 @@
-// Backfill histórico desde 2026-05-01 contra Supabase real (service role, RPCs).
+// Backfill histórico contra Supabase real (service role, RPCs). Re-run limpio de la tarea 006.
 // Uso: set -a; source .env.local; set +a; npx tsx scripts/backfill.mts
-// Requiere 003/004/005 YA aplicadas en Supabase real (DDL, se aplica a mano en el dashboard).
-// Orden: Shopify → Urbano WS → facturación → Fixy → Meta → recompute. Corre 2 pasadas + reporte PASO 4.
+// Requiere 001–006 YA aplicadas en Supabase real (DDL, se aplica a mano en el SQL Editor).
+// Flujo (validado local): TRUNCATE (confirma 0) → Shopify(desde marzo) → Urbano WS(cache) →
+// facturación → Fixy → Meta → override Ve-CBO→Veinguard → recompute. 2 pasadas + reporte PASO 4.
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { parseUrbanoResponse } from "../lib/couriers/urbano";
 import { parseFixyXlsx } from "../lib/couriers/fixy";
 import { shopifyFetch, SHOPIFY_API_VERSION } from "../lib/shopify";
 
-const FROM = "2026-05-01";
+const FROM = "2026-05-01";                 // Meta / recompute (P&L arranca en mayo)
+const SHOP_FROM = "2026-03-01";            // Shopify: pedidos pre-mayo DESPACHADOS en mayo también entran
 const FACT = "datos/facturacion_urbano_may-jun.xlsx";
 const FIXY = "datos/fixy_guias_may-jul.xlsx";
 const SHOP = process.env.SHOPIFY_SHOP_DOMAIN;
@@ -20,6 +22,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const today = () => new Date().toISOString().slice(0, 10);
 const WS = (id: string) => `https://www.urbano.com.ar/webservice/cespecifica/?shi_codigo=4362&cli_codigo=${id}`;
 
+// rpc con chequeo de error + reintento: un error transitorio de Supabase NO puede perder datos
+// en silencio (fue la causa del fallo de idempotencia: batches perdidos en la pasada larga).
+async function rpc(fn: string, args: object) {
+  for (let a = 0; a < 5; a++) {
+    const { data, error } = await db.rpc(fn, args);
+    if (!error) return data;
+    console.log(`    ⚠ rpc ${fn} error (intento ${a + 1}): ${error.message.slice(0, 90)}`);
+    await sleep(1000 * 2 ** a);
+  }
+  throw new Error(`rpc ${fn} falló tras 5 intentos`);
+}
+
 async function counts() {
   const out: Record<string, number | null> = {};
   for (const t of ["orders", "order_items", "shipments", "shipment_events", "ad_spend", "daily_pnl"]) {
@@ -29,52 +43,106 @@ async function counts() {
   return out;
 }
 
+// ---------- 0. Limpieza de las tablas de datos (re-run limpio). Delete en orden FK por service
+// role (bypassa RLS; PostgREST no permite TRUNCATE). Confirma conteos en 0 ANTES de ingestar. ----------
+async function wipe() {
+  // (tabla, columna para el filtro "todo"). Orden FK: hijas antes que padres.
+  const plan: [string, string, string][] = [
+    ["daily_pnl", "dispatch_date", "1900-01-01"],
+    ["shipment_events", "id", "0"],
+    ["shipments", "id", "0"],
+    ["order_items", "id", "0"],
+    ["orders", "id", "0"],
+    ["ad_spend", "date", "1900-01-01"],
+  ];
+  for (const [t, col, lo] of plan) {
+    const { error } = await db.from(t).delete().gte(col, lo);
+    if (error) throw new Error(`wipe ${t}: ${error.message}`);
+  }
+  const c = await counts();
+  const notZero = Object.entries(c).filter(([, n]) => (n ?? 0) !== 0);
+  console.log("  conteos tras wipe:", c);
+  if (notZero.length) throw new Error(`wipe incompleto, no quedaron en 0: ${notZero.map(([k]) => k).join(", ")}`);
+  console.log("  ✓ todas las tablas en 0 — listo para ingestar");
+}
+
 // ---------- 1. Shopify (read_all_orders): upsert_order. Sin shipments de fulfillment (Opción A). ----------
 async function ingestShopify() {
   let url: string | null =
-    `https://${SHOP}/admin/api/${SHOPIFY_API_VERSION}/orders.json?status=any&created_at_min=${FROM}T00:00:00-03:00&limit=250`;
+    `https://${SHOP}/admin/api/${SHOPIFY_API_VERSION}/orders.json?status=any&created_at_min=${SHOP_FROM}T00:00:00-03:00&limit=250`;
   let n = 0;
   while (url) {
     const res: Response = await shopifyFetch(url);
     if (!res.ok) throw new Error(`Shopify ${res.status}: ${await res.text()}`);
     const { orders } = await res.json();
-    for (const o of orders ?? []) { await db.rpc("upsert_order", { p: o }); n++; }
+    for (const o of orders ?? []) { await rpc("upsert_order", { p: o }); n++; }
     url = /<([^>]+)>;\s*rel="next"/.exec(res.headers.get("link") ?? "")?.[1] ?? null;
   }
   return n;
 }
 
-// ---------- 2. Urbano WS: 1 llamada por shopify_id de pedido urbano, SIN filtro no-terminal/<60d. ----------
+// ---------- 2. Urbano WS: 1 llamada por shopify_id de pedido urbano, SIN filtro no-terminal/<60d.
+// El WS limita a ~5 req/s: SECUENCIAL (concurrencia 1) + backoff en 429. Cachea cada response a
+// disco → la 2ª pasada y los reintentos leen del cache (no re-pega 6352 veces) y es resumible. ----------
+const WS_CACHE = "datos/urbano_ws_cache";
+async function fetchWSCached(id: string): Promise<{ html: string | null; cached: boolean }> {
+  const path = `${WS_CACHE}/${id}.html`;
+  if (existsSync(path)) return { html: readFileSync(path, "utf8"), cached: true };
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const r = await fetch(WS(id));
+      if (r.status === 429) { await sleep(500 * 2 ** attempt); continue; }  // backoff exponencial
+      if (!r.ok) return { html: null, cached: false };
+      const html = await r.text();
+      writeFileSync(path, html);
+      return { html, cached: false };
+    } catch { await sleep(500 * 2 ** attempt); }
+  }
+  return { html: null, cached: false };  // agotó reintentos (rate-limit persistente)
+}
+
 async function ingestUrbanoWS() {
+  mkdirSync(WS_CACHE, { recursive: true });
   const ids: string[] = [];
   for (let p = 0; ; p++) {
     const { data } = await db.from("orders").select("shopify_id").eq("courier", "urbano")
-      .gte("created_at", `${FROM}T00:00:00Z`).range(p * 1000, p * 1000 + 999);
+      .gte("created_at", `${FROM}T00:00:00Z`)
+      .order("shopify_id", { ascending: true }).range(p * 1000, p * 1000 + 999);  // orden estable → cache sirve
     if (!data?.length) break;
     ids.push(...data.map((r) => String(r.shopify_id)));
     if (data.length < 1000) break;
   }
-  let buf: unknown[] = []; let evCount = 0; const failed: string[] = [];
-  const flush = async () => { if (buf.length) { const { data } = await db.rpc("upsert_shipment_events", { p: buf }); evCount += data ?? 0; buf = []; } };
-  const fetchChunk = async (chunk: string[], sink: string[]) => {
-    const res = await Promise.all(chunk.map((id) =>
-      fetch(WS(id)).then((r) => (r.ok ? r.text() : Promise.reject(r.status)))
-        .then((html) => parseUrbanoResponse(html, id))
-        .catch(() => { sink.push(id); return null; })));
-    for (const ev of res) if (ev) buf.push(...ev);
+  let buf: unknown[] = []; let evCount = 0; let hits = 0; const failed: string[] = [];
+  const flush = async () => {
+    if (!buf.length) return;
+    const batch = buf; buf = [];
+    evCount += (await rpc("upsert_shipment_events", { p: batch })) ?? 0;
   };
-  for (let i = 0; i < ids.length; i += 5) {           // concurrencia 5 + delay suave (§5.4)
-    await fetchChunk(ids.slice(i, i + 5), failed);
-    if (buf.length >= 400) await flush();
-    if (i % 500 === 0) console.log(`    urbano WS ${i}/${ids.length} · fallidos ${failed.length}`);
-    await sleep(150);
+  // Secuencial (WS ya cacheado = lectura instantánea, la concurrencia solo servía para el rate-limit).
+  // Batches de 150 → cada upsert_shipment_events corre solo y bajo el statement timeout de Supabase.
+  for (let i = 0; i < ids.length; i++) {
+    const { html, cached } = await fetchWSCached(ids[i]);
+    if (html === null) failed.push(ids[i]);
+    else { buf.push(...parseUrbanoResponse(html, ids[i])); if (cached) hits++; }
+    if (buf.length >= 150) await flush();
+    if (i % 500 === 0) console.log(`    urbano WS ${i}/${ids.length} · fallidos ${failed.length} · cache ${hits}`);
+    if (!cached) await sleep(100);            // delay solo tras fetch real
   }
   await flush();
-  // reintento único de los fallidos (rate-limit / errores transitorios), no aborta el backfill
-  const stillFailed: string[] = [];
-  for (let i = 0; i < failed.length; i += 5) { await fetchChunk(failed.slice(i, i + 5), stillFailed); await sleep(250); }
+  // retry de fallidos (fetch fresco que falló) — secuencial, alta tasa de éxito
+  for (let round = 0; round < 3 && failed.length; round++) {
+    const retry = failed.splice(0);
+    console.log(`    retry ${retry.length} fallidos (ronda ${round + 1})`);
+    for (const id of retry) {
+      const { html } = await fetchWSCached(id);
+      if (html === null) failed.push(id);
+      else buf.push(...parseUrbanoResponse(html, id));
+      if (buf.length >= 150) await flush();
+      await sleep(200);
+    }
+  }
   await flush();
-  return { ids: ids.length, events: evCount, failed: stillFailed.length };
+  return { ids: ids.length, events: evCount, cacheHits: hits, failed: failed.length };
 }
 
 // ---------- 3. Facturación Urbano (tracking = rec_numguia_cliente = shopify_id). ----------
@@ -83,17 +151,16 @@ async function ingestFacturacion() {
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { range: 1, raw: true });
   const p = rows.filter((r) => r.rec_numguia_cliente != null && r.tarifa != null)
     .map((r) => ({ tracking: String(r.rec_numguia_cliente), tarifa: Number(r.tarifa) }));
-  const { data } = await db.rpc("import_urbano_freight", { p });   // recalcula el rango afectado adentro
-  return { rows: p.length, updated: data ?? 0 };
+  const updated = await rpc("import_urbano_freight", { p });   // recalcula el rango afectado adentro
+  return { rows: p.length, updated: updated ?? 0 };
 }
 
 // ---------- 4. Fixy (XLSX → eventos, ejercita 004). ----------
 async function ingestFixy() {
   const events = parseFixyXlsx(readFileSync(FIXY));
   let n = 0;
-  for (let i = 0; i < events.length; i += 400) {
-    const { data } = await db.rpc("upsert_shipment_events", { p: events.slice(i, i + 400) });
-    n += data ?? 0;
+  for (let i = 0; i < events.length; i += 150) {
+    n += (await rpc("upsert_shipment_events", { p: events.slice(i, i + 150) })) ?? 0;
   }
   return { events: events.length, inserted: n };
 }
@@ -117,8 +184,18 @@ async function ingestMeta() {
     });
     url = b.paging?.next;
   }
-  for (let i = 0; i < rows.length; i += 500) await db.rpc("upsert_ad_spend", { p: rows.slice(i, i + 500) });
+  for (let i = 0; i < rows.length; i += 500) await rpc("upsert_ad_spend", { p: rows.slice(i, i + 500) });
   return { rows: rows.length };
+}
+
+// ---------- 6. Override Ve-CBO→Veinguard (DML post-ingesta, pre-recompute). product_locked=true →
+// el sync incremental no lo pisa. "Ve - CBO" no matchea keyword ("vein") → sin esto cae en gadget. ----------
+async function overrideVeCbo() {
+  const { data: prod } = await db.from("products").select("id").eq("name", "Veinguard").single();
+  const { data, error } = await db.from("ad_spend").update({ product_id: prod!.id, product_locked: true })
+    .eq("campaign_name", "Ve - CBO").select("ad_id");
+  if (error) throw new Error(`override Ve-CBO: ${error.message}`);
+  return data?.length ?? 0;
 }
 
 async function runPass(n: number) {
@@ -128,7 +205,8 @@ async function runPass(n: number) {
   console.log("  facturación:", await ingestFacturacion());
   console.log("  fixy:", await ingestFixy());
   console.log("  meta:", await ingestMeta());
-  await db.rpc("recompute_daily_pnl", { p_from: FROM, p_to: today() });
+  console.log("  override Ve-CBO→Veinguard:", await overrideVeCbo(), "filas");
+  await rpc("recompute_daily_pnl", { p_from: FROM, p_to: today() });
   const c = await counts();
   console.log(`  counts tras pasada ${n}:`, c);
   return c;
@@ -181,8 +259,23 @@ async function report(c1: Record<string, number | null>, c2: Record<string, numb
 }
 
 // ---------- main ----------
+// Guardas: exige 006 aplicada (pack=quantity) y el flag --wipe explícito para el DELETE destructivo.
 try {
   console.log("counts iniciales:", await counts());
+
+  // gate 006: product_costs lo seedea 006c (persiste al wipe). Vacío → 006 no aplicada.
+  const { count: pcCount } = await db.from("product_costs").select("*", { count: "exact", head: true });
+  if (!pcCount) throw new Error("product_costs vacío → 006 NO está aplicada en prod. Aplicala primero (SQL Editor).");
+  console.log(`  gate 006: product_costs tiene ${pcCount} filas ✓`);
+
+  if (!process.argv.includes("--wipe")) {
+    console.log("\n⚠️  Falta --wipe. El backfill limpia (DELETE) orders/shipments/… de PROD antes de ingestar.");
+    console.log("    Corré con: npx tsx scripts/backfill.mts --wipe   (006 ya aplicada).");
+    process.exit(0);
+  }
+  console.log("\n===== WIPE (limpieza de prod) =====");
+  await wipe();
+
   const c1 = await runPass(1);
   const c2 = await runPass(2);
   await report(c1, c2);

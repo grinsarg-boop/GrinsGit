@@ -30,6 +30,7 @@ try {
                    'supabase/migrations/003_matching_shopify_id.sql',
                    'supabase/migrations/004_fixy_status_map.sql',
                    'supabase/migrations/005_urbano_status_map.sql',
+                   'supabase/migrations/006_pack_quantity.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));

@@ -13,7 +13,6 @@ import * as XLSX from "xlsx";
 import { parseUrbanoResponse } from "../lib/couriers/urbano.ts";
 import { parseFixyXlsx } from "../lib/couriers/fixy.ts";
 import { shopifyFetch, SHOPIFY_API_VERSION } from "../lib/shopify.ts";
-import { PRODUCT_COSTS } from "./product_costs_may.ts";
 
 export const FROM = "2026-05-01";
 // Shopify se ingesta desde antes de mayo: hay pedidos creados pre-mayo pero DESPACHADOS en mayo
@@ -30,7 +29,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const MIGRATIONS = [
   "supabase/migrations/001_init.sql", "supabase/migrations/002_rpcs.sql",
   "supabase/migrations/003_matching_shopify_id.sql", "supabase/migrations/004_fixy_status_map.sql",
-  "supabase/migrations/005_urbano_status_map.sql",
+  "supabase/migrations/005_urbano_status_map.sql", "supabase/migrations/006_pack_quantity.sql",
 ];
 const BOOTSTRAP = `create role anon nologin; create role authenticated nologin;
   create role service_role nologin; create publication supabase_realtime;`;
@@ -156,46 +155,10 @@ export async function buildLocalDb(): Promise<{ client: PgClient; teardown: () =
        where campaign_name = 'Ve - CBO'`);
     console.log(`  override Ve-CBO→Veinguard: ${(ov as any).rowCount ?? "?"} filas ad×día`);
 
-    // 7. FIX DE PACK: el "pack" (unidades) es el QUANTITY de Shopify, no el título. match_pack lee el
-    // título ("2x1" marketing) → mal. Acá: pack = qty, y qty = 1 (el costo se cuenta 1 vez por línea;
-    // la escala de costos es NO lineal). En prod esto es un 006 (upsert_order). Aditivo, local.
-    await client.query("update order_items set pack = qty, qty = 1 where qty is not null");
-    console.log("  fix pack = quantity (order_items) ✓");
+    // pack=quantity, seed de costos y fallback de cohorte por fulfillment YA son nativos de 006
+    // (upsert_order + upsert_shipment_events + seed) → nada de DMLs post-ingesta acá: local == prod.
 
-    // 8. Seed de product_costs (costo TOTAL por pack, tabla de Pancho). is_estimated=false.
-    for (const [name, packs] of Object.entries(PRODUCT_COSTS))
-      for (const [pack, cost] of Object.entries(packs))
-        await client.query(
-          `insert into product_costs (product_id, pack, unit_cost, is_estimated)
-             select id, $2::int, $3::numeric, false from products where name = $1
-           on conflict (product_id, pack) do update set unit_cost = excluded.unit_cost, is_estimated = false`,
-          [name, Number(pack), cost]);
-
-    // 9. FREEZE de packs SIN costo (Rule 2 de Pancho: ni 0 ni interpolar). recompute_daily_pnl (§4.4)
-    // AUTO-EXTRAPOLA packs faltantes con pack1×pack si existe pack1 → eso ES interpolar. Lo bloqueo
-    // sembrando un marcador is_estimated=true, unit_cost=0 para cada pack<>1 sin costo confirmado: el
-    // `not exists` de la extrapolación lo saltea → esas líneas quedan en 0 EXCLUIDO (frenado), no
-    // interpolado. Se reportan aparte con conteo; su costo real lo da Pancho después. (pack=1 sin costo
-    // —Veinguard x1, BeeVenom x1— nunca se extrapola: cae en 0 por coalesce, también frenado.)
-    const froze = await client.query(
-      `insert into product_costs (product_id, pack, unit_cost, is_estimated)
-         select distinct oi.product_id, oi.pack, 0, true from order_items oi
-         where oi.pack <> 1 and oi.product_id is not null
-           and not exists (select 1 from product_costs pc where pc.product_id=oi.product_id and pc.pack=oi.pack)
-       on conflict do nothing`);
-    console.log(`  costos seedeados + freeze de packs sin costo (${(froze as any).rowCount ?? 0} packs pack<>1 frenados)`);
-
-    // 10. FIX DE COHORTE: urbano sin evento 'despachado' (WS sin ciclo) → dispatched_at = fecha de
-    // fulfillment de Shopify (diseño fijado), no min-evento. El dato ya está en orders.raw.
-    const coh = await client.query(
-      `update shipments s set dispatched_at = (o.raw->'fulfillments'->0->>'created_at')::date, updated_at = now()
-       from orders o
-       where o.id = s.order_id and s.courier='urbano'
-         and (o.raw->'fulfillments'->0->>'created_at') is not null
-         and not exists (select 1 from shipment_events e where e.shipment_id=s.id and e.status_canonical='despachado')`);
-    console.log(`  fix cohorte urbano sin-ciclo → fecha fulfillment: ${(coh as any).rowCount ?? 0} guías`);
-
-    // 11. recompute_daily_pnl(FROM, hoy) — final, con packs/costos/cohorte corregidos
+    // recompute_daily_pnl(FROM, hoy) — final
     await client.query("select recompute_daily_pnl($1::date, $2::date)", [FROM, today()]);
     console.log("  recompute_daily_pnl ✓");
 

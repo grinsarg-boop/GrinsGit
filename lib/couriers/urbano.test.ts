@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CICLO_STATUS, parseUrbanoResponse } from "./urbano";
+import { CICLO_STATUS, parseUrbanoMasivo, parseUrbanoResponse } from "./urbano";
 
 // R7 — mock con responses REALES del WS (datos/urbano_ws_samples/, entity-encoded tal cual).
 // El <tr data="{...}"> es la única parte que el parser lee; embebida acá para no depender
@@ -49,5 +49,39 @@ describe("parseUrbanoResponse", () => {
 
   it("guía inexistente (sin filas) → []", () => {
     expect(parseUrbanoResponse("<html><body>sin resultados</body></html>", "999")).toEqual([]);
+  });
+});
+
+// API masiva (transporte del sync incremental). Response REAL de consultaTrackingMasivo embebida.
+const masivoRC = {
+  codGestion: "6865945526512", codError: 0, descError: "", producto: "PQ - PAQUETERIA",
+  fecha: "06-05-2026", estado: "RC - Conformes y devoluciones rendidos al remitente",
+  movimientos: [
+    { check: "PI", codigo_motivo: null, descripcion: "Recibimos la informacion de su pedido", checkFecha: "02-05-2026", hora: "19:36" },
+    { check: "MA", codigo_motivo: null, descripcion: "Su envio esta preparado para salir a distribucion", checkFecha: "13-05-2026", hora: "15:35" },
+    { check: "LD", codigo_motivo: null, descripcion: "Su envio esta en camino", checkFecha: "13-05-2026", hora: "20:33" },
+    { check: "RC", codigo_motivo: null, descripcion: "Conformes y devoluciones rendidos al remitente", checkFecha: "06-06-2026", hora: "10:00" },
+  ],
+};
+const masivoInexistente = { codGestion: "999999999999", codError: 5, descError: "Pieza postal inexistente." };
+
+describe("parseUrbanoMasivo", () => {
+  it("emite despacho sintético en `fecha` (=ciclo) + un evento por movimiento, tracking = codGestion", () => {
+    const ev = parseUrbanoMasivo(masivoRC, "6865945526512");
+    const [desp, ...movs] = ev;
+    expect(desp.status_raw).toBe(CICLO_STATUS);
+    expect(desp.occurred_at).toBe("2026-05-06T12:00:00Z"); // ciclo = fecha
+    expect(movs.map((e) => e.status_raw)).toEqual(["PI", "MA", "LD", "RC"]); // `check` = código, sin split
+    expect(movs[0].occurred_at).toBe("2026-05-02T12:00:00Z"); // checkFecha
+    expect(movs.at(-1)!.status_raw).toBe("RC"); // último = estado actual (→ devuelto por 005)
+    for (const e of ev) {
+      expect(e.courier).toBe("urbano");
+      expect(e.tracking).toBe("6865945526512");
+      expect(e.order_ref).toBe("6865945526512");
+    }
+  });
+
+  it("pieza inexistente (codError<>0) → []", () => {
+    expect(parseUrbanoMasivo(masivoInexistente, "999999999999")).toEqual([]);
   });
 });

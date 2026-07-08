@@ -22,6 +22,10 @@
 
 begin;
 
+-- Escenario aislado: limpia el seed de costos (006 lo puebla) y carga sólo el fixture del test.
+-- Rollbackea al final → no afecta nada. Este test valida las FÓRMULAS del P&L con un costo
+-- controlado, no los valores de 006 (eso lo valida la reconciliación con datos reales).
+delete from product_costs;
 -- costo real del pack 1 (el pack 2 NO se carga: debe extrapolarse — §4.4)
 insert into product_costs (product_id, pack, unit_cost, is_estimated)
 select id, 1, 5000, false from products where name = 'Natures';
@@ -43,7 +47,8 @@ begin
     'id', 1002, 'name', '#1002', 'created_at', d - 1, 'financial_status', 'partially_paid',
     'tags', 'sena:10000', 'total_price', '50000',
     'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000","phone":"351-2","name":"Cliente U2"}'::jsonb,
-    'line_items', '[{"title":"Natures x2","variant_title":null,"quantity":1,"price":"50000"}]'::jsonb));
+    -- pack 2 = quantity 2 (006: el pack es el quantity, no el título). El costo se extrapola (§4.4).
+    'line_items', '[{"title":"Natures x2","variant_title":null,"quantity":2,"price":"50000"}]'::jsonb));
   perform upsert_order(jsonb_build_object(
     'id', 1003, 'name', '#1003', 'created_at', d - 1, 'financial_status', 'pending',
     'tags', '', 'total_price', '40000',

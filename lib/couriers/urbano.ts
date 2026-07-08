@@ -1,12 +1,14 @@
 import type { CourierClient, CourierEvent } from "./types";
 
-// Tracking real de Urbano (SPEC §5.4, R7). El webservice se consulta por cli_codigo = id de
-// pedido Shopify y devuelve el nº de guía (gui_numero) + estado como HTML. Opción A:
-// shipment.tracking = cli_codigo (id Shopify); gui_numero va en raw. shi_codigo 4362 fijo.
-const WS_BASE = "https://www.urbano.com.ar/webservice/cespecifica/";
-const SHI_CODIGO = "4362";
-const CONCURRENCY = 5;      // el WS es lento; 5 en paralelo + delay entra en el AC (1000 < 5 min)
-const DELAY_MS = 150;       // delay suave entre tandas (no martillar el WS)
+// Tracking de Urbano (SPEC §5.4, R7). El sync incremental usa la API oficial MASIVA (JSON, bulk,
+// sin rate-limit): POST /tracking/consultaTrackingMasivo/, auth en el body, consulta por
+// codigoSeguimiento = id de pedido Shopify (Opción A: shipment.tracking = id Shopify).
+// El BACKFILL histórico usa el cache del scraping viejo (HTML, ya validado contra la oficial) →
+// parseUrbanoResponse se conserva para eso. Sólo cambia el transporte del sync en adelante, no la
+// semántica: mismos códigos (005) y mismo evento sintético de ciclo.
+const API_BASE = (process.env.URBANO_API_URL ?? "https://apis.urbano.com.ar/").replace(/\/$/, "");
+const MASIVO_URL = `${API_BASE}/tracking/consultaTrackingMasivo/`;
+const BATCH = 200;          // la masiva es bulk; tandas de 200 por request
 
 // Estado sintético de despacho: mapeado a 'despachado' por el seed de 003. occurred_at = ciclo,
 // para cohortear por fecha de despacho real (regla de reconciliación del dashboard viejo).
@@ -58,25 +60,61 @@ export function parseUrbanoResponse(html: string, cliCodigo: string): CourierEve
   return events;
 }
 
-async function fetchUrbano(cliCodigo: string): Promise<string> {
-  const url = `${WS_BASE}?shi_codigo=${SHI_CODIGO}&cli_codigo=${encodeURIComponent(cliCodigo)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Urbano WS ${res.status} para ${cliCodigo}`);
-  return res.text();
+// Item de la API masiva → CourierEvents. Misma semántica que parseUrbanoResponse (HTML): despacho
+// sintético en `fecha` (= ciclo) + un evento por movimiento. El `check` YA es el código (PI, LD,
+// DL, RC…) → integra con 005 sin split. codError<>0 (ej. "Pieza postal inexistente") → [].
+type MasivoMovimiento = { check?: string; checkFecha?: string; descripcion?: string; codigo_motivo?: string | null };
+type MasivoItem = {
+  codGestion?: string; codError?: number; fecha?: string; estado?: string;
+  producto?: string; movimientos?: MasivoMovimiento[];
+};
+export function parseUrbanoMasivo(item: MasivoItem, cliCodigo: string): CourierEvent[] {
+  if (!item || item.codError !== 0 || !Array.isArray(item.movimientos)) return [];
+  const events: CourierEvent[] = [];
+  const ciclo = parseUrbanoDate(item.fecha ?? "");
+  if (ciclo) {
+    events.push({ courier: "urbano", tracking: cliCodigo, order_ref: cliCodigo,
+      status_raw: CICLO_STATUS, occurred_at: ciclo, raw: { fecha: item.fecha, producto: item.producto } });
+  }
+  for (const m of item.movimientos) {
+    const at = parseUrbanoDate(m.checkFecha ?? "");
+    const code = (m.check ?? "").trim().toUpperCase();
+    if (code && at) {
+      events.push({ courier: "urbano", tracking: cliCodigo, order_ref: cliCodigo,
+        status_raw: code, occurred_at: at,
+        raw: { descripcion: (m.descripcion ?? "").trim(), codigo_motivo: m.codigo_motivo, estado_actual: item.estado } });
+    }
+  }
+  return events;
 }
 
-// trackings = ids de pedido Shopify (cli_codigo). Tandas de CONCURRENCY con delay suave.
-// Un fallo puntual no aborta la tanda (se reintenta en el próximo sync, §5.4).
+async function fetchMasivo(codigos: string[]): Promise<MasivoItem[]> {
+  const res = await fetch(MASIVO_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      autentificacion: { shipper: Number(process.env.URBANO_SHIPPER), password: process.env.URBANO_PASSWORD },
+      datos: codigos.map((c) => ({ codigoSeguimiento: c })),
+    }),
+  });
+  if (!res.ok) throw new Error(`Urbano masiva ${res.status}: ${(await res.text()).slice(0, 120)}`);
+  const body = await res.json();
+  return Array.isArray(body) ? body : [];
+}
+
+// trackings = ids de pedido Shopify. Tandas de BATCH (la masiva es bulk → una llamada por tanda).
+// Un fallo de tanda no aborta el resto (se reintenta en el próximo sync, §5.4).
 export const urbano: CourierClient = {
   async fetchStatuses(trackings: string[]): Promise<CourierEvent[]> {
     const events: CourierEvent[] = [];
-    for (let i = 0; i < trackings.length; i += CONCURRENCY) {
-      const chunk = trackings.slice(i, i + CONCURRENCY);
-      const results = await Promise.all(chunk.map((id) =>
-        fetchUrbano(id).then((html) => parseUrbanoResponse(html, id))
-          .catch((e) => { console.error("urbano WS", id, String(e)); return [] as CourierEvent[]; })));
-      events.push(...results.flat());
-      if (i + CONCURRENCY < trackings.length) await new Promise((r) => setTimeout(r, DELAY_MS));
+    for (let i = 0; i < trackings.length; i += BATCH) {
+      const chunk = trackings.slice(i, i + BATCH);
+      try {
+        const items = await fetchMasivo(chunk);
+        for (const it of items) events.push(...parseUrbanoMasivo(it, String(it.codGestion ?? "")));
+      } catch (e) {
+        console.error("urbano masiva tanda", i, String(e));
+      }
     }
     return events;
   },
