@@ -6,7 +6,7 @@ import { badCronAuth } from "@/lib/supabase";
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
-  const limit = Number(new URL(req.url).searchParams.get("limit")) || 300;
+  const limit = Number(new URL(req.url).searchParams.get("limit")) || 100;
   return badCronAuth(req) ?? runCourierSync("urbano", urbano, limit);
 }
 

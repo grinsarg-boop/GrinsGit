@@ -10,7 +10,9 @@ const TERMINALES = ["entregado", "devuelto", "siniestro", "cancelado"];
 // Vercel (Hobby 60s). Cada llamada procesa las `limit` guías MÁS STALE (menor updated_at); como
 // sincronizar bumpea updated_at, la próxima llamada agarra las siguientes → n8n lo llama en loop
 // (ceil(total/limit) veces) hasta refrescar todas. Sin cursor: la staleness auto-avanza.
-export async function runCourierSync(courier: "urbano" | "fixy", client: CourierClient, limit = 300) {
+// limit=100: la masiva Urbano tarda ~0.3s/código; con el timeout de Vercel (Hobby 60s), 100
+// (~30s masiva + upsert + recompute ≈ 45s) es el máximo seguro. n8n loopea ceil(total/100).
+export async function runCourierSync(courier: "urbano" | "fixy", client: CourierClient, limit = 100) {
   const db = supabaseAdmin();
   const started = Date.now();
   try {

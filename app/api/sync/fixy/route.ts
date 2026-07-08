@@ -6,7 +6,7 @@ export const maxDuration = 60; // margen de volumen (Hobby máx 60s). Nota: fixy
 // implementa en FASE 5 — hasta entonces este sync loguea error (los estados Fixy salen del XLSX).
 
 export async function POST(req: Request) {
-  const limit = Number(new URL(req.url).searchParams.get("limit")) || 300;
+  const limit = Number(new URL(req.url).searchParams.get("limit")) || 100;
   return badCronAuth(req) ?? runCourierSync("fixy", fixy, limit);
 }
 
