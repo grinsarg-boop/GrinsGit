@@ -26,7 +26,7 @@ async function fetchRemito(remito: string): Promise<CourierEvent[]> {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ api_token: process.env.FIXY_API_TOKEN, remito }),
   });
-  if (!res.ok) return [];
+  if (!res.ok) { console.warn(`fixy API HTTP ${res.status} remito ${remito}`); return []; }
   const j: { status?: string; guia?: { fechas?: FixyFecha[] } } = await res.json();
   const f = j?.guia?.fechas?.[0]; // fechas[0] = estado actual (viene desc)
   const at = fixyApiDate(f?.fecha, f?.hora);
