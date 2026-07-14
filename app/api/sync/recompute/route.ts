@@ -9,7 +9,10 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const from = body.from ?? new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
   const to = body.to ?? today();
-  const { error } = await supabaseAdmin().rpc("recompute_daily_pnl", { p_from: from, p_to: to });
+  const db = supabaseAdmin();
+  // Refrescar priors P(entrega) ANTES del recompute — el P&L estimado §4.7 los consume (#16).
+  await db.rpc("recompute_priors");
+  const { error } = await db.rpc("recompute_daily_pnl", { p_from: from, p_to: to });
   if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
   return Response.json({ ok: true, from, to });
 }

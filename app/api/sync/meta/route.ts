@@ -9,8 +9,11 @@ export async function POST(req: Request) {
   if (unauth) return unauth;
 
   try {
-    const rows = await fetchMetaInsights();
     const db = supabaseAdmin();
+    // Cron diario (9:00, antes del recompute de urbano 9:30): refrescar priors P(entrega) que
+    // consume el P&L estimado §4.7 (#16). Barato e idempotente; error SQL queda en el result ignorado.
+    await db.rpc("recompute_priors");
+    const rows = await fetchMetaInsights();
     if (rows.length) {
       const { error } = await db.rpc("upsert_ad_spend", { p: rows });
       if (error) throw new Error(error.message);

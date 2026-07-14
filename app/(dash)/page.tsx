@@ -10,8 +10,9 @@ import { cn } from "@/lib/utils";
 export const revalidate = 60; // R12
 
 type Day = {
-  date: string; despachadas: number; resueltas: number; entregadas: number;
-  revenue: number; profit: number; ads: number;
+  date: string; despachadas: number; entregadas: number; resueltas: number; proyectadas: number;
+  revenueConf: number; revenueEst: number; profitConf: number; profitEst: number;
+  ads: number; adsSinCohorte: number;
 };
 
 export default async function Resumen({
@@ -25,15 +26,19 @@ export default async function Resumen({
   const today = daysAgoIso(0);
   const courierParam = courier === "urbano" || courier === "fixy" ? courier : null;
 
-  // Agregación server-side (007): la RPC devuelve el resumen por día ya sumado (across producto, y
-  // across courier si es null). El P&L por producto llega con /dia/[fecha] en Fase 2.
+  // Agregación server-side (dashboard_days, 009): resumen por día ya sumado (across producto, y across
+  // courier si es null), con columnas CONFIRMADO y ESTIMADO (§4.7). El P&L por producto → /dia/[fecha].
   const { data: rows } = await db.rpc("dashboard_days", { p_from: from, p_courier: courierParam });
   const list: Day[] = (rows ?? []).map((r: {
-    dispatch_date: string; despachadas: number; entregadas: number; resueltas: number;
-    revenue_confirmado: number; profit_confirmado: number; ads: number;
+    dispatch_date: string; despachadas: number; entregadas: number; resueltas: number; proyectadas: number;
+    revenue_confirmado: number; revenue_estimado: number; profit_confirmado: number; profit_estimado: number;
+    ads: number; ads_sin_cohorte: number;
   }) => ({
-    date: r.dispatch_date, despachadas: r.despachadas, resueltas: r.resueltas, entregadas: r.entregadas,
-    revenue: Number(r.revenue_confirmado), profit: Number(r.profit_confirmado), ads: Number(r.ads),
+    date: r.dispatch_date, despachadas: r.despachadas, entregadas: r.entregadas, resueltas: r.resueltas,
+    proyectadas: Number(r.proyectadas),
+    revenueConf: Number(r.revenue_confirmado), revenueEst: Number(r.revenue_estimado),
+    profitConf: Number(r.profit_confirmado), profitEst: Number(r.profit_estimado),
+    ads: Number(r.ads), adsSinCohorte: Number(r.ads_sin_cohorte),
   }));
 
   const { data: adsSinCohorte } = await db
@@ -41,12 +46,13 @@ export default async function Resumen({
 
   const period = (daysBack: number) => {
     const cut = daysAgoIso(daysBack);
-    const acc = { despachadas: 0, entregadas: 0, resueltas: 0, revenue: 0, profit: 0, ads: 0 };
+    const acc = { despachadas: 0, entregadas: 0, proyectadas: 0,
+      revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, adsSinCohorte: 0 };
     for (const d of list) {
       if (d.date >= cut) {
-        acc.despachadas += d.despachadas; acc.entregadas += d.entregadas;
-        acc.resueltas += d.resueltas; acc.revenue += d.revenue;
-        acc.profit += d.profit; acc.ads += d.ads;
+        acc.despachadas += d.despachadas; acc.entregadas += d.entregadas; acc.proyectadas += d.proyectadas;
+        acc.revenueEst += d.revenueEst; acc.profitConf += d.profitConf; acc.profitEst += d.profitEst;
+        acc.ads += d.ads; acc.adsSinCohorte += d.adsSinCohorte;
       }
     }
     return acc;
@@ -77,19 +83,27 @@ export default async function Resumen({
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {cards.map((c) => (
-          <Card key={c.label}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground">{c.label}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1 text-sm">
-              <div className="text-2xl font-semibold">{c.despachadas} <span className="text-sm font-normal text-muted-foreground">despachos</span></div>
-              <div>Tasa: <b>{c.despachadas ? fmtPct(c.entregadas / c.despachadas) : "—"}</b></div>
-              <div>Profit confirmado: <b>{fmtMoney(c.profit)}</b></div>
-              <div>ROAS: <b>{c.ads > 0 ? fmtRatio(c.revenue / c.ads) : "—"}</b></div>
-            </CardContent>
-          </Card>
-        ))}
+        {cards.map((c) => {
+          // La pauta sin cohorte (product_id NULL o día sin despacho) es costo real no atribuido a
+          // ninguna fila → restarlo del profit y sumarlo al denominador del ROAS (§4.6, #11).
+          const adsTotal = c.ads + c.adsSinCohorte;
+          const profitEst = c.profitEst - c.adsSinCohorte;
+          const profitConf = c.profitConf - c.adsSinCohorte;
+          return (
+            <Card key={c.label}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">{c.label}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 text-sm">
+                <div className="text-2xl font-semibold">{c.despachadas} <span className="text-sm font-normal text-muted-foreground">despachos</span></div>
+                <div>Tasa proyectada: <b>{c.despachadas ? fmtPct(c.proyectadas / c.despachadas) : "—"}</b></div>
+                <div>Profit estimado: <b className={cn(profitEst < 0 && "text-destructive")}>{fmtMoney(profitEst)}</b></div>
+                <div className="text-xs text-muted-foreground">confirmado {fmtMoney(profitConf)}</div>
+                <div>ROAS estimado: <b>{adsTotal > 0 ? fmtRatio(c.revenueEst / adsTotal) : "—"}</b></div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       {!!adsSinCohorte?.length && (
@@ -105,16 +119,20 @@ export default async function Resumen({
             <TableHead>Fecha</TableHead>
             <TableHead className="text-right">Despachos</TableHead>
             <TableHead className="w-32">Resuelto</TableHead>
-            <TableHead className="text-right">Tasa</TableHead>
+            <TableHead className="text-right">Tasa → proy.</TableHead>
             <TableHead className="text-right">Cobrado</TableHead>
             <TableHead className="text-right">Profit conf.</TableHead>
+            <TableHead className="text-right">Profit est.</TableHead>
             <TableHead className="text-right">Ads</TableHead>
-            <TableHead className="text-right">ROAS</TableHead>
+            <TableHead className="text-right">ROAS est.</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {list.map((d) => {
             const pct = d.despachadas ? d.resueltas / d.despachadas : 0;
+            const tasaAct = d.despachadas ? d.entregadas / d.despachadas : 0;
+            const tasaProy = d.despachadas ? d.proyectadas / d.despachadas : 0;
+            const inmaduro = pct < 0.8; // §6.1: atenuar el estimado si la cohorte está poco resuelta
             return (
               <TableRow key={d.date}>
                 <TableCell>{fmtDate(d.date)}</TableCell>
@@ -126,20 +144,27 @@ export default async function Resumen({
                   <span className="text-xs text-muted-foreground">{fmtPct(pct)}</span>
                 </TableCell>
                 <TableCell className="text-right">
-                  {d.despachadas ? fmtPct(d.entregadas / d.despachadas) : "—"}
+                  {d.despachadas ? `${fmtPct(tasaAct)} → ${fmtPct(tasaProy)}` : "—"}
                 </TableCell>
-                <TableCell className="text-right">{fmtMoney(d.revenue)}</TableCell>
-                <TableCell className={cn("text-right font-medium", d.profit < 0 && "text-destructive")}>
-                  {fmtMoney(d.profit)}
+                <TableCell className="text-right">{fmtMoney(d.revenueConf)}</TableCell>
+                <TableCell className={cn("text-right", d.profitConf < 0 && "text-destructive")}>
+                  {fmtMoney(d.profitConf)}
+                </TableCell>
+                <TableCell className={cn(
+                  "text-right font-medium",
+                  inmaduro && "text-muted-foreground",
+                  !inmaduro && d.profitEst < 0 && "text-destructive",
+                )}>
+                  {fmtMoney(d.profitEst)}
                 </TableCell>
                 <TableCell className="text-right">{fmtMoney(d.ads)}</TableCell>
-                <TableCell className="text-right">{d.ads > 0 ? fmtRatio(d.revenue / d.ads) : "—"}</TableCell>
+                <TableCell className="text-right">{d.ads > 0 ? fmtRatio(d.revenueEst / d.ads) : "—"}</TableCell>
               </TableRow>
             );
           })}
           {!list.length && (
             <TableRow>
-              <TableCell colSpan={8} className="text-center text-muted-foreground">
+              <TableCell colSpan={9} className="text-center text-muted-foreground">
                 Sin despachos en los últimos 30 días
               </TableCell>
             </TableRow>

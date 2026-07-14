@@ -33,6 +33,7 @@ try {
                    'supabase/migrations/006_pack_quantity.sql',
                    'supabase/migrations/007_dashboard_agg.sql',
                    'supabase/migrations/008_fixy_api_status.sql',
+                   'supabase/migrations/009_estimated_pnl.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));

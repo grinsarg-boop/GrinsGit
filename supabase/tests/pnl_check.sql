@@ -163,6 +163,14 @@ begin
   assert (select product_id = (select id from products where name = 'Natures') from ad_spend where ad_id = 'ad1'),
          'R6: producto asignado por keyword';
 
+  ---------------------------------------- R16: priors explícitos para el estimado §4.7
+  -- Aislado (sin depender de recompute_priors): las únicas en tránsito son U4 (urbano, Córdoba,
+  -- Natures) y F4 (fixy, CABA, Natures). P(entrega)=0.5 para ambas → math conocida abajo.
+  delete from delivery_priors;
+  insert into delivery_priors (courier, province, product_id, p_delivery, n, level) values
+    ('urbano', 'Córdoba', (select id from products where name = 'Natures'), 0.5, 100, 1),
+    ('fixy', 'Ciudad Autónoma de Buenos Aires', (select id from products where name = 'Natures'), 0.5, 100, 1);
+
   ------------------------------------------------------------------ R10: P&L
   perform recompute_daily_pnl(d, d);
 
@@ -185,6 +193,11 @@ begin
   assert round(r.costo_producto, 2) = 20000.00, 'R10 urbano: 5000+10000+5000 (siniestro pierde costo)';
   assert round(r.ads, 2) = 15000.00, 'R10 urbano: 29000×6/11.6';
   assert round(r.profit_confirmado, 2) = -19820.00, 'R10 urbano: profit −19820';
+  -- §4.7 estimado: U4 en tránsito (cod 45000, costo 5000 pack1, prior 0.5), rate 5.2%.
+  --   est_cod=22500 est_cost=2500 est_deliv=0.5 → Δ = 22500×0.948 − 2500 = 18830
+  assert round(r.revenue_estimado, 2) = 111500.00, 'R16 urbano: revenue_estimado 89000+22500';
+  assert round(r.profit_estimado, 2) = -990.00, 'R16 urbano: profit_estimado −19820+18830';
+  assert round(r.tasa_proyectada, 4) = round(2.5/6, 4), 'R16 urbano: tasa_proyectada (2+0.5)/6';
 
   select * into strict r from daily_pnl
    where dispatch_date = d and courier = 'fixy'
@@ -196,6 +209,16 @@ begin
   assert round(r.costo_producto, 2) = 10000.00, 'R10 fixy: costo 2×5000';
   assert round(r.ads, 2) = 14000.00, 'R10 fixy: 29000×5.6/11.6';
   assert round(r.profit_confirmado, 2) = 35200.00, 'R10 fixy: profit 35200';
+  -- §4.7 estimado: F4 en tránsito (cod 40000, costo 5000, prior 0.5), rate 1%.
+  --   est_cod=20000 est_cost=2500 → Δ = 20000×0.99 − 2500 = 17300
+  assert round(r.revenue_estimado, 2) = 100000.00, 'R16 fixy: revenue_estimado 80000+20000';
+  assert round(r.profit_estimado, 2) = 52500.00, 'R16 fixy: profit_estimado 35200+17300';
+  assert round(r.tasa_proyectada, 4) = round(2.5/4, 4), 'R16 fixy: tasa_proyectada (2+0.5)/4';
+  -- §4.7 propiedad 1: toda fila 100% resuelta (en_transito=0) ⇒ estimado == confirmado.
+  assert not exists (select 1 from daily_pnl
+    where en_transito = 0 and (round(profit_estimado, 2) <> round(profit_confirmado, 2)
+                            or round(tasa_proyectada, 6) <> round(tasa_actual, 6))),
+    'propiedad 1 §4.7: cohorte 100% resuelta ⇒ estimado = confirmado';
 
   ------------------------------------- R9: la facturación pisa y recalcula
   perform import_urbano_freight('[{"tracking":"U3","tarifa":9500}]'::jsonb);
@@ -207,6 +230,23 @@ begin
   assert round(r.flete, 2) = 70950.00, 'R9: flete recalculado 12900+10320+12255+3×11825';
   assert round(r.flete_estimado_pct, 4) = 0.5, 'R9: 35475/70950 estimado';
   assert round(r.profit_confirmado, 2) = -21110.00, 'R9: profit recalculado tras import';
+
+  ------------------------------------------ #5: seña NO se duplica con 2+ guías por pedido
+  -- Pedido fixy con seña y DOS guías (re-despacho, mismo order_ref): el deposit se cuenta UNA vez.
+  perform upsert_order(jsonb_build_object(
+    'id', 1012, 'name', '#1012', 'created_at', d - 6, 'financial_status', 'partially_paid',
+    'tags', 'sena:15000', 'total_price', '55000',
+    'shipping_address', '{"province":"Ciudad Autónoma de Buenos Aires","city":"CABA","zip":"1425","phone":"11-12","name":"Cliente F12"}'::jsonb,
+    'line_items', '[{"title":"Natures","variant_title":null,"quantity":1,"price":"55000"}]'::jsonb));
+  perform upsert_shipment_events(jsonb_build_array(
+    jsonb_build_object('courier','fixy','tracking','R12a','order_ref','1012','status_raw','En reparto','occurred_at',(d-5)::text || 'T08:00:00Z','importe',5000),
+    jsonb_build_object('courier','fixy','tracking','R12b','order_ref','1012','status_raw','En reparto','occurred_at',(d-5)::text || 'T09:00:00Z','importe',5000)));
+  perform recompute_daily_pnl(d - 5, d - 5);
+  select * into strict r from daily_pnl
+   where dispatch_date = d - 5 and courier = 'fixy'
+     and product_id = (select id from products where name = 'Natures');
+  assert r.despachadas = 2, '#5: 2 guías del mismo pedido = 2 despachos';
+  assert round(r.senas_netas, 2) = 13500.00, '#5: seña 15000×0.9 contada UNA vez (antes daba 27000)';
 
   --------------------------------- propiedad 3 §4.7: recompute determinista
   create temp table _snap on commit drop as select * from daily_pnl;
