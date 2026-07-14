@@ -7,6 +7,8 @@ export default function DashLayout({ children }: { children: React.ReactNode }) 
         <span className="font-semibold">BioLabs Finanzas</span>
         <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">Resumen</Link>
         <Link href="/sync" className="text-sm text-muted-foreground hover:text-foreground">Sync</Link>
+        <Link href="/etiquetas" className="text-sm text-muted-foreground hover:text-foreground">Etiquetas</Link>
+        <Link href="/correo" className="text-sm text-muted-foreground hover:text-foreground">Correo</Link>
       </nav>
       {children}
     </div>
