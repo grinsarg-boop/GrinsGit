@@ -11,6 +11,13 @@ export type CourierEvent = {
   raw?: unknown;
 };
 
+// events + warnings de fetch (fallos de auth/HTTP/tanda). El sync los sube a logSyncRun para que un
+// token vencido o una tanda caída NO se vean como 'ok' — eran errores silenciosos (audit tema A).
+export type FetchStatusesResult = {
+  events: CourierEvent[];
+  warnings: unknown[];
+};
+
 export interface CourierClient {
-  fetchStatuses(trackings: string[]): Promise<CourierEvent[]>;
+  fetchStatuses(trackings: string[]): Promise<FetchStatusesResult>;
 }

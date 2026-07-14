@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import type { CourierClient, CourierEvent } from "./types";
+import type { CourierClient, CourierEvent, FetchStatusesResult } from "./types";
 
 // API de tracking de Fixy (FASE 5, R8): POST /api/v2/seguimiento.json {api_token, remito}.
 // Consulta por REMITO (= order_number Shopify); el response trae guia.fechas[] con el Nro Guia,
@@ -21,34 +21,37 @@ function fixyApiDate(fecha?: string, hora?: string): string | null {
   return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}T${t.padStart(5, "0")}:00-03:00`;
 }
 
-async function fetchRemito(remito: string): Promise<CourierEvent[]> {
+// {events, warning?}: un HTTP no-2xx (401 token vencido, 5xx) es un fallo que hay que VER, no un
+// []silencioso (audit A#2). 404/vacío es normal (remito sin novedad) → sin warning.
+async function fetchRemito(remito: string): Promise<{ events: CourierEvent[]; warning?: unknown }> {
   const res = await fetch(SEGUIMIENTO, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ api_token: process.env.FIXY_API_TOKEN, remito }),
   });
-  if (!res.ok) { console.warn(`fixy API HTTP ${res.status} remito ${remito}`); return []; }
+  if (!res.ok) return { events: [], warning: { courier: "fixy", remito, http: res.status } };
   const j: { status?: string; guia?: { fechas?: FixyFecha[] } } = await res.json();
   const f = j?.guia?.fechas?.[0]; // fechas[0] = estado actual (viene desc)
   const at = fixyApiDate(f?.fecha, f?.hora);
-  if (!f || f.codigo_estado == null || !at) return [];
-  return [{
+  if (!f || f.codigo_estado == null || !at) return { events: [] };
+  return { events: [{
     courier: "fixy", tracking: String(f.guia ?? ""), order_ref: remito,
     status_raw: String(f.codigo_estado), occurred_at: at,
     raw: { estado: f.estado, detalles: f.detalles, via: "api" },
-  }];
+  }] };
 }
 
 // trackings = REMITOS (order_number) — runCourierSync pasa order_ref para fixy. Tandas de CONCURRENCY.
 export const fixy: CourierClient = {
-  async fetchStatuses(remitos: string[]): Promise<CourierEvent[]> {
-    const out: CourierEvent[] = [];
+  async fetchStatuses(remitos: string[]): Promise<FetchStatusesResult> {
+    const events: CourierEvent[] = [];
+    const warnings: unknown[] = [];
     for (let i = 0; i < remitos.length; i += CONCURRENCY) {
       const chunk = remitos.slice(i, i + CONCURRENCY);
       const res = await Promise.all(chunk.map((r) =>
-        fetchRemito(r).catch((e) => { console.error("fixy API", r, String(e)); return [] as CourierEvent[]; })));
-      out.push(...res.flat());
+        fetchRemito(r).catch((e) => ({ events: [] as CourierEvent[], warning: { courier: "fixy", remito: r, error: String(e).slice(0, 120) } }))));
+      for (const x of res) { events.push(...x.events); if (x.warning) warnings.push(x.warning); }
     }
-    return out;
+    return { events, warnings };
   },
 };
 

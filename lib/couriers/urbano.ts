@@ -1,4 +1,4 @@
-import type { CourierClient, CourierEvent } from "./types";
+import type { CourierClient, CourierEvent, FetchStatusesResult } from "./types";
 
 // Tracking de Urbano (SPEC §5.4, R7). El sync incremental usa la API oficial MASIVA (JSON, bulk,
 // sin rate-limit): POST /tracking/consultaTrackingMasivo/, auth en el body, consulta por
@@ -105,17 +105,19 @@ async function fetchMasivo(codigos: string[]): Promise<MasivoItem[]> {
 // trackings = ids de pedido Shopify. Tandas de BATCH (la masiva es bulk → una llamada por tanda).
 // Un fallo de tanda no aborta el resto (se reintenta en el próximo sync, §5.4).
 export const urbano: CourierClient = {
-  async fetchStatuses(trackings: string[]): Promise<CourierEvent[]> {
+  async fetchStatuses(trackings: string[]): Promise<FetchStatusesResult> {
     const events: CourierEvent[] = [];
+    const warnings: unknown[] = [];
     for (let i = 0; i < trackings.length; i += BATCH) {
       const chunk = trackings.slice(i, i + BATCH);
       try {
         const items = await fetchMasivo(chunk);
         for (const it of items) events.push(...parseUrbanoMasivo(it, String(it.codGestion ?? "")));
       } catch (e) {
-        console.error("urbano masiva tanda", i, String(e));
+        // Antes se tragaba a console.error → el warning de sync.ts era código muerto (audit A#7).
+        warnings.push({ courier: "urbano", tanda: i / BATCH, error: String(e).slice(0, 150) });
       }
     }
-    return events;
+    return { events, warnings };
   },
 };

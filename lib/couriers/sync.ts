@@ -21,7 +21,7 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
     const orDate = `dispatched_at.gte.${cutoff},dispatched_at.is.null`;
     const { count: total } = await db.from("shipments").select("*", { count: "exact", head: true })
       .eq("courier", courier).not("status_canonical", "in", notTerminal).or(orDate);
-    const { data, error } = await db.from("shipments").select("tracking, order_ref")
+    const { data, error } = await db.from("shipments").select("id, tracking, order_ref")
       .eq("courier", courier).not("status_canonical", "in", notTerminal).or(orDate)
       .order("updated_at", { ascending: true, nullsFirst: true }).limit(limit);
     if (error) throw new Error(error.message);
@@ -29,24 +29,37 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
     // Las fixy sin order_ref (otro canal) no se pueden consultar por API → se saltean.
     const trackings = (data ?? []).map((s) => (courier === "fixy" ? s.order_ref : s.tracking)).filter((x): x is string => !!x);
     let rows = 0;
+    let fetchFailed = false;
     const warnings: unknown[] = [];
     for (let i = 0; i < trackings.length; i += 200) {
       const batch = trackings.slice(i, i + 200);
       let events: CourierEvent[];
       try {
-        events = await client.fetchStatuses(batch);
+        const res = await client.fetchStatuses(batch);
+        events = res.events;
+        if (res.warnings.length) { warnings.push(...res.warnings); fetchFailed = true; }
       } catch (e) {
         // errores parciales no abortan el batch (§5)
         warnings.push({ batch: i / 200, error: String(e) });
+        fetchFailed = true;
         continue;
       }
       rows += await upsertEvents(events);
     }
+    // Avanzar el cursor SIEMPRE: 'sincronizado' = INTENTADO, no = 'tuvo evento nuevo'. Sin esto una
+    // guía que la API devuelve vacía nunca bumpea updated_at y tapa la cabeza de la cola stalest,
+    // hambreando al resto (audit A#1, causa de raíz del freeze). Las que tuvieron evento ya se
+    // bumpearon en el RPC; este update cubre al resto del batch.
+    const ids = (data ?? []).map((s) => s.id);
+    if (ids.length) await db.from("shipments").update({ updated_at: new Date().toISOString() }).in("id", ids);
+
     warnings.push(...(await estadosSinMapear(courier)));
     await db.rpc("recompute_daily_pnl", { p_from: cutoff, p_to: today() });
-    await logSyncRun(courier, "ok", rows, warnings);
+    // Nada entró Y hubo fallos de fetch (ej. token Fixy vencido) ⇒ run DEGRADADO, no 'ok' (audit A#2).
+    const status = rows === 0 && fetchFailed ? "error" : "ok";
+    await logSyncRun(courier, status, rows, warnings, status === "error" ? "fetch falló y 0 filas" : null);
     // total/processed → n8n loopea ceil(total/limit) veces para cubrir todas las no-terminales.
-    return Response.json({ ok: true, total: total ?? 0, processed: trackings.length, rows, warnings, ms: Date.now() - started });
+    return Response.json({ ok: status === "ok", total: total ?? 0, processed: trackings.length, rows, warnings, ms: Date.now() - started });
   } catch (e) {
     await logSyncRun(courier, "error", 0, [], String(e));
     return Response.json({ ok: false, error: String(e) }, { status: 500 });
