@@ -70,3 +70,15 @@ export async function estadosSinMapear(courier: string): Promise<unknown[]> {
 }
 
 export const today = () => new Date().toISOString().slice(0, 10);
+
+// ¿Disparar otra tanda? Auto-drenado del backlog sin depender de n8n (FASE 6): cada tanda refresca
+// las `limit` guías más stale; si sobra backlog, encadena la próxima. El tope `rounds` GARANTIZA
+// terminación (no puede loopear infinito). processed>=limit ⇒ la tanda vino llena (había ≥limit
+// stale); total>processed ⇒ quedan no-terminales sin tocar en esta tanda.
+export function shouldChain(
+  r: { ok: boolean; total: number; processed: number },
+  rounds: number,
+  limit: number,
+): boolean {
+  return r.ok && rounds > 1 && r.processed >= limit && r.total > r.processed;
+}
