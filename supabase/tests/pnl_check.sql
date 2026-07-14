@@ -278,6 +278,44 @@ begin
   assert (select cod_amount = 0 and deposit_amount = 30000 from orders where shopify_id = 1011),
          '§4.3: prepago total (paid) → deposit=total, cod=0';
 
+  ------------------------------------------ 012: canal Cuotas/Correo (confirmación, prepago)
+  -- prior de confirmación explícito Natures 0.50 (aislado del recompute_priors)
+  insert into delivery_priors (courier, province, product_id, p_delivery, n, level)
+  values ('correo', null, (select id from products where name = 'Natures'), 0.50, 100, 1)
+  on conflict (courier, (coalesce(province, '*')), (coalesce(product_id, 0)))
+  do update set p_delivery = 0.50, level = 1;
+  -- cuotas PAGADA, madura (creada hoy−14 ≥ maduración 10) → confirmada
+  perform upsert_order(jsonb_build_object(
+    'id', 2001, 'name', '#2001', 'created_at', current_date - 14, 'financial_status', 'paid',
+    'tags', 'cuotas_3', 'total_price', '50000',
+    'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000","phone":"351-c1","name":"Cuota Paga"}'::jsonb,
+    'line_items', '[{"title":"Natures","variant_title":null,"quantity":1,"price":"50000"}]'::jsonb));
+  -- cuotas PENDIENTE, reciente (creada hoy−2 < maduración) → en tránsito (proyectable)
+  perform upsert_order(jsonb_build_object(
+    'id', 2002, 'name', '#2002', 'created_at', current_date - 2, 'financial_status', 'pending',
+    'tags', 'cuotas_3', 'total_price', '45000',
+    'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000","phone":"351-c2","name":"Cuota Pend"}'::jsonb,
+    'line_items', '[{"title":"Natures","variant_title":null,"quantity":1,"price":"45000"}]'::jsonb));
+  -- recompute en rango SIN ad_spend (excluye el día d) → ads correo = 0, math aislada
+  perform recompute_daily_pnl(current_date - 14, current_date);
+
+  select * into strict r from daily_pnl where dispatch_date = current_date - 14 and courier = 'correo';
+  assert r.despachadas = 1 and r.entregadas = 1 and r.en_transito = 0, '012 correo pagada: conteos (generados/confirmados)';
+  assert round(r.revenue_confirmado, 2) = 50000.00, '012 correo: revenue prepago = deposit';
+  assert round(r.comisiones, 2) = 9000.00, '012 correo: comisión MP 18%';
+  assert round(r.flete, 2) = 9000.00, '012 correo: flete $9k × despachados';
+  assert round(r.costo_producto, 2) = 5000.00, '012 correo: costo Natures p1';
+  assert round(r.profit_confirmado, 2) = 27000.00, '012 correo: profit 50000−9000−9000−5000';
+  assert round(r.profit_estimado, 2) = 27000.00, '012 correo maduro: estimado = confirmado (§4.7 prop 1)';
+  assert round(r.tasa_actual, 4) = 1.0000, '012 correo: confirmación 1/1';
+
+  select * into strict r from daily_pnl where dispatch_date = current_date - 2 and courier = 'correo';
+  assert r.entregadas = 0 and r.en_transito = 1, '012 correo pendiente: en tránsito';
+  assert round(r.revenue_confirmado, 2) = 0.00, '012 correo pendiente: sin revenue aún';
+  assert round(r.revenue_estimado, 2) = 22500.00, '012 correo pendiente: revenue_est = 0.50×45000';
+  assert round(r.profit_estimado, 2) = 11450.00, '012 correo pendiente: Δ = 22500×0.82 − 2500 − 4500';
+  assert round(r.tasa_proyectada, 4) = 0.5000, '012 correo pendiente: tasa proy (0+0.5)/1';
+
   raise notice 'pnl_check: OK — todos los asserts pasaron';
 end $test$;
 

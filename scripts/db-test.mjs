@@ -36,6 +36,7 @@ try {
                    'supabase/migrations/009_estimated_pnl.sql',
                    'supabase/migrations/010_urbano_ra_rv_map.sql',
                    'supabase/migrations/011_ads_period_alloc.sql',
+                   'supabase/migrations/012_canal_cuotas_correo.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));

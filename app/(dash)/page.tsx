@@ -27,7 +27,7 @@ export default async function Resumen({
   const db = supabaseAdmin();
   const from = daysAgoIso(30);
   const today = daysAgoIso(0);
-  const courierParam = courier === "urbano" || courier === "fixy" ? courier : null;
+  const courierParam = courier === "urbano" || courier === "fixy" || courier === "correo" ? courier : null;
 
   // Agregación server-side (dashboard_days, 009): resumen por día ya sumado, con columnas CONFIRMADO
   // y ESTIMADO (§4.7). El P&L por producto → /dia/[fecha].
@@ -78,7 +78,7 @@ export default async function Resumen({
       </p>
 
       <div className="flex gap-2 text-sm">
-        {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"]].map(([v, label]) => (
+        {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"]].map(([v, label]) => (
           <Link
             key={v}
             href={v ? `/?courier=${v}` : "/"}
