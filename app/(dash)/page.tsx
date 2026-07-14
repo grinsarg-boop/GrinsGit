@@ -139,7 +139,7 @@ export default async function Resumen({
         <p className="text-sm text-muted-foreground">
           Ads sin cohorte hoy:{" "}
           {adsSinCohorte.map((a) => `${a.product ?? "sin producto"} ${fmtMoney(Number(a.spend))}`).join(" · ")}
-          <span className="text-muted-foreground/70"> — pauta en días sin despacho de ese producto; se resta del profit.</span>
+          <span className="text-muted-foreground/70"> — pauta sin producto asignado (keyword no matcheó); se resta del profit.</span>
         </p>
       )}
 
