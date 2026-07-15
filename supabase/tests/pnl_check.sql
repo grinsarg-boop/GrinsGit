@@ -290,7 +290,7 @@ begin
     'tags', 'cuotas_3', 'total_price', '50000',
     'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000","phone":"351-c1","name":"Cuota Paga"}'::jsonb,
     'line_items', '[{"title":"Natures","variant_title":null,"quantity":1,"price":"50000"}]'::jsonb));
-  -- cuotas PENDIENTE, reciente (creada hoy−2 < maduración) → en tránsito (proyectable)
+  -- cuotas PENDIENTE, reciente (creada hoy−2) → en tránsito; SIN proyectar (015): no suma al estimado
   perform upsert_order(jsonb_build_object(
     'id', 2002, 'name', '#2002', 'created_at', current_date - 2, 'financial_status', 'pending',
     'tags', 'cuotas_3', 'total_price', '45000',
@@ -312,9 +312,9 @@ begin
   select * into strict r from daily_pnl where dispatch_date = current_date - 2 and courier = 'correo';
   assert r.entregadas = 0 and r.en_transito = 1, '012 correo pendiente: en tránsito';
   assert round(r.revenue_confirmado, 2) = 0.00, '012 correo pendiente: sin revenue aún';
-  assert round(r.revenue_estimado, 2) = 22500.00, '012 correo pendiente: revenue_est = 0.50×45000';
-  assert round(r.profit_estimado, 2) = 11450.00, '012 correo pendiente: Δ = 22500×0.82 − 2500 − 4500';
-  assert round(r.tasa_proyectada, 4) = 0.5000, '012 correo pendiente: tasa proy (0+0.5)/1';
+  assert round(r.revenue_estimado, 2) = 0.00, '015 correo pendiente: estimado = confirmado (prepago, sin proyección)';
+  assert round(r.profit_estimado, 2) = 0.00, '015 correo pendiente: profit estimado = confirmado = 0';
+  assert round(r.tasa_proyectada, 4) = 0.0000, '015 correo pendiente: tasa = confirmación actual 0/1 (no proyectada)';
 
   raise notice 'pnl_check: OK — todos los asserts pasaron';
 end $test$;

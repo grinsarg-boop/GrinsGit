@@ -124,14 +124,22 @@ export default async function Resumen({
 
   return (
     <main className="space-y-6">
-      <p className="max-w-[70ch] text-sm text-muted-foreground">
-        Un solo número manda: <b className="text-foreground">Profit estimado</b> — lo que vas a ganar con
-        lo ya despachado, incluyendo lo que sigue en la calle. Es el{" "}
-        <span className="rounded bg-muted px-1.5 font-medium text-foreground">confirmado</span> (plata que
-        YA cobraste) más una proyección de las guías{" "}
-        <span className="rounded bg-amber-100 px-1.5 font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-500">en camino</span>,
-        usando tu tasa de entrega histórica por zona y producto.
-      </p>
+      {courier === "correo" ? (
+        <p className="max-w-[70ch] text-sm text-muted-foreground">
+          <b className="text-foreground">Correo = cuotas 3 s/i (prepago).</b> Lo confirmado ya está cobrado y{" "}
+          <b className="text-foreground">no se anula</b> — acá no se proyecta una tasa de entrega. La métrica es la{" "}
+          <b className="text-foreground">tasa de confirmación</b> (pagados / generados), actual; el estimado = el confirmado.
+        </p>
+      ) : (
+        <p className="max-w-[70ch] text-sm text-muted-foreground">
+          Un solo número manda: <b className="text-foreground">Profit estimado</b> — lo que vas a ganar con
+          lo ya despachado, incluyendo lo que sigue en la calle. Es el{" "}
+          <span className="rounded bg-muted px-1.5 font-medium text-foreground">confirmado</span> (plata que
+          YA cobraste) más una proyección de las guías{" "}
+          <span className="rounded bg-amber-100 px-1.5 font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-500">en camino</span>,
+          usando tu tasa de entrega histórica por zona y producto.
+        </p>
+      )}
 
       {stale.length > 0 && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">
@@ -278,7 +286,7 @@ export default async function Resumen({
             <TableHead>Fecha</TableHead>
             <TableHead className="text-right">Despachos</TableHead>
             <TableHead className="w-36">Madurez</TableHead>
-            <TableHead className="text-right">Tasa hoy → final</TableHead>
+            <TableHead className="text-right">{courier === "correo" ? "Confirmación" : "Tasa hoy → final"}</TableHead>
             <TableHead className="text-right text-amber-600 dark:text-amber-500">Profit estimado</TableHead>
             <TableHead className="text-right">confirmado</TableHead>
             <TableHead className="text-right">Ads</TableHead>
