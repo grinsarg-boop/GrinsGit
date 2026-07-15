@@ -31,6 +31,34 @@
     },
     {
       "parameters": {
+        "rule": { "interval": [ { "field": "minutes", "minutesInterval": 10 } ] }
+      },
+      "id": "sched-fixy",
+      "name": "Fixy cada 10min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://biolabs-finanzas.vercel.app/api/sync/fixy?limit=100",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer PEGA_ACA_EL_CRON_SECRET" }
+          ]
+        },
+        "options": { "timeout": 60000 }
+      },
+      "id": "http-fixy",
+      "name": "Sync Fixy (discovery API + estados)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 400]
+    },
+    {
+      "parameters": {
         "rule": { "interval": [ { "field": "hours", "hoursInterval": 1 } ] }
       },
       "id": "sched-meta",
@@ -60,6 +88,7 @@
   ],
   "connections": {
     "Urbano cada 5min": { "main": [ [ { "node": "Sync Urbano (100 stalest)", "type": "main", "index": 0 } ] ] },
+    "Fixy cada 10min": { "main": [ [ { "node": "Sync Fixy (discovery API + estados)", "type": "main", "index": 0 } ] ] },
     "Meta cada 1h": { "main": [ [ { "node": "Sync Meta", "type": "main", "index": 0 } ] ] }
   },
   "settings": { "executionOrder": "v1" }

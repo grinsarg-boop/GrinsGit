@@ -37,7 +37,10 @@ try {
                    'supabase/migrations/010_urbano_ra_rv_map.sql',
                    'supabase/migrations/011_ads_period_alloc.sql',
                    'supabase/migrations/012_canal_cuotas_correo.sql',
-                   'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql']) {
+                   'supabase/migrations/013_dispatch_from_tag.sql',
+                   'supabase/migrations/014_fixy_api_link.sql',
+                   'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
+                   'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');
