@@ -66,7 +66,10 @@ export function toSucursal(row: CorreoRow, codigo: string): CorreoRow {
 }
 
 function clean(s: string): string {
-  return asciiStrip(s).replace(/\s+/g, " ").trim();
+  // La coma no es válida en ningún campo de texto de Mi Correo (localidad,
+  // calle, nombre…): "Avellaneda," no resuelve a la localidad real. La paso a
+  // espacio y colapso, así "X,Y" queda "X Y" y no se pegan las palabras.
+  return asciiStrip(s).replace(/,/g, " ").replace(/\s+/g, " ").trim();
 }
 
 export function normalizeRow(row: CorreoRow): CorreoRow {
