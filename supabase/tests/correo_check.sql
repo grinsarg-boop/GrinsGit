@@ -9,15 +9,15 @@ do $t$
 declare d date := current_date - 2; r daily_pnl%rowtype;
 begin
   -- 3 cuotas_3 (mismo día, mismo producto): 2 pagadas (confirmadas), 1 pendiente reciente (no madura)
-  perform upsert_order(jsonb_build_object('id', 7101, 'name', '#7101', 'created_at', d, 'financial_status', 'paid',
+  perform upsert_order(jsonb_build_object('id', 7101, 'name', '#7101', 'created_at', d::text || 'T12:00:00-03:00', 'financial_status', 'paid',
     'tags', 'cod-form, cuotas_3, mp-pagado', 'total_price', '40000',
     'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000"}'::jsonb,
     'line_items', '[{"title":"Natures","quantity":1,"price":"40000"}]'::jsonb));
-  perform upsert_order(jsonb_build_object('id', 7102, 'name', '#7102', 'created_at', d, 'financial_status', 'paid',
+  perform upsert_order(jsonb_build_object('id', 7102, 'name', '#7102', 'created_at', d::text || 'T12:00:00-03:00', 'financial_status', 'paid',
     'tags', 'cuotas_3', 'total_price', '50000',
     'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000"}'::jsonb,
     'line_items', '[{"title":"Natures","quantity":1,"price":"50000"}]'::jsonb));
-  perform upsert_order(jsonb_build_object('id', 7103, 'name', '#7103', 'created_at', d, 'financial_status', 'pending',
+  perform upsert_order(jsonb_build_object('id', 7103, 'name', '#7103', 'created_at', d::text || 'T12:00:00-03:00', 'financial_status', 'pending',
     'tags', 'cuotas_3', 'total_price', '40000',
     'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000"}'::jsonb,
     'line_items', '[{"title":"Natures","quantity":1,"price":"40000"}]'::jsonb));

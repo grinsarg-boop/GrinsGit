@@ -286,13 +286,13 @@ begin
   do update set p_delivery = 0.50, level = 1;
   -- cuotas PAGADA, madura (creada hoy−14 ≥ maduración 10) → confirmada
   perform upsert_order(jsonb_build_object(
-    'id', 2001, 'name', '#2001', 'created_at', current_date - 14, 'financial_status', 'paid',
+    'id', 2001, 'name', '#2001', 'created_at', (current_date - 14)::text || 'T12:00:00-03:00', 'financial_status', 'paid',
     'tags', 'cuotas_3', 'total_price', '50000',
     'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000","phone":"351-c1","name":"Cuota Paga"}'::jsonb,
     'line_items', '[{"title":"Natures","variant_title":null,"quantity":1,"price":"50000"}]'::jsonb));
   -- cuotas PENDIENTE, reciente (creada hoy−2) → en tránsito; SIN proyectar (015): no suma al estimado
   perform upsert_order(jsonb_build_object(
-    'id', 2002, 'name', '#2002', 'created_at', current_date - 2, 'financial_status', 'pending',
+    'id', 2002, 'name', '#2002', 'created_at', (current_date - 2)::text || 'T12:00:00-03:00', 'financial_status', 'pending',
     'tags', 'cuotas_3', 'total_price', '45000',
     'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000","phone":"351-c2","name":"Cuota Pend"}'::jsonb,
     'line_items', '[{"title":"Natures","variant_title":null,"quantity":1,"price":"45000"}]'::jsonb));

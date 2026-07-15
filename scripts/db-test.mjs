@@ -40,6 +40,7 @@ try {
                    'supabase/migrations/013_dispatch_from_tag.sql',
                    'supabase/migrations/014_fixy_api_link.sql',
                    'supabase/migrations/015_correo_sin_proyeccion.sql',
+                   'supabase/migrations/016_correo_cohorte_art.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql']) {
