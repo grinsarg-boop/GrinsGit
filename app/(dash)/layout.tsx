@@ -10,6 +10,7 @@ export default function DashLayout({ children }: { children: React.ReactNode }) 
         <Link href="/sync" className="text-sm text-muted-foreground hover:text-foreground">Sync</Link>
         <Link href="/etiquetas" className="text-sm text-muted-foreground hover:text-foreground">Etiquetas</Link>
         <Link href="/correo" className="text-sm text-muted-foreground hover:text-foreground">Correo</Link>
+        <Link href="/picking" className="text-sm text-muted-foreground hover:text-foreground">Picking</Link>
         <div className="ml-auto"><ThemeToggle /></div>
       </nav>
       {children}
