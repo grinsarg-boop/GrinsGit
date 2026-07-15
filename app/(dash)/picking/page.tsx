@@ -53,29 +53,43 @@ export default function PickingPage() {
     setLabels([]); setOrders([]); setFiles([]); setMsg(null);
   }
 
-  // ── Agregación (por pedido distinto) ──
-  const ordMap = new Map(orders.map((o) => [o.orden, o]));
-  const distintos = [...new Set(labels.map((l) => l.orden).filter((x): x is string => !!x))];
+  // ── Agregación ──
   const agg = new Map<string, { unidades: number; ordenes: number }>();
+  const bump = (p: string, u: number) => {
+    const a = agg.get(p) ?? { unidades: 0, ordenes: 0 };
+    a.unidades += u; a.ordenes += 1; agg.set(p, a);
+  };
   const sinProducto: string[] = [];
   const noEncontrados: string[] = [];
+
+  // COD (Correo/Fixy/Urbano): por pedido distinto, cruzado con Shopify.
+  const ordMap = new Map(orders.map((o) => [o.orden, o]));
+  const distintos = [...new Set(labels.map((l) => l.orden).filter((x): x is string => !!x))];
+  let ordenesOk = 0;
   for (const orden of distintos) {
     const o = ordMap.get(orden);
     if (!o || !o.encontrado) { noEncontrados.push(orden); continue; }
-    const productosDelPedido = new Set<string>();
-    for (const it of o.items) {
-      if (!it.producto) { sinProducto.push(`#${orden}`); continue; }
-      productosDelPedido.add(it.producto);
-      const a = agg.get(it.producto) ?? { unidades: 0, ordenes: 0 };
-      a.unidades += it.unidades;
-      agg.set(it.producto, a);
+    ordenesOk++;
+    const productos = o.items.filter((it) => it.producto);
+    if (!productos.length) { sinProducto.push(`#${orden}`); continue; }
+    for (const p of new Set(productos.map((it) => it.producto as string))) {
+      bump(p, productos.filter((it) => it.producto === p).reduce((s, it) => s + it.unidades, 0));
     }
-    for (const p of productosDelPedido) agg.get(p)!.ordenes += 1;
   }
+
+  // ML/Flex: producto leído de la etiqueta (cada etiqueta con producto = 1 orden). No cruza Shopify.
+  const mlLabels = labels.filter((l) => (l.courier === "ml" || l.courier === "flex") && l.producto);
+  for (const l of mlLabels) bump(l.producto!, l.unidades ?? 1);
+
   const filas = [...agg.entries()].sort((a, b) => b[1].unidades - a[1].unidades);
   const totU = filas.reduce((s, [, v]) => s + v.unidades, 0);
-  const totO = distintos.length - noEncontrados.length;
-  const sinOrden = labels.filter((l) => !l.orden);
+  const totO = ordenesOk + mlLabels.length;
+
+  // Flags: COD sin N° legible (parse falló) · ML/Flex sin producto · páginas no reconocidas.
+  const COD = new Set(["urbano", "fixy", "correo"]);
+  const sinOrden = labels.filter((l) => COD.has(l.courier) && !l.orden);
+  const mlSinProd = labels.filter((l) => (l.courier === "ml" || l.courier === "flex") && !l.producto);
+  const noRecon = labels.filter((l) => l.courier === "?").length;
   const porCourier = labels.reduce<Record<string, number>>((m, l) => ((m[l.courier] = (m[l.courier] ?? 0) + 1), m), {});
 
   return (
@@ -134,11 +148,19 @@ export default function PickingPage() {
         </div>
       )}
 
-      {(sinOrden.length > 0 || noEncontrados.length > 0 || sinProducto.length > 0) && (
+      {mlLabels.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          ML/Flex ({mlLabels.length}): producto y unidades <b className="text-foreground">leídos de la etiqueta</b> (no cruzan Shopify) — verificá el pack.
+        </p>
+      )}
+
+      {(sinOrden.length > 0 || noEncontrados.length > 0 || sinProducto.length > 0 || mlSinProd.length > 0 || noRecon > 0) && (
         <div className="space-y-1 text-sm text-amber-600">
-          {sinOrden.length > 0 && <p>⚠️ {sinOrden.length} etiqueta(s) sin N° de orden legible (courier: {[...new Set(sinOrden.map((l) => COURIER_LABEL[l.courier]))].join(", ")}) — pág. {sinOrden.map((l) => l.page).join(", ")}. Puede faltar el patrón de ese courier.</p>}
+          {sinOrden.length > 0 && <p>⚠️ {sinOrden.length} etiqueta(s) COD sin N° de orden legible ({[...new Set(sinOrden.map((l) => COURIER_LABEL[l.courier]))].join(", ")}) — pág. {sinOrden.map((l) => l.page).join(", ")}.</p>}
           {noEncontrados.length > 0 && <p>⚠️ No encontrados en Shopify: {noEncontrados.map((o) => `#${o}`).join(", ")}</p>}
-          {sinProducto.length > 0 && <p>⚠️ Ítems sin producto reconocido (keyword no matcheó): {[...new Set(sinProducto)].join(", ")} — completá a mano.</p>}
+          {sinProducto.length > 0 && <p>⚠️ Ítems sin producto reconocido: {[...new Set(sinProducto)].join(", ")} — completá a mano.</p>}
+          {mlSinProd.length > 0 && <p>⚠️ {mlSinProd.length} etiqueta(s) ML/Flex sin producto reconocido — completá a mano.</p>}
+          {noRecon > 0 && <p className="text-muted-foreground">{noRecon} página(s) no reconocidas (posible mitad de etiqueta ML / hoja de resumen) — ignoradas.</p>}
         </div>
       )}
     </div>

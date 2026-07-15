@@ -2,17 +2,27 @@ import { describe, it, expect } from "vitest";
 import { _parsePage } from "./label-picking";
 
 describe("_parsePage", () => {
-  it("Fixy: detecta courier, remito y contrareembolso", () => {
+  it("Fixy: courier, remito y contrareembolso (cruza por orden)", () => {
     const t = "1720297 BIOLABS DESTINATARIO Andres Contrareembolso: $ 49980 BULTOS 1/1 Remito: 16934 www.fixy.com.ar";
-    expect(_parsePage(t, 1)).toEqual({ page: 1, courier: "fixy", orden: "16934", price: 49980 });
+    expect(_parsePage(t, 1)).toEqual({ page: 1, courier: "fixy", orden: "16934", price: 49980, producto: null, unidades: null });
   });
-  it("Correo: N° de orden como #NNNNN + precio con puntos", () => {
-    const r = _parsePage("CORREO ARGENTINO DESTINATARIO #16778 Juan Perez $ 39.990", 2);
+  it("Urbano: Canalizador/Shipper → urbano, orden por #NNNNN", () => {
+    const t = "Fecha emisión Canalizador RES Shipper: 4362-BIOLABS Destinatario Sergio Valor Contrareembolso: $58999 #16943";
+    const r = _parsePage(t, 1);
+    expect(r.courier).toBe("urbano");
+    expect(r.orden).toBe("16943");
+  });
+  it("Correo: DESTINATARIO #NNNNN", () => {
+    const r = _parsePage("CLASICO F.PAGADO REMITENTE BioLabsArg DESTINATARIO #16966 Abel", 2);
     expect(r.courier).toBe("correo");
-    expect(r.orden).toBe("16778");
-    expect(r.price).toBe(39990);
+    expect(r.orden).toBe("16966");
   });
-  it("etiqueta sin N° de orden legible → orden null (se marca para revisar)", () => {
-    expect(_parsePage("etiqueta rara sin datos utiles", 3).orden).toBeNull();
+  it("ML: no cruza (id del vendedor no es orden); producto+pack de la etiqueta", () => {
+    const t = "Venta ID: 20000 17421290758 1 Unidad Sabor Menta 3 Gotero Pureza Drenaje Remitente #262382468";
+    const r = _parsePage(t, 1);
+    expect(r.courier).toBe("ml");
+    expect(r.orden).toBeNull(); // NO agarra el #262382468 del vendedor
+    expect(r.producto).toBe("Pureza");
+    expect(r.unidades).toBe(3);
   });
 });
