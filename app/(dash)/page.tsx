@@ -15,34 +15,71 @@ type Day = {
   ads: number; adsSinCohorte: number;
 };
 
+type MonthAgg = {
+  month: string; despachadas: number; entregadas: number; proyectadas: number;
+  revenueEst: number; profitConf: number; profitEst: number; ads: number;
+};
+
 // Verde ganás / rojo perdés — el color hace el trabajo antes de leer el número.
 const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
+
+const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const monthLabel = (ym: string) => { const [y, m] = ym.split("-"); return `${MES[+m - 1]} ${y}`; };
 
 export default async function Resumen({
   searchParams,
 }: {
-  searchParams: Promise<{ courier?: string }>;
+  searchParams: Promise<{ courier?: string; v?: string }>;
 }) {
-  const { courier } = await searchParams;
+  const { courier, v } = await searchParams;
+  const vista = v === "meses" ? "meses" : "dias";
   const db = supabaseAdmin();
   const from = daysAgoIso(30);
   const today = daysAgoIso(0);
   const courierParam = courier === "urbano" || courier === "fixy" || courier === "correo" ? courier : null;
 
-  // Agregación server-side (dashboard_days, 009): resumen por día ya sumado, con columnas CONFIRMADO
-  // y ESTIMADO (§4.7). El P&L por producto → /dia/[fecha].
-  const { data: rows } = await db.rpc("dashboard_days", { p_from: from, p_courier: courierParam });
-  const list: Day[] = (rows ?? []).map((r: {
+  type Row = {
     dispatch_date: string; despachadas: number; entregadas: number; resueltas: number; proyectadas: number;
     revenue_confirmado: number; revenue_estimado: number; profit_confirmado: number; profit_estimado: number;
     ads: number; ads_sin_cohorte: number;
-  }) => ({
+  };
+  const mapDay = (r: Row): Day => ({
     date: r.dispatch_date, despachadas: r.despachadas, entregadas: r.entregadas, resueltas: r.resueltas,
     proyectadas: Number(r.proyectadas),
     revenueConf: Number(r.revenue_confirmado), revenueEst: Number(r.revenue_estimado),
     profitConf: Number(r.profit_confirmado), profitEst: Number(r.profit_estimado),
     ads: Number(r.ads), adsSinCohorte: Number(r.ads_sin_cohorte),
-  }));
+  });
+
+  // Agregación server-side (dashboard_days, 009): resumen por día ya sumado (§4.7). El P&L por producto → /dia/[fecha].
+  const { data: rows } = await db.rpc("dashboard_days", { p_from: from, p_courier: courierParam });
+  const list: Day[] = ((rows ?? []) as Row[]).map(mapDay);
+
+  // Vista MESES: traigo todo el histórico (daily_pnl es ~1 fila/día) y agrupo por mes en el cliente.
+  // ponytail: alcanza en cliente; migrar a una RPC dashboard_months recién si supera ~1000 días (~3 años).
+  let meses: MonthAgg[] = [];
+  if (vista === "meses") {
+    const { data: allRows } = await db.rpc("dashboard_days", { p_from: "2020-01-01", p_courier: courierParam });
+    const m = new Map<string, MonthAgg>();
+    for (const d of ((allRows ?? []) as Row[]).map(mapDay)) {
+      const k = d.date.slice(0, 7);
+      const a = m.get(k) ?? { month: k, despachadas: 0, entregadas: 0, proyectadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0 };
+      a.despachadas += d.despachadas; a.entregadas += d.entregadas; a.proyectadas += d.proyectadas;
+      a.revenueEst += d.revenueEst; a.profitConf += d.profitConf; a.profitEst += d.profitEst; a.ads += d.ads;
+      m.set(k, a);
+    }
+    meses = [...m.values()].sort((a, b) => (a.month < b.month ? 1 : -1));
+  }
+
+  const hrefWith = (o: { courier?: string; v?: string }) => {
+    const c = o.courier !== undefined ? o.courier : (courier ?? "");
+    const vv = o.v !== undefined ? o.v : vista;
+    const q = new URLSearchParams();
+    if (c) q.set("courier", c);
+    if (vv === "meses") q.set("v", "meses");
+    const s = q.toString();
+    return s ? `/?${s}` : "/";
+  };
 
   const { data: adsSinCohorte } = await db
     .from("v_ads_sin_cohorte").select("*").eq("date", today);
@@ -82,19 +119,35 @@ export default async function Resumen({
         usando tu tasa de entrega histórica por zona y producto.
       </p>
 
-      <div className="flex gap-2 text-sm">
-        {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"]].map(([v, label]) => (
-          <Link
-            key={v}
-            href={v ? `/?courier=${v}` : "/"}
-            className={cn(
-              "rounded-md border px-3 py-1",
-              (courier ?? "") === v ? "bg-primary text-primary-foreground" : "hover:bg-accent",
-            )}
-          >
-            {label}
-          </Link>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <div className="flex gap-2">
+          {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"]].map(([val, label]) => (
+            <Link
+              key={val}
+              href={hrefWith({ courier: val })}
+              className={cn(
+                "rounded-md border px-3 py-1",
+                (courier ?? "") === val ? "bg-primary text-primary-foreground" : "hover:bg-accent",
+              )}
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          {[["dias", "Días"], ["meses", "Meses"]].map(([val, label]) => (
+            <Link
+              key={val}
+              href={hrefWith({ v: val })}
+              className={cn(
+                "rounded-md border px-3 py-1",
+                vista === val ? "bg-primary text-primary-foreground" : "hover:bg-accent",
+              )}
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -184,6 +237,7 @@ export default async function Resumen({
         </CardContent>
       </Card>
 
+      {vista === "dias" ? (
       <Table>
         <TableHeader>
           <TableRow>
@@ -253,6 +307,46 @@ export default async function Resumen({
           )}
         </TableBody>
       </Table>
+      ) : (
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Mes</TableHead>
+            <TableHead className="text-right">Despachos</TableHead>
+            <TableHead className="text-right">Entregadas</TableHead>
+            <TableHead className="text-right">Tasa proy.</TableHead>
+            <TableHead className="text-right text-amber-600 dark:text-amber-500">Profit estimado</TableHead>
+            <TableHead className="text-right">confirmado</TableHead>
+            <TableHead className="text-right">Ads</TableHead>
+            <TableHead className="text-right">ROAS est.</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {meses.map((m) => {
+            const tasaProy = m.despachadas ? m.proyectadas / m.despachadas : 0;
+            return (
+              <TableRow key={m.month}>
+                <TableCell className="font-medium capitalize">{monthLabel(m.month)}</TableCell>
+                <TableCell className="text-right tabular-nums">{m.despachadas}</TableCell>
+                <TableCell className="text-right tabular-nums">{m.entregadas}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{m.despachadas ? fmtPct(tasaProy) : "—"}</TableCell>
+                <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(m.profitEst))}>{fmtMoney(m.profitEst)}</TableCell>
+                <TableCell className={cn("text-right tabular-nums", m.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(m.profitConf)}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads ? fmtMoney(m.ads) : "—"}</TableCell>
+                <TableCell className="text-right tabular-nums">{m.ads > 0 ? fmtRatio(m.revenueEst / m.ads) : "—"}</TableCell>
+              </TableRow>
+            );
+          })}
+          {!meses.length && (
+            <TableRow>
+              <TableCell colSpan={8} className="text-center text-muted-foreground">
+                Sin datos históricos
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+      )}
     </main>
   );
 }
