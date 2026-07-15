@@ -66,6 +66,11 @@ export default async function Resumen({
     { label: "30 días", ...period(30) },
   ];
 
+  // Gastos en Ads (30 días): atribuido a cohortes vs sin cohorte (plata que se resta del profit).
+  const adsAtrib = list.reduce((s, d) => s + d.ads, 0);
+  const adsSin = list.reduce((s, d) => s + d.adsSinCohorte, 0);
+  const adsTot = adsAtrib + adsSin;
+
   return (
     <main className="space-y-6">
       <p className="max-w-[70ch] text-sm text-muted-foreground">
@@ -135,13 +140,49 @@ export default async function Resumen({
         })}
       </div>
 
-      {!!adsSinCohorte?.length && (
-        <p className="text-sm text-muted-foreground">
-          Ads sin cohorte hoy:{" "}
-          {adsSinCohorte.map((a) => `${a.product ?? "sin producto"} ${fmtMoney(Number(a.spend))}`).join(" · ")}
-          <span className="text-muted-foreground/70"> — pauta sin producto asignado (keyword no matcheó); se resta del profit.</span>
-        </p>
-      )}
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Gastos en Ads · 30 días</span>
+            <span className="text-sm text-muted-foreground">total <b className="tabular-nums text-foreground">{fmtMoney(adsTot)}</b></span>
+          </div>
+          <div className="flex flex-wrap gap-x-8 gap-y-3">
+            <div>
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Atribuido a cohortes</div>
+              <div className="text-lg font-semibold tabular-nums">{fmtMoney(adsAtrib)}</div>
+              <div className="text-xs text-muted-foreground">repartido por producto y canal</div>
+            </div>
+            <div>
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Sin cohorte</div>
+              <div className="text-lg font-semibold tabular-nums text-amber-600 dark:text-amber-500">{fmtMoney(adsSin)}</div>
+              <div className="text-xs text-muted-foreground">{adsTot ? fmtPct(adsSin / adsTot) : "—"} del total · se resta del profit</div>
+            </div>
+            <div>
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">ROAS estimado</div>
+              <div className="text-lg font-semibold tabular-nums">{adsTot > 0 ? fmtRatio(list.reduce((s, d) => s + d.revenueEst, 0) / adsTot) : "—"}</div>
+              <div className="text-xs text-muted-foreground">revenue est. / gasto total</div>
+            </div>
+          </div>
+
+          {!!adsSinCohorte?.length && (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">Sin cohorte hoy:</span>{" "}
+              {adsSinCohorte.map((a) => `${a.product ?? "sin producto"} ${fmtMoney(Number(a.spend))}`).join(" · ")}
+            </p>
+          )}
+
+          <details className="text-sm">
+            <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <span className="underline-offset-4 hover:underline">Cómo se imputan los Ads</span> <span className="text-xs">▾</span>
+            </summary>
+            <div className="mt-2 space-y-1.5 border-l-2 pl-3 text-muted-foreground">
+              <p>Cada gasto de Meta se asigna a un <b className="text-foreground">producto</b> por keyword del nombre del anuncio/campaña.</p>
+              <p>El gasto del día por producto se <b className="text-foreground">reparte entre los canales</b> según los despachos de cada uno — Fixy pondera <b className="text-foreground">×1,4</b> (CPA más alto); Correo pondera por pedidos generados.</p>
+              <p>Gasto sin producto (keyword no matcheó) o de un producto <b className="text-foreground">sin despachos ese día</b> → <span className="text-amber-600 dark:text-amber-500">sin cohorte</span>: plata real no atribuible a ninguna fila, se <b className="text-foreground">resta directo del profit</b> y suma al denominador del ROAS.</p>
+            </div>
+          </details>
+        </CardContent>
+      </Card>
 
       <Table>
         <TableHeader>
@@ -152,6 +193,7 @@ export default async function Resumen({
             <TableHead className="text-right">Tasa hoy → final</TableHead>
             <TableHead className="text-right text-amber-600 dark:text-amber-500">Profit estimado</TableHead>
             <TableHead className="text-right">confirmado</TableHead>
+            <TableHead className="text-right">Ads</TableHead>
             <TableHead className="text-right">ROAS est.</TableHead>
           </TableRow>
         </TableHeader>
@@ -162,8 +204,13 @@ export default async function Resumen({
             const tasaProy = d.despachadas ? d.proyectadas / d.despachadas : 0;
             const inmaduro = pct < 0.8; // §6.1: el estimado todavía es proyección mientras <80% resuelto
             return (
-              <TableRow key={d.date}>
-                <TableCell>{fmtDate(d.date)}</TableCell>
+              <TableRow key={d.date} className="group hover:bg-accent/40">
+                <TableCell>
+                  <Link href={`/dia/${d.date}`} className="font-medium underline-offset-4 group-hover:underline">
+                    {fmtDate(d.date)}
+                    <span className="ml-1 text-muted-foreground opacity-0 transition group-hover:opacity-100">→</span>
+                  </Link>
+                </TableCell>
                 <TableCell className="text-right tabular-nums">{d.despachadas}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
@@ -192,13 +239,14 @@ export default async function Resumen({
                 <TableCell className={cn("text-right tabular-nums", d.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>
                   {fmtMoney(d.profitConf)}
                 </TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads ? fmtMoney(d.ads) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums">{d.ads > 0 ? fmtRatio(d.revenueEst / d.ads) : "—"}</TableCell>
               </TableRow>
             );
           })}
           {!list.length && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center text-muted-foreground">
+              <TableCell colSpan={8} className="text-center text-muted-foreground">
                 Sin despachos en los últimos 30 días
               </TableCell>
             </TableRow>
