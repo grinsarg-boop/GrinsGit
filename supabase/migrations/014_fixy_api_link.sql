@@ -13,7 +13,9 @@ insert into courier_status_map (courier, status_raw, status_canonical, match_typ
   ('fixy', '134', 'en_transito', 'exact'),   -- En Recorrido
   ('fixy', '51',  'rehusado',    'exact'),   -- Destinatario rechaza el envío
   ('fixy', '123', 'cancelado',   'exact'),   -- ANULADO
-  ('fixy', '142', 'en_transito', 'exact')    -- Confirmación externa
+  ('fixy', '142', 'en_transito', 'exact'),   -- Confirmación externa
+  ('fixy', '127', 'en_transito', 'exact'),   -- Visita sin contacto alguno (reintento, sigue en juego)
+  ('fixy', '63',  'incidencia',  'exact')    -- Zona peligrosa o de muy difícil acceso (bloqueo)
 on conflict (courier, status_raw)
   do update set status_canonical = excluded.status_canonical, match_type = 'exact';
 
