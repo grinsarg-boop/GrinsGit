@@ -26,6 +26,10 @@ const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-40
 const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const monthLabel = (ym: string) => { const [y, m] = ym.split("-"); return `${MES[+m - 1]} ${y}`; };
 
+const COURIER_LABEL: Record<string, string> = { urbano: "Urbano", fixy: "Fixy" };
+// >3 días sin guías nuevas = feo (urbano saltea domingos, así que ≤1 ok · 2-3 ámbar · >3 rojo).
+const STALE_DAYS = 3;
+
 export default async function Resumen({
   searchParams,
 }: {
@@ -84,6 +88,16 @@ export default async function Resumen({
   const { data: adsSinCohorte } = await db
     .from("v_ads_sin_cohorte").select("*").eq("date", today);
 
+  // Frescura del feed: hace cuánto entró la última guía por courier. El hueco del 08/07 fue
+  // silencioso una semana justamente porque nadie miraba esto.
+  const freshness = await Promise.all((["urbano", "fixy"] as const).map(async (c) => {
+    const { data } = await db.from("shipments").select("dispatched_at").eq("courier", c)
+      .not("dispatched_at", "is", null).order("dispatched_at", { ascending: false }).limit(1);
+    return { courier: c as string, last: data?.[0]?.dispatched_at as string | undefined };
+  }));
+  const daysSince = (d: string) => Math.floor((new Date(today).getTime() - new Date(d).getTime()) / 86400_000);
+  const stale = freshness.filter((f) => !f.last || daysSince(f.last) > STALE_DAYS);
+
   const period = (daysBack: number) => {
     const cut = daysAgoIso(daysBack);
     const acc = { despachadas: 0, entregadas: 0, proyectadas: 0,
@@ -118,6 +132,26 @@ export default async function Resumen({
         <span className="rounded bg-amber-100 px-1.5 font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-500">en camino</span>,
         usando tu tasa de entrega histórica por zona y producto.
       </p>
+
+      {stale.length > 0 && (
+        <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">
+          ⚠️ Feed de despachos frío — {stale.map((f) => `${COURIER_LABEL[f.courier]} ${f.last ? `hace ${daysSince(f.last)} días` : "sin datos"}`).join(" · ")}. Puede estar cortado; revisá el sync.
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Frescura del feed</span>
+        {freshness.map((f) => {
+          const n = f.last ? daysSince(f.last) : Infinity;
+          const color = n <= 1 ? "text-emerald-600 dark:text-emerald-400" : n <= STALE_DAYS ? "text-amber-600 dark:text-amber-500" : "text-destructive";
+          const rel = !f.last ? "sin datos" : n === 0 ? "hoy" : n === 1 ? "ayer" : `hace ${n} días`;
+          return (
+            <span key={f.courier} className={color}>
+              {COURIER_LABEL[f.courier]}: última guía <span className="tabular-nums">{f.last ? fmtDate(f.last) : "—"}</span> <span className="text-xs opacity-80">({rel})</span>
+            </span>
+          );
+        })}
+      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <div className="flex gap-2">
