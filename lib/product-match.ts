@@ -15,3 +15,9 @@ export function matchProduct(text: string): string | null {
   for (const [kw, name] of PRODUCT_KEYWORDS) if (t.includes(kw)) return name;
   return null;
 }
+
+// Todos los productos distintos presentes en el texto (para detectar etiquetas mixtas de ML).
+export function matchAllProducts(text: string): string[] {
+  const t = text.toLowerCase();
+  return [...new Set(PRODUCT_KEYWORDS.filter(([kw]) => t.includes(kw)).map(([, name]) => name))];
+}

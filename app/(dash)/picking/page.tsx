@@ -78,17 +78,20 @@ export default function PickingPage() {
   }
 
   // ML/Flex: producto leído de la etiqueta (cada etiqueta con producto = 1 orden). No cruza Shopify.
-  const mlLabels = labels.filter((l) => (l.courier === "ml" || l.courier === "flex") && l.producto);
+  // Los mixtos / multi-compra van a "revisar" (no se cuentan solos).
+  const ML = (l: Label) => l.courier === "ml" || l.courier === "flex";
+  const mlLabels = labels.filter((l) => ML(l) && l.producto && !l.revisar);
   for (const l of mlLabels) bump(l.producto!, l.unidades ?? 1);
 
   const filas = [...agg.entries()].sort((a, b) => b[1].unidades - a[1].unidades);
   const totU = filas.reduce((s, [, v]) => s + v.unidades, 0);
   const totO = ordenesOk + mlLabels.length;
 
-  // Flags: COD sin N° legible (parse falló) · ML/Flex sin producto · páginas no reconocidas.
+  // Flags.
   const COD = new Set(["urbano", "fixy", "correo"]);
   const sinOrden = labels.filter((l) => COD.has(l.courier) && !l.orden);
-  const mlSinProd = labels.filter((l) => (l.courier === "ml" || l.courier === "flex") && !l.producto);
+  const mlRevisar = labels.filter((l) => ML(l) && l.revisar);
+  const mlSinProd = labels.filter((l) => ML(l) && !l.producto && !l.revisar);
   const noRecon = labels.filter((l) => l.courier === "?").length;
   const porCourier = labels.reduce<Record<string, number>>((m, l) => ((m[l.courier] = (m[l.courier] ?? 0) + 1), m), {});
 
@@ -154,11 +157,12 @@ export default function PickingPage() {
         </p>
       )}
 
-      {(sinOrden.length > 0 || noEncontrados.length > 0 || sinProducto.length > 0 || mlSinProd.length > 0 || noRecon > 0) && (
+      {(sinOrden.length > 0 || noEncontrados.length > 0 || sinProducto.length > 0 || mlRevisar.length > 0 || mlSinProd.length > 0 || noRecon > 0) && (
         <div className="space-y-1 text-sm text-amber-600">
           {sinOrden.length > 0 && <p>⚠️ {sinOrden.length} etiqueta(s) COD sin N° de orden legible ({[...new Set(sinOrden.map((l) => COURIER_LABEL[l.courier]))].join(", ")}) — pág. {sinOrden.map((l) => l.page).join(", ")}.</p>}
           {noEncontrados.length > 0 && <p>⚠️ No encontrados en Shopify: {noEncontrados.map((o) => `#${o}`).join(", ")}</p>}
           {sinProducto.length > 0 && <p>⚠️ Ítems sin producto reconocido: {[...new Set(sinProducto)].join(", ")} — completá a mano.</p>}
+          {mlRevisar.length > 0 && <p>⚠️ {mlRevisar.length} etiqueta(s) ML/Flex mixtas o multi-compra (pág. {mlRevisar.map((l) => l.page).join(", ")}) — NO se cuentan solas, revisá a mano.</p>}
           {mlSinProd.length > 0 && <p>⚠️ {mlSinProd.length} etiqueta(s) ML/Flex sin producto reconocido — completá a mano.</p>}
           {noRecon > 0 && <p className="text-muted-foreground">{noRecon} página(s) no reconocidas (posible mitad de etiqueta ML / hoja de resumen) — ignoradas.</p>}
         </div>

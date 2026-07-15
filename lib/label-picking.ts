@@ -4,7 +4,7 @@
 //                               → se lee directo (matchProduct + pack). Marcado como "verificar".
 // Todo en el navegador, nada se sube.
 
-import { matchProduct } from "./product-match";
+import { matchAllProducts } from "./product-match";
 
 export type LabelCourier = "urbano" | "fixy" | "correo" | "ml" | "flex" | "?";
 export type Label = {
@@ -12,8 +12,9 @@ export type Label = {
   courier: LabelCourier;
   orden: string | null;      // COD: para cruzar con Shopify
   price: number | null;      // contrareembolso (validación)
-  producto: string | null;   // ML/Flex: leído de la etiqueta
-  unidades: number | null;   // ML/Flex: pack × cantidad (best-effort)
+  producto: string | null;   // ML/Flex: leído de la etiqueta (único)
+  unidades: number | null;   // ML/Flex: unidades del pack
+  revisar: boolean;          // ML/Flex mixto o multi-compra → contar a mano
 };
 
 function parsePage(text: string, page: number): Label {
@@ -41,16 +42,27 @@ function parsePage(text: string, page: number): Label {
 
   let producto: string | null = null;
   let unidades: number | null = null;
+  let revisar = false;
   if (courier === "ml" || courier === "flex") {
-    producto = matchProduct(text);
-    if (producto) {
-      const pack = text.match(/(\d+)\s*(?:u\b|goteros?|frascos?|comprimidos?|c[aá]psulas?)/i)?.[1];
-      const un = text.match(/(\d+)\s*unidad/i)?.[1];
-      unidades = (pack ? +pack : 1) * (un ? +un : 1);
+    const prods = matchAllProducts(text);                 // varios keywords = venta mixta
+    const packM = text.match(/pack\s*x?\s*(\d+)/i)
+      ?? text.match(/(\d+)\s*(?:goteros?|frascos?|comprimidos?|c[aá]psulas?)\b/i)
+      ?? text.match(/(\d+)\s*u\b/i);
+    const pack = packM ? +packM[1] : 1;
+    const qtyM = text.match(/(\d+)\s*unidad(?:es)?\b/i);   // "1 Unidad" (compras del mismo listado)
+    const multiCompra = (qtyM ? +qtyM[1] : 1) > 1;
+    if (prods.length === 1 && !multiCompra) {
+      producto = prods[0];
+      unidades = pack;
+    } else if (prods.length >= 1) {
+      // mixto (>1 producto) o multi-compra → no se puede partir bien desde la etiqueta
+      producto = prods.length === 1 ? prods[0] : null;
+      revisar = true;
     }
+    // prods.length === 0 → sin producto reconocido (se marca aparte)
   }
 
-  return { page, courier, orden, price, producto, unidades };
+  return { page, courier, orden, price, producto, unidades, revisar };
 }
 
 export async function extractLabels(input: ArrayBuffer): Promise<Label[]> {
