@@ -38,12 +38,13 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
     db.from("products").select("id, name"),
     db.from("daily_pnl").select("courier, product_id, despachadas, entregadas, en_transito, revenue_estimado, profit_estimado, profit_confirmado, ads, flete, tasa_proyectada").eq("dispatch_date", fecha),
     db.from("shipments").select("tracking, courier, status_canonical, freight_cost, province, orders(order_number, cod_amount, customer_name)").eq("dispatched_at", fecha).order("courier"),
-    db.from("ad_spend").select("ad_name, campaign_name, spend, product_id").eq("date", fecha).order("spend", { ascending: false }),
+    db.from("ad_spend").select("ad_name, campaign_name, spend, purchases, product_id").eq("date", fecha).order("spend", { ascending: false }),
   ]);
   const pname = new Map((prodsRes.data ?? []).map((p) => [p.id, p.name as string]));
   const pnl = (pnlRes.data ?? []) as Pnl[];
   const guias = (guiasRes.data ?? []) as unknown as Guia[];
-  const ads = (adsRes.data ?? []) as { ad_name: string | null; campaign_name: string | null; spend: number; product_id: number | null }[];
+  type Ad = { ad_name: string | null; campaign_name: string | null; spend: number; purchases: number; product_id: number | null };
+  const ads = (adsRes.data ?? []) as Ad[];
 
   const tot = pnl.reduce((a, r) => ({
     despachadas: a.despachadas + r.despachadas, entregadas: a.entregadas + r.entregadas,
@@ -52,6 +53,16 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
     ads: a.ads + Number(r.ads), flete: a.flete + Number(r.flete),
   }), { despachadas: 0, entregadas: 0, enTransito: 0, revenueEst: 0, profitEst: 0, profitConf: 0, ads: 0, flete: 0 });
   const adsTotal = ads.reduce((s, a) => s + Number(a.spend), 0);
+  const adsVentas = ads.reduce((s, a) => s + (a.purchases ?? 0), 0);
+
+  // Agrupar por campaña (no hay nivel adset en el modelo). Cada campaña se despliega a sus anuncios.
+  const campañas = [...ads.reduce((m, a) => {
+    const k = a.campaign_name || "(sin campaña)";
+    const g = m.get(k) ?? { spend: 0, purchases: 0, ads: [] as Ad[] };
+    g.spend += Number(a.spend); g.purchases += a.purchases ?? 0; g.ads.push(a);
+    return m.set(k, g);
+  }, new Map<string, { spend: number; purchases: number; ads: Ad[] }>()).entries()]
+    .sort((a, b) => b[1].spend - a[1].spend);
 
   return (
     <main className="space-y-6">
@@ -83,30 +94,50 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
         ))}
       </div>
 
-      {/* Gasto en Ads del día — claridad: en qué se gastó */}
+      {/* Gasto en Ads del día — por campaña, desplegable a sus anuncios (ahorra espacio) */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold">Gasto en Ads del día — {fmtMoney(adsTotal)}</h2>
-        {ads.length ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Anuncio</TableHead>
-                <TableHead>Producto</TableHead>
-                <TableHead className="text-right">Gasto</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {ads.map((a, i) => (
-                <TableRow key={i}>
-                  <TableCell className="max-w-[28ch] truncate">{a.ad_name || a.campaign_name || "—"}</TableCell>
-                  <TableCell className={cn(!a.product_id && "text-amber-600 dark:text-amber-500")}>
-                    {a.product_id ? pname.get(a.product_id) ?? `#${a.product_id}` : "sin producto"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtMoney(Number(a.spend))}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <div className="flex flex-wrap items-baseline gap-x-3">
+          <h2 className="text-sm font-semibold">Gasto en Ads del día — {fmtMoney(adsTotal)}</h2>
+          {adsVentas > 0 && (
+            <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
+              {adsVentas} venta{adsVentas === 1 ? "" : "s"}
+              <Tip tip="Compras que Meta le atribuye a los anuncios (según su ventana de atribución), no necesariamente entregas COD." />
+            </span>
+          )}
+        </div>
+        {campañas.length ? (
+          <div className="divide-y overflow-hidden rounded-lg border text-sm">
+            {/* encabezado de columnas */}
+            <div className="flex items-center gap-3 bg-muted/40 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <span className="flex-1">Campaña</span>
+              <span className="w-20 text-right">Anuncios</span>
+              <span className="w-16 text-right">Ventas</span>
+              <span className="w-24 text-right">Gasto</span>
+            </div>
+            {campañas.map(([name, g]) => (
+              <details key={name} className="group">
+                <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-accent/40 [&::-webkit-details-marker]:hidden">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
+                  <span className="min-w-0 flex-1 truncate font-medium">{name}</span>
+                  <span className="w-20 text-right tabular-nums text-muted-foreground">{g.ads.length}</span>
+                  <span className="w-16 text-right tabular-nums">{g.purchases > 0 ? g.purchases : "—"}</span>
+                  <span className="w-24 text-right font-semibold tabular-nums">{fmtMoney(g.spend)}</span>
+                </summary>
+                <div className="bg-muted/20">
+                  {[...g.ads].sort((a, b) => Number(b.spend) - Number(a.spend)).map((a, i) => (
+                    <div key={i} className="flex items-center gap-3 border-t border-border/50 px-3 py-1.5">
+                      <span className="min-w-0 flex-1 truncate pl-6 text-muted-foreground">{a.ad_name || "—"}</span>
+                      <span className={cn("hidden w-28 truncate text-right text-xs sm:inline", !a.product_id && "text-amber-600 dark:text-amber-500")}>
+                        {a.product_id ? pname.get(a.product_id) ?? `#${a.product_id}` : "sin producto"}
+                      </span>
+                      <span className="w-16 text-right tabular-nums">{a.purchases > 0 ? a.purchases : "—"}</span>
+                      <span className="w-24 text-right tabular-nums text-muted-foreground">{fmtMoney(Number(a.spend))}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ))}
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">Sin gasto en Ads registrado ese día.</p>
         )}
