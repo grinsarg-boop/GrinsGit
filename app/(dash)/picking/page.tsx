@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { extractLabels, type Label } from "@/lib/label-picking";
+import { extractLabels, packBreakdown, type Label } from "@/lib/label-picking";
 import type { PickingOrder } from "@/app/api/picking/route";
 
 const COURIER_LABEL: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", "?": "¿?" };
@@ -54,10 +54,11 @@ export default function PickingPage() {
   }
 
   // ── Agregación ──
-  const agg = new Map<string, { unidades: number; ordenes: number }>();
+  // packs: unidades de cada pedido del producto → packBreakdown lo vuelve "10×1 · 15×2 · 15×4".
+  const agg = new Map<string, { unidades: number; ordenes: number; packs: number[] }>();
   const bump = (p: string, u: number) => {
-    const a = agg.get(p) ?? { unidades: 0, ordenes: 0 };
-    a.unidades += u; a.ordenes += 1; agg.set(p, a);
+    const a = agg.get(p) ?? { unidades: 0, ordenes: 0, packs: [] };
+    a.unidades += u; a.ordenes += 1; a.packs.push(u); agg.set(p, a);
   };
   const sinProducto: string[] = [];
   const noEncontrados: string[] = [];
@@ -102,8 +103,8 @@ export default function PickingPage() {
         <p className="max-w-[70ch] text-sm text-muted-foreground">
           Subí los PDF de etiquetas de cualquier courier (Correo, Fixy, Urbano). Lee el N° de orden de
           cada etiqueta, lo cruza con Shopify y te dice <b className="text-foreground">cuántas unidades
-          de cada producto</b> y <b className="text-foreground">cuántas órdenes</b> hay que despachar. Se
-          procesa en tu navegador.
+          de cada producto</b>, <b className="text-foreground">cuántas órdenes</b> y{" "}
+          <b className="text-foreground">qué paquetes armar</b> (ej: 10×1 · 15×2 · 15×4). Se procesa en tu navegador.
         </p>
       </div>
 
@@ -125,12 +126,13 @@ export default function PickingPage() {
       {!!filas.length && (
         <div className="space-y-2">
           <h2 className="text-sm font-semibold">A despachar hoy — {totO} órdenes · {totU} unidades</h2>
-          <table className="w-full max-w-lg text-sm">
+          <table className="w-full max-w-2xl text-sm">
             <thead>
               <tr className="border-b text-left text-muted-foreground">
                 <th className="py-1">Producto</th>
                 <th className="text-right">Órdenes</th>
                 <th className="text-right">Unidades</th>
+                <th className="pl-4">Paquetes a armar</th>
               </tr>
             </thead>
             <tbody>
@@ -139,12 +141,14 @@ export default function PickingPage() {
                   <td className="py-1 font-medium">{p}</td>
                   <td className="text-right tabular-nums">{v.ordenes}</td>
                   <td className="text-right font-semibold tabular-nums">{v.unidades}</td>
+                  <td className="pl-4 tabular-nums text-muted-foreground">{packBreakdown(v.packs)}</td>
                 </tr>
               ))}
               <tr className="font-semibold">
                 <td className="py-1">Total</td>
                 <td className="text-right tabular-nums">{totO}</td>
                 <td className="text-right tabular-nums">{totU}</td>
+                <td />
               </tr>
             </tbody>
           </table>

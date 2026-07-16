@@ -1,5 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { _parsePage } from "./label-picking";
+import { _parsePage, packBreakdown } from "./label-picking";
+
+describe("packBreakdown", () => {
+  it("agrupa por tamaño de pack, ordenado", () => {
+    // 10 pedidos de a 1, 15 de a 2, 15 de a 4 → 100 unidades
+    const packs = [...Array(10).fill(1), ...Array(15).fill(2), ...Array(15).fill(4)];
+    expect(packBreakdown(packs)).toBe("10×1 · 15×2 · 15×4");
+    expect(packs.reduce((s, u) => s + u, 0)).toBe(100);
+  });
+  it("vacío → string vacío", () => {
+    expect(packBreakdown([])).toBe("");
+  });
+});
 
 describe("_parsePage", () => {
   it("Fixy: courier, remito y contrareembolso (cruza por orden)", () => {

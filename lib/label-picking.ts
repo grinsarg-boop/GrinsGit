@@ -65,6 +65,14 @@ function parsePage(text: string, page: number): Label {
   return { page, courier, orden, price, producto, unidades, revisar };
 }
 
+// Desglose de paquetes por tamaño de pack: dado el N° de unidades de cada pedido de un producto,
+// devuelve "10×1 · 15×2 · 15×4" (10 pedidos de a 1, 15 de a 2, 15 de a 4). Ordenado por tamaño.
+export function packBreakdown(unidadesPorPedido: number[]): string {
+  const packs = new Map<number, number>();
+  for (const u of unidadesPorPedido) packs.set(u, (packs.get(u) ?? 0) + 1);
+  return [...packs.entries()].sort((a, b) => a[0] - b[0]).map(([u, n]) => `${n}×${u}`).join(" · ");
+}
+
 export async function extractLabels(input: ArrayBuffer): Promise<Label[]> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc =
