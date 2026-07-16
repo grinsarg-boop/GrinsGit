@@ -39,9 +39,22 @@ type CorreoOrder = {
   order_items: { product_id: number | null; qty: number; unit_price: number }[];
 };
 
-export default async function Dia({ params }: { params: Promise<{ fecha: string }> }) {
+export default async function Dia({ params, searchParams }: {
+  params: Promise<{ fecha: string }>;
+  searchParams: Promise<{ courier?: string; desde?: string; hasta?: string; v?: string }>;
+}) {
   const { fecha } = await params;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) notFound();
+  const sp = await searchParams;
+  // Filtro de courier heredado del panel principal (Urbano/Fixy/Correo o null = Todos).
+  const courierParam = sp.courier === "urbano" || sp.courier === "fixy" || sp.courier === "correo" ? sp.courier : null;
+  // "Volver" preserva el estado del panel (courier + rango + vista).
+  const backQs = new URLSearchParams();
+  if (sp.courier) backQs.set("courier", sp.courier);
+  if (sp.desde) backQs.set("desde", sp.desde);
+  if (sp.hasta) backQs.set("hasta", sp.hasta);
+  if (sp.v) backQs.set("v", sp.v);
+  const backHref = backQs.toString() ? `/?${backQs}` : "/";
   const db = supabaseAdmin();
   // Día ARGENTINA (UTC-3): [fecha 03:00Z, fecha+1 03:00Z) — para cohortar Correo por created_at, como el P&L (016).
   const nd = new Date(`${fecha}T00:00:00Z`); nd.setUTCDate(nd.getUTCDate() + 1);
@@ -58,12 +71,22 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
     return (b.data ?? []).map((a) => ({ ...a, adset_name: null })) as Ad[];
   };
 
+  // El filtro de courier del panel se aplica a cada sección: P&L, guías y (según corresponda) Correo.
+  let pnlQ = db.from("daily_pnl").select("courier, product_id, despachadas, entregadas, en_transito, revenue_estimado, profit_estimado, profit_confirmado, ads, flete, tasa_proyectada").eq("dispatch_date", fecha);
+  let guiasQ = db.from("shipments").select("tracking, courier, status_canonical, freight_cost, province, orders(order_number, cod_amount, customer_name, order_items(product_id, qty, unit_price))").eq("dispatched_at", fecha).order("courier");
+  if (courierParam) { pnlQ = pnlQ.eq("courier", courierParam); guiasQ = guiasQ.eq("courier", courierParam); }
+  // Correo (cuotas) no está en shipments; solo se consulta si el filtro es Correo o Todos.
+  const wantCorreo = !courierParam || courierParam === "correo";
+  const correoQ = wantCorreo
+    ? db.from("orders").select("order_number, customer_name, province, financial_status, deposit_amount, cod_amount, order_items(product_id, qty, unit_price)").ilike("tags", "%cuotas_3%").is("cancelled_at", null).in("financial_status", ["paid", "pending"]).gte("created_at", artFrom).lt("created_at", artTo)
+    : Promise.resolve({ data: [] as CorreoOrder[] });
+
   const [prodsRes, pnlRes, guiasRes, ads, correoRes] = await Promise.all([
     db.from("products").select("id, name"),
-    db.from("daily_pnl").select("courier, product_id, despachadas, entregadas, en_transito, revenue_estimado, profit_estimado, profit_confirmado, ads, flete, tasa_proyectada").eq("dispatch_date", fecha),
-    db.from("shipments").select("tracking, courier, status_canonical, freight_cost, province, orders(order_number, cod_amount, customer_name, order_items(product_id, qty, unit_price))").eq("dispatched_at", fecha).order("courier"),
+    pnlQ,
+    guiasQ,
     fetchAds(),
-    db.from("orders").select("order_number, customer_name, province, financial_status, deposit_amount, cod_amount, order_items(product_id, qty, unit_price)").ilike("tags", "%cuotas_3%").is("cancelled_at", null).in("financial_status", ["paid", "pending"]).gte("created_at", artFrom).lt("created_at", artTo),
+    correoQ,
   ]);
   const pname = new Map((prodsRes.data ?? []).map((p) => [p.id, p.name as string]));
   const pnl = (pnlRes.data ?? []) as Pnl[];
@@ -164,10 +187,24 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
     <main className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">← Volver</Link>
-          <h1 className="text-xl font-semibold">Despachos del {fmtDate(fecha)}</h1>
+          <Link href={backHref} className="text-sm text-muted-foreground hover:text-foreground">← Volver</Link>
+          <h1 className="flex flex-wrap items-center gap-2 text-xl font-semibold">
+            Despachos del {fmtDate(fecha)}
+            {courierParam && (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-2 py-0.5 text-sm text-background">
+                {COURIER[courierParam]}
+                <Link href={`/dia/${fecha}`} title="Ver todos los couriers" className="text-background/60 hover:text-background">×</Link>
+              </span>
+            )}
+          </h1>
         </div>
-        <span className="text-sm text-muted-foreground"><b className="text-foreground tabular-nums">{tot.despachadas}</b> guías · <b className="text-foreground tabular-nums">{tot.entregadas}</b> entregadas · <b className="text-foreground tabular-nums">{tot.enTransito}</b> en la calle</span>
+        <span className="text-sm text-muted-foreground">
+          {courierParam === "correo" ? (
+            <><b className="text-foreground tabular-nums">{tot.despachadas}</b> órdenes · <b className="text-foreground tabular-nums">{tot.entregadas}</b> pagadas · <b className="text-foreground tabular-nums">{tot.enTransito}</b> pendientes</>
+          ) : (
+            <><b className="text-foreground tabular-nums">{tot.despachadas}</b> guías · <b className="text-foreground tabular-nums">{tot.entregadas}</b> entregadas · <b className="text-foreground tabular-nums">{tot.enTransito}</b> en la calle</>
+          )}
+        </span>
       </div>
 
       {/* Totales del día */}
@@ -176,7 +213,9 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
           { label: "Profit estimado", value: fmtMoney(tot.profitEst), color: pnlColor(tot.profitEst), tip: "Confirmado más la proyección de lo que sigue en camino, menos Ads." },
           { label: "Confirmado", value: fmtMoney(tot.profitConf), color: tot.profitConf < 0 ? "text-destructive/80" : "text-foreground", tip: "Plata que ya cobraste, neta del gasto de Ads del período. Puede dar negativo de forma temporal: significa que todavía gastaste más en Ads de lo que maduró en ventas, y se corrige a medida que las guías se entregan." },
           { label: "Revenue estimado", value: fmtMoney(tot.revenueEst), color: "text-foreground", tip: null },
-          { label: "Gasto en Ads", value: fmtMoney(adsTotal), color: "text-foreground", tip: null },
+          { label: "Gasto en Ads", value: fmtMoney(tot.ads), color: "text-foreground", tip: courierParam
+              ? `Pauta atribuida a los despachos de ${COURIER[courierParam]} (repartida por el P&L). El gasto crudo total de Meta del día está en la sección de abajo.`
+              : "Pauta atribuida a los despachos del día (repartida por el P&L). El gasto crudo de Meta está en la sección de abajo." },
         ].map((k) => (
           <Card key={k.label}>
             <CardContent className="pt-5">
@@ -194,6 +233,7 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
       <section className="space-y-2">
         <div className="flex flex-wrap items-baseline gap-x-3">
           <h2 className="text-sm font-semibold">Gasto en Ads del día — {fmtMoney(adsTotal)}</h2>
+          {courierParam && <span className="text-xs text-muted-foreground">(total del día · Meta no lo separa por courier)</span>}
           {adsVentas > 0 && (
             <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
               {adsVentas} venta{adsVentas === 1 ? "" : "s"}

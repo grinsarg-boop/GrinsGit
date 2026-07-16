@@ -94,6 +94,17 @@ export default async function Resumen({
     return s ? `/?${s}` : "/";
   };
 
+  // Link al día: hereda el filtro de courier (+ rango/vista, para que "Volver" reconstruya el panel).
+  const diaHref = (date: string) => {
+    const q = new URLSearchParams();
+    if (courier) q.set("courier", courier);
+    if (desde) q.set("desde", desde);
+    if (hasta) q.set("hasta", hasta);
+    if (vista === "meses") q.set("v", "meses");
+    const s = q.toString();
+    return s ? `/dia/${date}?${s}` : `/dia/${date}`;
+  };
+
   // Atajos de rango [label, desde, hasta]. "Mes pasado" = mes calendario anterior completo.
   const [ey, em] = today.slice(0, 7).split("-").map(Number);
   const pmY = em === 1 ? ey - 1 : ey;
@@ -379,7 +390,7 @@ export default async function Resumen({
             return (
               <TableRow key={d.date} className="group hover:bg-accent/40">
                 <TableCell>
-                  <Link href={`/dia/${d.date}`} className="font-medium underline-offset-4 group-hover:underline">
+                  <Link href={diaHref(d.date)} className="font-medium underline-offset-4 group-hover:underline">
                     {fmtDate(d.date)}
                     <span className="ml-1 text-muted-foreground opacity-0 transition group-hover:opacity-100">→</span>
                   </Link>
