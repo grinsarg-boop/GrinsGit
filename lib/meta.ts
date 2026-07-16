@@ -9,6 +9,7 @@ export type AdSpendRow = {
   date: string;
   ad_id: string;
   ad_name: string;
+  adset_name: string;
   campaign_name: string;
   spend: number;
   purchases: number;
@@ -25,7 +26,7 @@ export async function fetchMetaInsights(): Promise<AdSpendRow[]> {
     `https://graph.facebook.com/${v}/${account}/insights?` +
     new URLSearchParams({
       level: "ad",
-      fields: "ad_id,ad_name,campaign_name,spend,actions",
+      fields: "ad_id,ad_name,adset_name,campaign_name,spend,actions",
       time_increment: "1",
       time_range: JSON.stringify({ since, until }),
       limit: "200",
@@ -37,7 +38,7 @@ export async function fetchMetaInsights(): Promise<AdSpendRow[]> {
     const res: Response = await fetch(url);
     const body: {
       data?: {
-        date_start: string; ad_id: string; ad_name?: string; campaign_name?: string;
+        date_start: string; ad_id: string; ad_name?: string; adset_name?: string; campaign_name?: string;
         spend?: string; actions?: { action_type: string; value: string }[];
       }[];
       paging?: { next?: string };
@@ -49,6 +50,7 @@ export async function fetchMetaInsights(): Promise<AdSpendRow[]> {
         date: r.date_start,
         ad_id: r.ad_id,
         ad_name: r.ad_name ?? "",
+        adset_name: r.adset_name ?? "",
         campaign_name: r.campaign_name ?? "",
         spend: parseFloat(r.spend ?? "0"),
         purchases: (r.actions ?? [])
