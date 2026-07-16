@@ -2,6 +2,9 @@
 //   COD (Correo/Fixy/Urbano) → N° de orden → se cruza contra Shopify (/api/picking) para el producto.
 //   MercadoLibre (ML/Flex)   → no traen N° de orden de Shopify, pero el PRODUCTO está en la etiqueta
 //                               → se lee directo (matchProduct + pack). Marcado como "verificar".
+//     Ojo: cada etiqueta ML/Flex es UNA página = UN pedido; hay dos formatos que lideran distinto,
+//     "Venta ID:" o "Pack ID:" — AMBOS son pedidos reales (no mitades recortables). Solo las hojas
+//     "Identifiicación Productos" (Pack ID sin "Recortá") son resúmenes y se ignoran.
 // Todo en el navegador, nada se sube.
 
 import { matchAllProducts } from "./product-match";
@@ -24,6 +27,9 @@ function parsePage(text: string, page: number): Label {
     low.includes("fixy") ? "fixy"
     : (low.includes("flex") && low.includes("venta")) ? "flex"
     : (low.includes("venta id") || low.includes("mercadolibre")) ? "ml"
+    // Etiqueta ML/Flex que lidera con "Pack ID" (no "Venta ID"): también es un pedido a despachar.
+    // La "Recortá" la distingue de la hoja resumen (Pack ID sin Recortá) que sí se ignora.
+    : (low.includes("pack id") && low.includes("recort")) ? (low.includes("flex") ? "flex" : "ml")
     : (low.includes("canalizador") || low.includes("shipper:")) ? "urbano"
     : (low.includes("f.pagado") || low.includes("clasico") || /destinatario\s+#/i.test(text)) ? "correo"
     : /#\d{4,6}\b/.test(text) ? "correo"

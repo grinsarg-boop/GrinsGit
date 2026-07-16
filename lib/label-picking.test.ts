@@ -38,6 +38,17 @@ describe("_parsePage", () => {
     expect(r.unidades).toBe(3);
     expect(r.revisar).toBe(false);
   });
+  it("ML/Flex que lidera con 'Pack ID' + Recortá = pedido real (no se descarta)", () => {
+    const t = "Pack ID: 20000 14040615337 Recortá esta parte de la etiqueta para que tu paquete viaje seguro. 1 Unidad Sabor: Menta Botella 2 Gotero Pureza Drenaje Remitente #262382468 María Leticia Acevedo Miño";
+    const r = _parsePage(t, 1);
+    expect(r.courier).toBe("ml");
+    expect(r.producto).toBe("Pureza");
+    expect(r.unidades).toBe(2);
+  });
+  it("hoja resumen (Pack ID sin Recortá) se ignora → courier '?'", () => {
+    const t = "Identifiicación Productos ABC123 Pack ID: 2000014040615337 Venta: 2000017437709084 María Leticia Acevedo Cantidad: 1 Sabor: Menta";
+    expect(_parsePage(t, 1).courier).toBe("?");
+  });
   it("ML: pack por SKU VE4 (Veinguard x4, no x1 — la '1 Unidad' es la publicación)", () => {
     const t = "Venta ID: 20000 17425245890 1 Unidad Fragancia: Menta SKU: VE4 Veinguard Solución Herbal Varices 4 X 30ml Uso Externo Remitente #262382468";
     const r = _parsePage(t, 1);
