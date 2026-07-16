@@ -25,7 +25,7 @@ type Pnl = {
   flete: number; tasa_proyectada: number | null;
 };
 type Guia = {
-  tracking: string; courier: string; status_canonical: string; freight_cost: number | null;
+  tracking: string; courier: string; status_canonical: string; status_raw: string | null; freight_cost: number | null;
   province: string | null;
   orders: {
     order_number: string; cod_amount: number; customer_name: string | null;
@@ -73,7 +73,7 @@ export default async function Dia({ params, searchParams }: {
 
   // El filtro de courier del panel se aplica a cada sección: P&L, guías y (según corresponda) Correo.
   let pnlQ = db.from("daily_pnl").select("courier, product_id, despachadas, entregadas, en_transito, revenue_estimado, profit_estimado, profit_confirmado, ads, flete, tasa_proyectada").eq("dispatch_date", fecha);
-  let guiasQ = db.from("shipments").select("tracking, courier, status_canonical, freight_cost, province, orders(order_number, cod_amount, customer_name, order_items(product_id, qty, unit_price))").eq("dispatched_at", fecha).order("courier");
+  let guiasQ = db.from("shipments").select("tracking, courier, status_canonical, status_raw, freight_cost, province, orders(order_number, cod_amount, customer_name, order_items(product_id, qty, unit_price))").eq("dispatched_at", fecha).order("courier");
   if (courierParam) { pnlQ = pnlQ.eq("courier", courierParam); guiasQ = guiasQ.eq("courier", courierParam); }
   // Correo (cuotas) no está en shipments; solo se consulta si el filtro es Correo o Todos.
   const wantCorreo = !courierParam || courierParam === "correo";
@@ -130,39 +130,56 @@ export default async function Dia({ params, searchParams }: {
     const top = withP.reduce((a, b) => (b.qty * b.unit_price > a.qty * a.unit_price ? b : a));
     return pname.get(top.product_id!) ?? `#${top.product_id}`;
   };
+  // "No despachado" (misma regla que el recompute 018): PI(urbano)/pendiente-retiro(fixy) con +7 días.
+  const hoy = new Date().toISOString().slice(0, 10);
+  const diasDesdeDespacho = Math.floor((Date.parse(`${hoy}T00:00:00Z`) - Date.parse(`${fecha}T00:00:00Z`)) / 86400000);
+  const esNoDespachado = (s: Guia) =>
+    diasDesdeDespacho > 7 && (
+      (s.courier === "urbano" && s.status_raw === "PI") ||
+      (s.courier === "fixy" && (s.status_raw === "41" || (s.status_raw ?? "").toLowerCase().includes("pendiente de retiro")))
+    );
+
   type Item = {
     key: string; estadoClass: string; estadoText: string; tracking: string | null;
     orden: string | null; cliente: string | null; province: string | null; freight: number | null; monto: number;
   };
-  type Prod = { name: string; count: number; ok: number; value: number; items: Item[] };
-  type Grupo = { name: string; unit: string; okWord: string; count: number; ok: number; value: number; prods: Prod[] };
-  const groupByProduct = (rows: { product: string; ok: boolean; value: number; item: Item }[]) => {
+  type Prod = { name: string; count: number; ok: number; value: number; noDesp: number; items: Item[] };
+  type Grupo = { name: string; unit: string; okWord: string; count: number; ok: number; value: number; noDesp: number; prods: Prod[] };
+  const groupByProduct = (rows: { product: string; ok: boolean; value: number; noDesp: boolean; item: Item }[]) => {
     const m = new Map<string, Prod>();
-    let count = 0, ok = 0, value = 0;
+    let count = 0, ok = 0, value = 0, noDesp = 0;
     for (const e of rows) {
-      count++; if (e.ok) ok++; value += e.value;
-      const p = m.get(e.product) ?? { name: e.product, count: 0, ok: 0, value: 0, items: [] };
-      p.count++; if (e.ok) p.ok++; p.value += e.value; p.items.push(e.item);
+      const p = m.get(e.product) ?? { name: e.product, count: 0, ok: 0, value: 0, noDesp: 0, items: [] };
+      p.items.push(e.item);
+      // no_despachado no cuenta como despacho ni suma COD (nunca se cobró); se cuenta aparte.
+      if (e.noDesp) { noDesp++; p.noDesp++; }
+      else { count++; if (e.ok) ok++; value += e.value; p.count++; if (e.ok) p.ok++; p.value += e.value; }
       m.set(e.product, p);
     }
-    return { prods: [...m.values()].sort((a, b) => b.count - a.count), count, ok, value };
+    return { prods: [...m.values()].sort((a, b) => (b.count + b.noDesp) - (a.count + a.noDesp)), count, ok, value, noDesp };
   };
   const grupos: Grupo[] = [];
   for (const ck of ["urbano", "fixy"] as const) {
     const gs = guias.filter((g) => g.courier === ck);
     if (!gs.length) continue;
-    const g = groupByProduct(gs.map((s) => ({
-      product: primaryProduct(s.orders?.order_items ?? []),
-      ok: s.status_canonical === "entregado",
-      value: Number(s.orders?.cod_amount ?? 0),
-      item: {
-        key: `${s.courier}-${s.tracking}`, estadoClass: estadoColor(s.status_canonical),
-        estadoText: s.status_canonical.replace(/_/g, " "), tracking: s.tracking,
-        orden: s.orders?.order_number ?? null, cliente: s.orders?.customer_name ?? null,
-        province: s.province, freight: s.freight_cost != null ? Number(s.freight_cost) : null,
-        monto: Number(s.orders?.cod_amount ?? 0),
-      },
-    })));
+    const g = groupByProduct(gs.map((s) => {
+      const nd = esNoDespachado(s);
+      return {
+        product: primaryProduct(s.orders?.order_items ?? []),
+        ok: s.status_canonical === "entregado",
+        value: Number(s.orders?.cod_amount ?? 0),
+        noDesp: nd,
+        item: {
+          key: `${s.courier}-${s.tracking}`,
+          estadoClass: nd ? "text-destructive" : estadoColor(s.status_canonical),
+          estadoText: nd ? "no despachado" : s.status_canonical.replace(/_/g, " "),
+          tracking: s.tracking,
+          orden: s.orders?.order_number ?? null, cliente: s.orders?.customer_name ?? null,
+          province: s.province, freight: s.freight_cost != null ? Number(s.freight_cost) : null,
+          monto: Number(s.orders?.cod_amount ?? 0),
+        },
+      };
+    }));
     grupos.push({ name: COURIER[ck] ?? ck, unit: "guías", okWord: "entreg.", ...g });
   }
   if (correo.length) {
@@ -170,6 +187,7 @@ export default async function Dia({ params, searchParams }: {
       product: primaryProduct(o.order_items ?? []),
       ok: o.financial_status === "paid",
       value: o.financial_status === "paid" ? Number(o.deposit_amount) : 0, // confirmado (prepago cobrado)
+      noDesp: false, // Correo es prepago, no tiene guía → nunca "no despachado"
       item: {
         key: `correo-${o.order_number}`,
         estadoClass: o.financial_status === "paid" ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-500",
@@ -180,8 +198,9 @@ export default async function Dia({ params, searchParams }: {
     })));
     grupos.push({ name: "Correo", unit: "órdenes", okWord: "pag.", ...g });
   }
-  grupos.sort((a, b) => b.count - a.count);
+  grupos.sort((a, b) => (b.count + b.noDesp) - (a.count + a.noDesp));
   const totalDesp = grupos.reduce((s, g) => s + g.count, 0);
+  const totalNoDesp = grupos.reduce((s, g) => s + g.noDesp, 0);
 
   return (
     <main className="space-y-6">
@@ -202,7 +221,7 @@ export default async function Dia({ params, searchParams }: {
           {courierParam === "correo" ? (
             <><b className="text-foreground tabular-nums">{tot.despachadas}</b> órdenes · <b className="text-foreground tabular-nums">{tot.entregadas}</b> pagadas · <b className="text-foreground tabular-nums">{tot.enTransito}</b> pendientes</>
           ) : (
-            <><b className="text-foreground tabular-nums">{tot.despachadas}</b> guías · <b className="text-foreground tabular-nums">{tot.entregadas}</b> entregadas · <b className="text-foreground tabular-nums">{tot.enTransito}</b> en la calle</>
+            <><b className="text-foreground tabular-nums">{tot.despachadas}</b> guías · <b className="text-foreground tabular-nums">{tot.entregadas}</b> entregadas · <b className="text-foreground tabular-nums">{tot.enTransito}</b> en la calle{totalNoDesp > 0 && <> · <b className="text-destructive tabular-nums">{totalNoDesp}</b> no despachadas</>}</>
           )}
         </span>
       </div>
@@ -362,8 +381,11 @@ export default async function Dia({ params, searchParams }: {
 
       {/* Despachos del día — agrupados Courier → Producto, desplegables (antes: lista interminable) */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold">Despachos del día ({totalDesp})</h2>
-        {totalDesp ? (
+        <h2 className="text-sm font-semibold">
+          Despachos del día ({totalDesp})
+          {totalNoDesp > 0 && <span className="ml-1 font-normal text-destructive">· {totalNoDesp} no despachadas</span>}
+        </h2>
+        {(totalDesp || totalNoDesp) ? (
           <>
             <p className="max-w-[70ch] text-xs text-muted-foreground">
               Urbano y Fixy son guías (entrega / COD). <b className="text-foreground">Correo</b> es prepago (cuotas 3): órdenes, con <b className="text-foreground">pagadas/generadas</b> y monto confirmado — sin guía ni entrega.
@@ -378,7 +400,7 @@ export default async function Dia({ params, searchParams }: {
                 <details key={grp.name} className="group">
                   <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-accent/40 [&::-webkit-details-marker]:hidden">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
-                    <span className="min-w-0 flex-1 truncate font-medium">{grp.name} <span className="font-normal text-muted-foreground">· {grp.count} {grp.unit}</span></span>
+                    <span className="min-w-0 flex-1 truncate font-medium">{grp.name} <span className="font-normal text-muted-foreground">· {grp.count} {grp.unit}</span>{grp.noDesp > 0 && <span className="font-normal text-destructive"> · {grp.noDesp} no desp.</span>}</span>
                     <span className="w-28 text-right tabular-nums text-muted-foreground">{grp.ok}/{grp.count} {grp.okWord}</span>
                     <span className="w-28 text-right font-semibold tabular-nums">{fmtMoney(grp.value)}</span>
                   </summary>
@@ -387,7 +409,7 @@ export default async function Dia({ params, searchParams }: {
                       <details key={p.name} className="group/prod border-t border-border/50">
                         <summary className="flex cursor-pointer list-none items-center gap-3 py-1.5 pl-8 pr-3 hover:bg-accent/30 [&::-webkit-details-marker]:hidden">
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3 shrink-0 text-muted-foreground transition-transform group-open/prod:rotate-90" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
-                          <span className="min-w-0 flex-1 truncate">{p.name} <span className="text-muted-foreground">· {p.count}</span></span>
+                          <span className="min-w-0 flex-1 truncate">{p.name} <span className="text-muted-foreground">· {p.count}</span>{p.noDesp > 0 && <span className="text-destructive"> · {p.noDesp} no desp.</span>}</span>
                           <span className="w-28 text-right tabular-nums text-muted-foreground">{p.ok}/{p.count} {grp.okWord}</span>
                           <span className="w-28 text-right tabular-nums">{fmtMoney(p.value)}</span>
                         </summary>
