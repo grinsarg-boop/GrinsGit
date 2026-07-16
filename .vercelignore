@@ -1,7 +1,13 @@
-# Vercel sube todo lo que no esté acá (NO respeta .gitignore). Excluimos lo que no va al runtime:
-datos/            # cache WS (6366 archivos), XLSX, snapshots — data local, no app
-scripts/          # tooling de dev/reconciliación (tsx), no bundle
-supabase/         # migraciones y tests SQL, no se ejecutan desde la app
+# Vercel sube todo lo que no esté acá (NO respeta .gitignore). Excluimos lo que no va al runtime.
+# OJO: sintaxis .gitignore — los comentarios van en su PROPIA línea, nunca al lado del patrón
+# (inline rompe el patrón: "datos/  # ..." deja de matchear datos/ y se subían 261 MB de cache).
+
+# cache WS (6366 archivos), XLSX, snapshots — data local, no app
+datos/
+# tooling de dev/reconciliación (tsx), no bundle
+scripts/
+# migraciones y tests SQL, no se ejecutan desde la app
+supabase/
 .git/
 node_modules/
 .next/
