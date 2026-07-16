@@ -84,4 +84,47 @@ describe("parseUrbanoMasivo", () => {
   it("pieza inexistente (codError<>0) → []", () => {
     expect(parseUrbanoMasivo(masivoInexistente, "999999999999")).toEqual([]);
   });
+
+  // Bug de madurez: Urbano reporta estado="RM - Rendido a Matriz" (autoritativo) pero el último
+  // movimiento sincronizado es AR → sin esto quedaba en_transito. El estado se emite como evento
+  // al cierre del día del último movimiento (23:59 > 12:00) → gana el "último por occurred_at".
+  const masivoRM = {
+    codGestion: "700", codError: 0, producto: "PQ", fecha: "01-06-2026",
+    estado: "RM - Rendido a Matriz",
+    movimientos: [
+      { check: "CO", descripcion: "Contenerizado", checkFecha: "05-06-2026" },
+      { check: "AR", descripcion: "Su envio llego a la sucursal de destino", checkFecha: "07-06-2026" },
+    ],
+  };
+  it("estado autoritativo más avanzado que el último movimiento → evento sintético que gana", () => {
+    const ev = parseUrbanoMasivo(masivoRM, "700");
+    const last = ev.at(-1)!;
+    expect(last.status_raw).toBe("RM");
+    expect(last.occurred_at).toBe("2026-06-07T23:59:59Z"); // fin del día del último movimiento (AR)
+    expect((last.raw as { sintetico?: string }).sintetico).toBe("estado");
+  });
+
+  it('estado que coincide con el último movimiento único o vacío (" - ") → sin evento sintético', () => {
+    expect(parseUrbanoMasivo(masivoRC, "6865945526512").filter((e) => (e.raw as { sintetico?: string }).sintetico)).toHaveLength(0);
+    expect(parseUrbanoMasivo({ ...masivoRM, estado: " - " }, "700").filter((e) => (e.raw as { sintetico?: string }).sintetico)).toHaveLength(0);
+  });
+
+  // Caso real 51638: RM/DV/AR el MISMO día (todo 12:00Z) → el ingest elegía AR (en_transito) por
+  // desempate arbitrario, aunque estado="RM - Rendido a Matriz". El estado gana con 23:59.
+  const masivoTie = {
+    codGestion: "800", codError: 0, producto: "PQ", fecha: "02-06-2026",
+    estado: "RM - Rendido a Matriz",
+    movimientos: [
+      { check: "DV", descripcion: "Mal codificado", checkFecha: "04-06-2026" },
+      { check: "RM", descripcion: "Rendido a Matriz", checkFecha: "04-06-2026" },
+      { check: "AR", descripcion: "Su envio llego a la sucursal de destino", checkFecha: "04-06-2026" },
+    ],
+  };
+  it("empate el mismo día → el estado autoritativo gana aunque haya un movimiento en_transito posterior", () => {
+    const ev = parseUrbanoMasivo(masivoTie, "800");
+    const last = ev.at(-1)!;
+    expect(last.status_raw).toBe("RM");
+    expect(last.occurred_at).toBe("2026-06-04T23:59:59Z");
+    expect((last.raw as { sintetico?: string }).sintetico).toBe("estado");
+  });
 });

@@ -76,6 +76,7 @@ export function parseUrbanoMasivo(item: MasivoItem, cliCodigo: string): CourierE
     events.push({ courier: "urbano", tracking: cliCodigo, order_ref: cliCodigo,
       status_raw: CICLO_STATUS, occurred_at: ciclo, raw: { fecha: item.fecha, producto: item.producto } });
   }
+  let maxAt: string | null = null, maxCode = "", maxCount = 0;
   for (const m of item.movimientos) {
     const at = parseUrbanoDate(m.checkFecha ?? "");
     const code = (m.check ?? "").trim().toUpperCase();
@@ -83,7 +84,24 @@ export function parseUrbanoMasivo(item: MasivoItem, cliCodigo: string): CourierE
       events.push({ courier: "urbano", tracking: cliCodigo, order_ref: cliCodigo,
         status_raw: code, occurred_at: at,
         raw: { descripcion: (m.descripcion ?? "").trim(), codigo_motivo: m.codigo_motivo, estado_actual: item.estado } });
+      if (maxAt === null || at > maxAt) { maxAt = at; maxCode = code; maxCount = 1; }  // nuevo máximo
+      else if (at === maxAt) { maxCode = code; maxCount++; }                            // empate mismo día
     }
+  }
+
+  // item.estado ("CÓDIGO - desc") es el estado ACTUAL autoritativo de Urbano; los movimientos son
+  // historia y su ORDEN no es confiable (ej. AR llega después de RM pero estado=RM). Urbano colapsa
+  // los movimientos del día a 12:00Z, así que cuando varios caen el mismo día el "último por
+  // occurred_at" del ingest es arbitrario (RM/DV pierde contra AR → el envío quedaba en_transito y no
+  // maduraba). Emitir el estado como evento al cierre del día del último movimiento (23:59 > 12:00) lo
+  // hace ganar SIEMPRE. Se emite si difiere del último movimiento O si hubo empate ese día (>1). Si
+  // coincide y es único (sin empate) ya gana solo → no se emite (evita ruido). estado vacío (" - ") no
+  // matchea el código → no se emite.
+  const estadoCode = /^([A-Za-z0-9]+)\s*-/.exec((item.estado ?? "").trim())?.[1]?.toUpperCase();
+  if (estadoCode && maxAt && (estadoCode !== maxCode || maxCount > 1)) {
+    events.push({ courier: "urbano", tracking: cliCodigo, order_ref: cliCodigo,
+      status_raw: estadoCode, occurred_at: maxAt.replace("T12:00:00Z", "T23:59:59Z"),
+      raw: { estado_actual: item.estado, sintetico: "estado" } });
   }
   return events;
 }
