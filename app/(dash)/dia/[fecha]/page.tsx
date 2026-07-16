@@ -13,10 +13,13 @@ export const revalidate = 60;
 
 const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 const COURIER: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo" };
-// entregado verde · terminales malos/incidencia rojo · resto (en la calle) ámbar
+// entregado verde · terminales malos (plata perdida) rojo · incidencia naranja (accionable: reclamar
+// a Urbano) · resto (en la calle, normal) ámbar. La incidencia sale del rojo para no perderse entre
+// los cerrados-malos.
 const estadoColor = (s: string) =>
   s === "entregado" ? "text-emerald-600 dark:text-emerald-400"
-  : ["devuelto", "rehusado", "en_devolucion", "siniestro", "incidencia"].includes(s) ? "text-destructive"
+  : s === "incidencia" ? "text-orange-600 dark:text-orange-500"
+  : ["devuelto", "rehusado", "en_devolucion", "siniestro"].includes(s) ? "text-destructive"
   : "text-amber-600 dark:text-amber-500";
 
 type Pnl = {
@@ -138,9 +141,12 @@ export default async function Dia({ params, searchParams }: {
       (s.courier === "urbano" && s.status_raw === "PI") ||
       (s.courier === "fixy" && (s.status_raw === "41" || (s.status_raw ?? "").toLowerCase().includes("pendiente de retiro")))
     );
+  // Link al seguimiento de Urbano (ver estado y reclamar). tracking = cli_codigo (id Shopify).
+  const urbanoTrack = (tk: string) =>
+    `https://www.urbano.com.ar/webservice/cespecifica/?shi_codigo=${Number(process.env.URBANO_SHIPPER) || 4362}&cli_codigo=${tk}`;
 
   type Item = {
-    key: string; estadoClass: string; estadoText: string; tracking: string | null;
+    key: string; estadoClass: string; estadoText: string; tracking: string | null; trackUrl: string | null;
     orden: string | null; cliente: string | null; province: string | null; freight: number | null; monto: number;
   };
   type Prod = { name: string; count: number; ok: number; value: number; noDesp: number; items: Item[] };
@@ -174,6 +180,7 @@ export default async function Dia({ params, searchParams }: {
           estadoClass: nd ? "text-destructive" : estadoColor(s.status_canonical),
           estadoText: nd ? "no despachado" : s.status_canonical.replace(/_/g, " "),
           tracking: s.tracking,
+          trackUrl: s.courier === "urbano" && s.tracking ? urbanoTrack(s.tracking) : null,
           orden: s.orders?.order_number ?? null, cliente: s.orders?.customer_name ?? null,
           province: s.province, freight: s.freight_cost != null ? Number(s.freight_cost) : null,
           monto: Number(s.orders?.cod_amount ?? 0),
@@ -191,7 +198,7 @@ export default async function Dia({ params, searchParams }: {
       item: {
         key: `correo-${o.order_number}`,
         estadoClass: o.financial_status === "paid" ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-500",
-        estadoText: o.financial_status === "paid" ? "pagado" : "pendiente", tracking: null,
+        estadoText: o.financial_status === "paid" ? "pagado" : "pendiente", tracking: null, trackUrl: null,
         orden: o.order_number, cliente: o.customer_name, province: o.province, freight: null,
         monto: Number(o.cod_amount),
       },
@@ -388,7 +395,7 @@ export default async function Dia({ params, searchParams }: {
         {(totalDesp || totalNoDesp) ? (
           <>
             <p className="max-w-[70ch] text-xs text-muted-foreground">
-              Urbano y Fixy son guías (entrega / COD). <b className="text-foreground">Correo</b> es prepago (cuotas 3): órdenes, con <b className="text-foreground">pagadas/generadas</b> y monto confirmado — sin guía ni entrega.
+              Urbano y Fixy son guías (entrega / COD). <b className="text-foreground">Correo</b> es prepago (cuotas 3): órdenes, con <b className="text-foreground">pagadas/generadas</b> y monto confirmado — sin guía ni entrega. Las <span className="text-orange-600 dark:text-orange-500">incidencias</span> hay que reclamarlas: tocá la guía de Urbano para abrir su seguimiento.
             </p>
             <div className="divide-y overflow-hidden rounded-lg border text-sm">
               <div className="flex items-center gap-3 bg-muted/40 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -417,7 +424,15 @@ export default async function Dia({ params, searchParams }: {
                           {p.items.map((it) => (
                             <div key={it.key} className="flex items-center gap-3 border-t border-border/40 py-1.5 pl-14 pr-3">
                               <span className={cn("w-24 shrink-0 truncate text-xs", it.estadoClass)}>{it.estadoText}</span>
-                              {it.tracking && <span className="shrink-0 font-mono text-xs text-muted-foreground">{it.tracking}</span>}
+                              {it.tracking && (it.trackUrl ? (
+                                <a href={it.trackUrl} target="_blank" rel="noopener noreferrer"
+                                   title="Ver seguimiento en Urbano (para reclamar)"
+                                   className="shrink-0 font-mono text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">
+                                  {it.tracking}<span aria-hidden className="ml-0.5 no-underline">↗</span>
+                                </a>
+                              ) : (
+                                <span className="shrink-0 font-mono text-xs text-muted-foreground">{it.tracking}</span>
+                              ))}
                               <span className="w-16 shrink-0">{it.orden ? `#${it.orden}` : "—"}</span>
                               <span className="min-w-0 flex-1 truncate text-muted-foreground">{it.cliente ?? "—"}</span>
                               <span className="hidden w-20 truncate text-right text-muted-foreground sm:inline">{it.province ?? "—"}</span>
