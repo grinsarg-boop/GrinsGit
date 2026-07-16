@@ -277,9 +277,9 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
             <TableRow>
               <TableHead>Producto</TableHead>
               <TableHead>Courier</TableHead>
-              <TableHead className="text-right">Despachos</TableHead>
-              <TableHead className="text-right">Entregadas</TableHead>
-              <TableHead className="text-right">Tasa proy.</TableHead>
+              <TableHead className="text-right">Despachos <Tip tip="COD (Urbano/Fixy): guías despachadas. Correo (prepago, cuotas): órdenes generadas — no hay guía." /></TableHead>
+              <TableHead className="text-right">Entregadas <Tip tip="COD: guías entregadas. Correo (prepago): pagadas/confirmadas — no hay entrega, la plata ya entró." /></TableHead>
+              <TableHead className="text-right">Tasa proy. <Tip tip="COD: tasa de entrega proyectada. Correo (prepago): tasa de confirmación (pagados/generados), sin proyección de entrega." /></TableHead>
               <TableHead className="text-right">Flete</TableHead>
               <TableHead className="text-right">Ads</TableHead>
               <TableHead className="text-right">Revenue est.</TableHead>
@@ -287,19 +287,22 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pnl.map((r, i) => (
+            {pnl.map((r, i) => {
+              const isCorreo = r.courier === "correo";
+              return (
               <TableRow key={i}>
                 <TableCell className="font-medium">{pname.get(r.product_id) ?? `#${r.product_id}`}</TableCell>
                 <TableCell className="text-muted-foreground">{COURIER[r.courier] ?? r.courier}</TableCell>
-                <TableCell className="text-right tabular-nums">{r.despachadas}</TableCell>
-                <TableCell className="text-right tabular-nums">{r.entregadas}</TableCell>
+                <TableCell className="text-right tabular-nums">{r.despachadas}{isCorreo && <span className="ml-1 text-[0.6rem] uppercase tracking-wide text-muted-foreground">gen</span>}</TableCell>
+                <TableCell className="text-right tabular-nums">{r.entregadas}{isCorreo && <span className="ml-1 text-[0.6rem] uppercase tracking-wide text-muted-foreground">pag</span>}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{r.despachadas ? fmtPct(Number(r.tasa_proyectada ?? 0)) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(Number(r.flete))}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(Number(r.ads))}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtMoney(Number(r.revenue_estimado))}</TableCell>
                 <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(Number(r.profit_estimado)))}>{fmtMoney(Number(r.profit_estimado))}</TableCell>
               </TableRow>
-            ))}
+              );
+            })}
             {!pnl.length && (
               <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground">Sin P&amp;L para esta fecha</TableCell></TableRow>
             )}
