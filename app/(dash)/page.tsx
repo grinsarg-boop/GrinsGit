@@ -162,28 +162,32 @@ export default async function Resumen({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <div className="flex gap-2">
+        <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
           {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"]].map(([val, label]) => (
             <Link
               key={val}
               href={hrefWith({ courier: val })}
               className={cn(
-                "rounded-md border px-3 py-1",
-                (courier ?? "") === val ? "bg-primary text-primary-foreground" : "hover:bg-accent",
+                "rounded-md px-3 py-1 font-medium transition-colors",
+                (courier ?? "") === val
+                  ? "bg-foreground text-background shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {label}
             </Link>
           ))}
         </div>
-        <div className="flex gap-2">
+        <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
           {[["dias", "Días"], ["meses", "Meses"]].map(([val, label]) => (
             <Link
               key={val}
               href={hrefWith({ v: val })}
               className={cn(
-                "rounded-md border px-3 py-1",
-                vista === val ? "bg-primary text-primary-foreground" : "hover:bg-accent",
+                "rounded-md px-3 py-1 font-medium transition-colors",
+                vista === val
+                  ? "bg-foreground text-background shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {label}
