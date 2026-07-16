@@ -318,6 +318,7 @@ export default async function Dia({ params, searchParams }: {
               <TableHead>Producto</TableHead>
               <TableHead>Courier</TableHead>
               <TableHead className="text-right">Despachos <Tip tip="COD (Urbano/Fixy): guías despachadas. Correo (prepago, cuotas): órdenes generadas — no hay guía." /></TableHead>
+              <TableHead className="w-32">Madurez <Tip tip="Qué % de las guías de este producto ya se resolvieron (entregadas, devueltas, etc.). A más madurez, más firme el estimado. En Correo: qué % de las órdenes ya maduraron." /></TableHead>
               <TableHead className="text-right">Entregadas <Tip tip="COD: guías entregadas. Correo (prepago): pagadas/confirmadas — no hay entrega, la plata ya entró." /></TableHead>
               <TableHead className="text-right">Tasa proy. <Tip tip="COD: tasa de entrega proyectada. Correo (prepago): tasa de confirmación (pagados/generados), sin proyección de entrega." /></TableHead>
               <TableHead className="text-right">Flete</TableHead>
@@ -329,11 +330,20 @@ export default async function Dia({ params, searchParams }: {
           <TableBody>
             {pnl.map((r, i) => {
               const isCorreo = r.courier === "correo";
+              const madurez = r.despachadas ? (r.despachadas - r.en_transito) / r.despachadas : 0;
               return (
               <TableRow key={i}>
                 <TableCell className="font-medium">{pname.get(r.product_id) ?? `#${r.product_id}`}</TableCell>
                 <TableCell className="text-muted-foreground">{COURIER[r.courier] ?? r.courier}</TableCell>
                 <TableCell className="text-right tabular-nums">{r.despachadas}{isCorreo && <span className="ml-1 text-[0.6rem] uppercase tracking-wide text-muted-foreground">gen</span>}</TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <div className="h-1.5 w-[60px] flex-none rounded bg-muted">
+                      <div className="h-1.5 rounded bg-foreground" style={{ width: `${madurez * 100}%` }} />
+                    </div>
+                    <span className="w-8 text-xs tabular-nums text-muted-foreground">{fmtPct(madurez)}</span>
+                  </div>
+                </TableCell>
                 <TableCell className="text-right tabular-nums">{r.entregadas}{isCorreo && <span className="ml-1 text-[0.6rem] uppercase tracking-wide text-muted-foreground">pag</span>}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{r.despachadas ? fmtPct(Number(r.tasa_proyectada ?? 0)) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(Number(r.flete))}</TableCell>
@@ -344,7 +354,7 @@ export default async function Dia({ params, searchParams }: {
               );
             })}
             {!pnl.length && (
-              <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground">Sin P&amp;L para esta fecha</TableCell></TableRow>
+              <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground">Sin P&amp;L para esta fecha</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
