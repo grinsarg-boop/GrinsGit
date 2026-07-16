@@ -26,7 +26,11 @@ type Pnl = {
 };
 type Guia = {
   tracking: string; courier: string; status_canonical: string; freight_cost: number | null;
-  province: string | null; orders: { order_number: string; cod_amount: number; customer_name: string | null } | null;
+  province: string | null;
+  orders: {
+    order_number: string; cod_amount: number; customer_name: string | null;
+    order_items: { product_id: number | null; qty: number; unit_price: number }[];
+  } | null;
 };
 
 export default async function Dia({ params }: { params: Promise<{ fecha: string }> }) {
@@ -47,7 +51,7 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
   const [prodsRes, pnlRes, guiasRes, ads] = await Promise.all([
     db.from("products").select("id, name"),
     db.from("daily_pnl").select("courier, product_id, despachadas, entregadas, en_transito, revenue_estimado, profit_estimado, profit_confirmado, ads, flete, tasa_proyectada").eq("dispatch_date", fecha),
-    db.from("shipments").select("tracking, courier, status_canonical, freight_cost, province, orders(order_number, cod_amount, customer_name)").eq("dispatched_at", fecha).order("courier"),
+    db.from("shipments").select("tracking, courier, status_canonical, freight_cost, province, orders(order_number, cod_amount, customer_name, order_items(product_id, qty, unit_price))").eq("dispatched_at", fecha).order("courier"),
     fetchAds(),
   ]);
   const pname = new Map((prodsRes.data ?? []).map((p) => [p.id, p.name as string]));
@@ -76,6 +80,29 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
     c.adsets.set(ak, s); m.set(ck, c);
     return m;
   }, new Map<string, Camp>()).entries()].sort((a, b) => b[1].spend - a[1].spend);
+
+  // Guías agrupadas Courier → Producto → guías (colapsable, corta la lista interminable).
+  // Producto = el principal del pedido (línea de mayor qty×precio), espejo de order_primary_product.
+  const guiaProducto = (g: Guia): string => {
+    const items = (g.orders?.order_items ?? []).filter((i) => i.product_id != null);
+    if (!items.length) return "(sin producto)";
+    const top = items.reduce((a, b) => (b.qty * b.unit_price > a.qty * a.unit_price ? b : a));
+    return pname.get(top.product_id!) ?? `#${top.product_id}`;
+  };
+  type PGrp = { guias: Guia[]; cod: number; entregadas: number };
+  type CGrp = { total: number; cod: number; entregadas: number; prods: Map<string, PGrp> };
+  const guiasPorCourier = [...guias.reduce((m, g) => {
+    const ck = COURIER[g.courier] ?? g.courier;
+    const c = m.get(ck) ?? { total: 0, cod: 0, entregadas: 0, prods: new Map<string, PGrp>() };
+    const cod = Number(g.orders?.cod_amount ?? 0);
+    const ent = g.status_canonical === "entregado" ? 1 : 0;
+    c.total++; c.cod += cod; c.entregadas += ent;
+    const pk = guiaProducto(g);
+    const p = c.prods.get(pk) ?? { guias: [] as Guia[], cod: 0, entregadas: 0 };
+    p.guias.push(g); p.cod += cod; p.entregadas += ent;
+    c.prods.set(pk, p); m.set(ck, c);
+    return m;
+  }, new Map<string, CGrp>()).entries()].sort((a, b) => b[1].total - a[1].total);
 
   return (
     <main className="space-y-6">
@@ -211,38 +238,55 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
         </Table>
       </section>
 
-      {/* Guías individuales — esclarecer caso por caso */}
+      {/* Guías del día — agrupadas Courier → Producto, desplegables (antes: lista interminable) */}
       <section className="space-y-2">
         <h2 className="text-sm font-semibold">Guías del día ({guias.length})</h2>
         {guias.length ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Guía</TableHead>
-                <TableHead>Pedido</TableHead>
-                <TableHead>Cliente</TableHead>
-                <TableHead>Courier</TableHead>
-                <TableHead>Provincia</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead className="text-right">Flete</TableHead>
-                <TableHead className="text-right">COD</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {guias.map((g) => (
-                <TableRow key={`${g.courier}-${g.tracking}`}>
-                  <TableCell className="font-mono text-xs">{g.tracking}</TableCell>
-                  <TableCell>{g.orders?.order_number ? `#${g.orders.order_number}` : "—"}</TableCell>
-                  <TableCell className="max-w-[20ch] truncate text-muted-foreground">{g.orders?.customer_name ?? "—"}</TableCell>
-                  <TableCell className="text-muted-foreground">{COURIER[g.courier] ?? g.courier}</TableCell>
-                  <TableCell className="text-muted-foreground">{g.province ?? "—"}</TableCell>
-                  <TableCell className={estadoColor(g.status_canonical)}>{g.status_canonical.replace(/_/g, " ")}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{g.freight_cost ? fmtMoney(Number(g.freight_cost)) : "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums">{g.orders?.cod_amount ? fmtMoney(Number(g.orders.cod_amount)) : "—"}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <div className="divide-y overflow-hidden rounded-lg border text-sm">
+            <div className="flex items-center gap-3 bg-muted/40 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <span className="flex-1">Courier · producto</span>
+              <span className="w-24 text-right">Entregadas</span>
+              <span className="w-28 text-right">COD</span>
+            </div>
+            {guiasPorCourier.map(([cname, c]) => {
+              const prods = [...c.prods.entries()].sort((a, b) => b[1].guias.length - a[1].guias.length);
+              return (
+                <details key={cname} className="group">
+                  <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-accent/40 [&::-webkit-details-marker]:hidden">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
+                    <span className="min-w-0 flex-1 truncate font-medium">{cname} <span className="font-normal text-muted-foreground">· {c.total} guías</span></span>
+                    <span className="w-24 text-right tabular-nums text-muted-foreground">{c.entregadas}/{c.total}</span>
+                    <span className="w-28 text-right font-semibold tabular-nums">{fmtMoney(c.cod)}</span>
+                  </summary>
+                  <div className="bg-muted/20">
+                    {prods.map(([prodName, p]) => (
+                      <details key={prodName} className="group/prod border-t border-border/50">
+                        <summary className="flex cursor-pointer list-none items-center gap-3 py-1.5 pl-8 pr-3 hover:bg-accent/30 [&::-webkit-details-marker]:hidden">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3 shrink-0 text-muted-foreground transition-transform group-open/prod:rotate-90" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
+                          <span className="min-w-0 flex-1 truncate">{prodName} <span className="text-muted-foreground">· {p.guias.length}</span></span>
+                          <span className="w-24 text-right tabular-nums text-muted-foreground">{p.entregadas}/{p.guias.length}</span>
+                          <span className="w-28 text-right tabular-nums">{fmtMoney(p.cod)}</span>
+                        </summary>
+                        <div>
+                          {p.guias.map((g) => (
+                            <div key={`${g.courier}-${g.tracking}`} className="flex items-center gap-3 border-t border-border/40 py-1.5 pl-14 pr-3">
+                              <span className={cn("w-24 shrink-0 truncate text-xs", estadoColor(g.status_canonical))}>{g.status_canonical.replace(/_/g, " ")}</span>
+                              <span className="shrink-0 font-mono text-xs text-muted-foreground">{g.tracking}</span>
+                              <span className="w-16 shrink-0">{g.orders?.order_number ? `#${g.orders.order_number}` : "—"}</span>
+                              <span className="min-w-0 flex-1 truncate text-muted-foreground">{g.orders?.customer_name ?? "—"}</span>
+                              <span className="hidden w-20 truncate text-right text-muted-foreground sm:inline">{g.province ?? "—"}</span>
+                              <span className="hidden w-24 text-right tabular-nums text-muted-foreground md:inline">{g.freight_cost ? fmtMoney(Number(g.freight_cost)) : "—"}</span>
+                              <span className="w-28 text-right tabular-nums">{g.orders?.cod_amount ? fmtMoney(Number(g.orders.cod_amount)) : "—"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">Sin guías COD ese día (las cuotas/Correo no tienen guía; se cuentan por pago).</p>
         )}
