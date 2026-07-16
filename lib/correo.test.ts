@@ -80,4 +80,12 @@ describe("correo", () => {
     expect(rowErrors(fixed[0])).toEqual([]);
     expect(fixed[0].localidad).toBe("Maipu");
   });
+
+  it("localidad con signos (Mi Correo solo acepta letras y números)", () => {
+    // fila 5 real: "Perico _el carmen" hacía rechazar la carga masiva
+    const draft = "CP;12;12;12;0.2;49990;Y;;Perico _el carmen;Fca flores;7;;;4608;Laura Flores;lantoju@gmail.com;;;388;5909332;17060";
+    const fixed = parseCsv(draft).map(normalizeRow);
+    expect(fixed[0].localidad).toBe("Perico el carmen");
+    expect(rowErrors(fixed[0])).toEqual([]);
+  });
 });

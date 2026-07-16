@@ -72,13 +72,20 @@ function clean(s: string): string {
   return asciiStrip(s).replace(/,/g, " ").replace(/\s+/g, " ").trim();
 }
 
+// Mi Correo: la localidad "solo acepta letras y números" — cualquier signo
+// (guion bajo, guion, punto…) hace rechazar la fila ("Perico _el carmen"). Los
+// paso a espacio y colapso: "Perico _el carmen" → "Perico el carmen".
+export function cleanLocalidad(s: string): string {
+  return clean(s).replace(/[^A-Za-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 export function normalizeRow(row: CorreoRow): CorreoRow {
   return {
     ...row,
     valor: row.valor.replace(/\D/g, ""),
     provincia: clean(row.provincia).toUpperCase(),
     sucursal: clean(row.sucursal).toUpperCase(),
-    localidad: clean(row.localidad),
+    localidad: cleanLocalidad(row.localidad),
     calle: clean(row.calle),
     // altura sin número → vacío (nunca "S/n" con barra)
     altura: /\d/.test(row.altura) ? clean(row.altura) : "",
@@ -102,6 +109,7 @@ export function rowErrors(r: CorreoRow): string[] {
     if (r.localidad || r.calle || r.altura || r.cp) e.push("sucursal con campos de domicilio");
   } else {
     if (!r.localidad || !r.calle) e.push("falta localidad o calle");
+    if (r.localidad && !/^[A-Za-z0-9 ]+$/.test(r.localidad)) e.push(`localidad con signos "${r.localidad}" (solo letras y números)`);
     if (!/^\d{4}$/.test(r.cp)) e.push(`CP "${r.cp}" no es de 4 dígitos`);
   }
   if (!r.nombre) e.push("falta nombre");
