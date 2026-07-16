@@ -94,12 +94,18 @@ export default async function Resumen({
     return s ? `/?${s}` : "/";
   };
 
-  // Atajos de rango [label, desde, hasta].
+  // Atajos de rango [label, desde, hasta]. "Mes pasado" = mes calendario anterior completo.
+  const [ey, em] = today.slice(0, 7).split("-").map(Number);
+  const pmY = em === 1 ? ey - 1 : ey;
+  const pmM = em === 1 ? 12 : em - 1;
+  const pm = `${pmY}-${String(pmM).padStart(2, "0")}`;
+  const pmLast = new Date(pmY, pmM, 0).getDate(); // día 0 del mes actual = último del anterior
   const presets: [string, string, string][] = [
     ["7 días", daysAgoIso(7), today],
     ["30 días", daysAgoIso(30), today],
     ["90 días", daysAgoIso(90), today],
     ["Este mes", `${today.slice(0, 7)}-01`, today],
+    ["Mes pasado", `${pm}-01`, `${pm}-${String(pmLast).padStart(2, "0")}`],
     ["Máx", "2020-01-01", today],
   ];
 
