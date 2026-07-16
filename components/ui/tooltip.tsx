@@ -51,7 +51,7 @@ export function Tip({
               type="button"
               aria-label={label}
               className={cn(
-                "inline-flex shrink-0 rounded-full align-middle text-muted-foreground/60 outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                "inline-flex shrink-0 rounded-full align-middle text-muted-foreground/70 outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
                 className,
               )}
             >

@@ -57,7 +57,7 @@ export function Dropzone({
           if (e.dataTransfer.files.length) onFiles(e.dataTransfer.files);
         }}
         className={cn(
-          "flex cursor-pointer flex-col items-center gap-1 rounded-lg border border-dashed p-6 text-center text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+          "flex cursor-pointer flex-col items-center gap-1 rounded-lg border border-dashed p-6 text-center text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
           over ? "border-ring bg-accent" : "hover:bg-accent/50",
         )}
       >
@@ -66,8 +66,11 @@ export function Dropzone({
           type="file"
           accept={accept}
           multiple={multiple}
+          tabIndex={-1}
+          aria-hidden
           className="sr-only"
-          onChange={(e) => e.target.files?.length && onFiles(e.target.files)}
+          // Reseteo el value para que re-elegir por click la MISMA ruta vuelva a disparar change.
+          onChange={(e) => { if (e.target.files?.length) onFiles(e.target.files); e.currentTarget.value = ""; }}
         />
         {busy ? (
           <span className="flex items-center gap-2 text-muted-foreground">

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { mlLabelsTo10x15 } from "@/lib/split-labels";
 import { Dropzone } from "@/components/ui/dropzone";
+import { Button } from "@/components/ui/button";
 
 export default function EtiquetasPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -12,6 +13,9 @@ export default function EtiquetasPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const bytesRef = useRef<ArrayBuffer | null>(null);
+
+  // Revoca el object URL del blob al reemplazarlo o al desmontar (evita fuga de memoria).
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
 
   useEffect(() => {
     if (!file) return;
@@ -35,10 +39,7 @@ export default function EtiquetasPage() {
         }
         const blob = new Blob([pdf as BlobPart], { type: "application/pdf" });
         setCounts({ labels, skipped });
-        setUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return URL.createObjectURL(blob);
-        });
+        setUrl(URL.createObjectURL(blob)); // el efecto de cleanup revoca el anterior
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -85,13 +86,9 @@ export default function EtiquetasPage() {
       {url && counts && !busy && (
         <>
           <div className="flex items-center gap-4">
-            <a
-              href={url}
-              download={outName}
-              className="inline-block rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
-            >
-              Descargar {outName}
-            </a>
+            <Button asChild>
+              <a href={url} download={outName}>Descargar {outName}</a>
+            </Button>
             <span className="text-sm text-muted-foreground">
               {counts.labels} etiqueta{counts.labels === 1 ? "" : "s"}
               {counts.skipped > 0 && ` · ${counts.skipped} página(s) de resumen descartada(s)`}

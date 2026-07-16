@@ -6,6 +6,7 @@ import {
   rowErrors, toSucursal, type CorreoRow, type ShopifyPedido,
 } from "@/lib/correo";
 import { Dropzone } from "@/components/ui/dropzone";
+import { Button } from "@/components/ui/button";
 
 type Sucursal = { c: string; l: string; p: string; d: string };
 
@@ -35,6 +36,7 @@ function download(name: string, blob: Blob) {
 
 function Etiquetas() {
   const [pdf, setPdf] = useState<ArrayBuffer | null>(null);
+  const [fileMeta, setFileMeta] = useState<{ name: string; size: number } | null>(null);
   const [entries, setEntries] = useState<{ page: number; orden: string | null; code: string }[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -43,6 +45,7 @@ function Etiquetas() {
     setBusy(true);
     setMsg(null);
     setEntries([]);
+    setFileMeta({ name: f.name, size: f.size });
     try {
       const bytes = await f.arrayBuffer();
       setPdf(bytes);
@@ -79,7 +82,9 @@ function Etiquetas() {
       <Dropzone
         accept="application/pdf"
         busy={busy}
+        files={fileMeta ? [fileMeta] : []}
         onFiles={(fl) => fl[0] && onFile(fl[0])}
+        onClear={() => { setPdf(null); setEntries([]); setMsg(null); setFileMeta(null); }}
       />
       {msg && <p className="text-sm text-amber-600">{msg}</p>}
       {entries.length > 0 && (
@@ -94,6 +99,7 @@ function Etiquetas() {
                     <input
                       value={e.code}
                       placeholder="B3"
+                      aria-label={`Código de producto (página ${e.page}${e.orden ? `, pedido #${e.orden}` : ""})`}
                       className="w-16 rounded border px-2 py-0.5"
                       onChange={(ev) =>
                         setEntries((prev) =>
@@ -106,12 +112,7 @@ function Etiquetas() {
               ))}
             </tbody>
           </table>
-          <button
-            onClick={stamp}
-            className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background"
-          >
-            Estampar y descargar PDF
-          </button>
+          <Button onClick={stamp}>Estampar y descargar PDF</Button>
         </>
       )}
     </section>
@@ -199,6 +200,7 @@ function CargaMasiva() {
             value={ordersText}
             onChange={(e) => setOrdersText(e.target.value)}
             placeholder="pedidos: 16072, 15807…"
+            aria-label="Números de pedido de Shopify"
             className="h-9 w-56 rounded-l-md border border-r-0 px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <button
@@ -232,6 +234,7 @@ function CargaMasiva() {
                   <td>
                     {needsSucursal(r) ? (
                       <select
+                        aria-label="Elegir sucursal de Correo"
                         className="rounded border px-1 py-0.5"
                         defaultValue=""
                         onChange={(e) =>
@@ -255,7 +258,7 @@ function CargaMasiva() {
             </tbody>
           </table>
           <div className="flex items-center gap-3">
-            <button
+            <Button
               disabled={!ok}
               onClick={() =>
                 download(
@@ -263,10 +266,9 @@ function CargaMasiva() {
                   new Blob([buildCsv(rows)], { type: "text/csv" }),
                 )
               }
-              className="rounded bg-foreground px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
             >
               Descargar CSV cargable
-            </button>
+            </Button>
             <button onClick={() => setRows([])} className="text-sm text-muted-foreground underline">
               limpiar
             </button>

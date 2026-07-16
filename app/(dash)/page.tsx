@@ -166,6 +166,7 @@ export default async function Resumen({
             <Link
               key={val}
               href={hrefWith({ courier: val })}
+              aria-current={(courier ?? "") === val ? "page" : undefined}
               className={cn(
                 "rounded-md px-3 py-1 font-medium transition-colors",
                 (courier ?? "") === val
@@ -182,6 +183,7 @@ export default async function Resumen({
             <Link
               key={val}
               href={hrefWith({ v: val })}
+              aria-current={vista === val ? "page" : undefined}
               className={cn(
                 "rounded-md px-3 py-1 font-medium transition-colors",
                 vista === val
