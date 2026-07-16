@@ -34,13 +34,18 @@ const STALE_DAYS = 3;
 export default async function Resumen({
   searchParams,
 }: {
-  searchParams: Promise<{ courier?: string; v?: string }>;
+  searchParams: Promise<{ courier?: string; v?: string; desde?: string; hasta?: string }>;
 }) {
-  const { courier, v } = await searchParams;
+  const { courier, v, desde, hasta } = await searchParams;
   const vista = v === "meses" ? "meses" : "dias";
   const db = supabaseAdmin();
-  const from = daysAgoIso(30);
   const today = daysAgoIso(0);
+  const ISO = /^\d{4}-\d{2}-\d{2}$/;
+  // Rango por URL (?desde=&hasta=). Default: últimos 30 días. dashboard_days da p_from→hoy; el tope lo corto acá.
+  const to = hasta && ISO.test(hasta) ? hasta : today;
+  let from = desde && ISO.test(desde) ? desde : daysAgoIso(30);
+  if (from > to) from = to;
+  const rangeLabel = `${fmtDate(from)} → ${fmtDate(to)}`;
   const courierParam = courier === "urbano" || courier === "fixy" || courier === "correo" ? courier : null;
 
   type Row = {
@@ -56,17 +61,16 @@ export default async function Resumen({
     ads: Number(r.ads), adsSinCohorte: Number(r.ads_sin_cohorte),
   });
 
-  // Agregación server-side (dashboard_days, 009): resumen por día ya sumado (§4.7). El P&L por producto → /dia/[fecha].
+  // Agregación server-side (dashboard_days, 009). El P&L por producto → /dia/[fecha].
+  // dashboard_days devuelve de p_from hasta hoy; recorto el tope `to` acá (sin migración).
   const { data: rows } = await db.rpc("dashboard_days", { p_from: from, p_courier: courierParam });
-  const list: Day[] = ((rows ?? []) as Row[]).map(mapDay);
+  const list: Day[] = ((rows ?? []) as Row[]).map(mapDay).filter((d) => d.date <= to);
 
-  // Vista MESES: traigo todo el histórico (daily_pnl es ~1 fila/día) y agrupo por mes en el cliente.
-  // ponytail: alcanza en cliente; migrar a una RPC dashboard_months recién si supera ~1000 días (~3 años).
+  // Vista MESES: agrupa los días DEL RANGO por mes (para todo el histórico, usá el preset "Máx").
   let meses: MonthAgg[] = [];
   if (vista === "meses") {
-    const { data: allRows } = await db.rpc("dashboard_days", { p_from: "2020-01-01", p_courier: courierParam });
     const m = new Map<string, MonthAgg>();
-    for (const d of ((allRows ?? []) as Row[]).map(mapDay)) {
+    for (const d of list) {
       const k = d.date.slice(0, 7);
       const a = m.get(k) ?? { month: k, despachadas: 0, entregadas: 0, proyectadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0 };
       a.despachadas += d.despachadas; a.entregadas += d.entregadas; a.proyectadas += d.proyectadas;
@@ -76,18 +80,35 @@ export default async function Resumen({
     meses = [...m.values()].sort((a, b) => (a.month < b.month ? 1 : -1));
   }
 
-  const hrefWith = (o: { courier?: string; v?: string }) => {
+  const hrefWith = (o: { courier?: string; v?: string; desde?: string; hasta?: string }) => {
     const c = o.courier !== undefined ? o.courier : (courier ?? "");
     const vv = o.v !== undefined ? o.v : vista;
+    const dd = o.desde !== undefined ? o.desde : (desde ?? "");
+    const hh = o.hasta !== undefined ? o.hasta : (hasta ?? "");
     const q = new URLSearchParams();
     if (c) q.set("courier", c);
     if (vv === "meses") q.set("v", "meses");
+    if (dd) q.set("desde", dd);
+    if (hh) q.set("hasta", hh);
     const s = q.toString();
     return s ? `/?${s}` : "/";
   };
 
+  // Atajos de rango [label, desde, hasta].
+  const presets: [string, string, string][] = [
+    ["7 días", daysAgoIso(7), today],
+    ["30 días", daysAgoIso(30), today],
+    ["90 días", daysAgoIso(90), today],
+    ["Este mes", `${today.slice(0, 7)}-01`, today],
+    ["Máx", "2020-01-01", today],
+  ];
+
   const { data: adsSinCohorte } = await db
-    .from("v_ads_sin_cohorte").select("*").eq("date", today);
+    .from("v_ads_sin_cohorte").select("product, spend").gte("date", from).lte("date", to);
+  const adsSinCohortePorProd = [...(adsSinCohorte ?? []).reduce((m, a) => {
+    const k = (a.product as string | null) ?? "sin producto";
+    return m.set(k, (m.get(k) ?? 0) + Number(a.spend));
+  }, new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1]);
 
   // Frescura del feed: hace cuánto entró la última guía por courier. El hueco del 08/07 fue
   // silencioso una semana justamente porque nadie miraba esto.
@@ -99,28 +120,20 @@ export default async function Resumen({
   const daysSince = (d: string) => Math.floor((new Date(today).getTime() - new Date(d).getTime()) / 86400_000);
   const stale = freshness.filter((f) => !f.last || daysSince(f.last) > STALE_DAYS);
 
-  const period = (daysBack: number) => {
-    const cut = daysAgoIso(daysBack);
-    const acc = { despachadas: 0, entregadas: 0, proyectadas: 0,
-      revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, adsSinCohorte: 0 };
-    for (const d of list) {
-      if (d.date >= cut) {
-        acc.despachadas += d.despachadas; acc.entregadas += d.entregadas; acc.proyectadas += d.proyectadas;
-        acc.revenueEst += d.revenueEst; acc.profitConf += d.profitConf; acc.profitEst += d.profitEst;
-        acc.ads += d.ads; acc.adsSinCohorte += d.adsSinCohorte;
-      }
-    }
+  // Totales del RANGO (todo lo temporal sigue el rango; reemplaza los cards Hoy/7d/30d).
+  const rango = list.reduce((acc, d) => {
+    acc.despachadas += d.despachadas; acc.proyectadas += d.proyectadas;
+    acc.revenueEst += d.revenueEst; acc.profitConf += d.profitConf; acc.profitEst += d.profitEst;
+    acc.ads += d.ads; acc.adsSinCohorte += d.adsSinCohorte;
     return acc;
-  };
-  const cards = [
-    { label: "Hoy", ...period(0) },
-    { label: "7 días", ...period(7) },
-    { label: "30 días", ...period(30) },
-  ];
+  }, { despachadas: 0, proyectadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, adsSinCohorte: 0 });
+  // Sin cohorte se resta del profit y suma al denominador del ROAS (§4.6, #11).
+  const rProfitEst = rango.profitEst - rango.adsSinCohorte;
+  const rProfitConf = rango.profitConf - rango.adsSinCohorte;
+  const rEnCamino = rProfitEst - rProfitConf;
 
-  // Gastos en Ads (30 días): atribuido a cohortes vs sin cohorte (plata que se resta del profit).
-  const adsAtrib = list.reduce((s, d) => s + d.ads, 0);
-  const adsSin = list.reduce((s, d) => s + d.adsSinCohorte, 0);
+  const adsAtrib = rango.ads;
+  const adsSin = rango.adsSinCohorte;
   const adsTot = adsAtrib + adsSin;
 
   return (
@@ -160,6 +173,37 @@ export default async function Resumen({
         })}
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+          {presets.map(([label, d, h]) => {
+            const active = from === d && to === h;
+            return (
+              <Link
+                key={label}
+                href={hrefWith({ desde: d, hasta: h })}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "rounded-md px-2.5 py-1 font-medium transition-colors",
+                  active ? "bg-foreground text-background shadow-sm" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {label}
+              </Link>
+            );
+          })}
+        </div>
+        <form method="get" className="inline-flex items-center gap-1.5">
+          {courier && <input type="hidden" name="courier" value={courier} />}
+          {vista === "meses" && <input type="hidden" name="v" value="meses" />}
+          <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
+            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          <span className="text-muted-foreground">→</span>
+          <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
+            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent">Aplicar</button>
+        </form>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
           {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"]].map(([val, label]) => (
@@ -197,53 +241,46 @@ export default async function Resumen({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {cards.map((c) => {
-          // La pauta sin cohorte (product_id NULL o día sin despacho) es costo real no atribuido a
-          // ninguna fila → restarlo del profit y sumarlo al denominador del ROAS (§4.6, #11).
-          const adsTotal = c.ads + c.adsSinCohorte;
-          const profitEst = c.profitEst - c.adsSinCohorte;
-          const profitConf = c.profitConf - c.adsSinCohorte;
-          const enCamino = profitEst - profitConf;
-          return (
-            <Card key={c.label}>
-              <CardContent className="space-y-1 pt-5">
-                <div className="mb-2 flex items-baseline justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{c.label}</span>
-                  <span className="text-sm text-muted-foreground"><b className="font-semibold text-foreground">{c.despachadas}</b> despachos</span>
-                </div>
-                <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Profit estimado</div>
-                <div className={cn("text-3xl font-bold tabular-nums tracking-tight", c.despachadas ? pnlColor(profitEst) : "text-muted-foreground")}>
-                  {c.despachadas ? fmtMoney(profitEst) : "—"}
-                </div>
-                {c.despachadas ? (
-                  <div className="pt-1 text-sm text-muted-foreground">
-                    <div>confirmado <span className="tabular-nums">{fmtMoney(profitConf)}</span></div>
-                    <div className="font-medium tabular-nums text-amber-600 dark:text-amber-500">{fmtMoney(enCamino)} en camino</div>
-                  </div>
-                ) : (
-                  <div className="pt-1 text-sm text-muted-foreground">Sin despachos todavía</div>
-                )}
-                <div className="mt-3 flex gap-6 border-t pt-3">
-                  <div>
-                    <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Tasa proy.</div>
-                    <div className="text-base font-semibold tabular-nums">{c.despachadas ? fmtPct(c.proyectadas / c.despachadas) : "—"}</div>
-                  </div>
-                  <div>
-                    <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">ROAS est.</div>
-                    <div className="text-base font-semibold tabular-nums">{adsTotal > 0 ? fmtRatio(c.revenueEst / adsTotal) : "—"}</div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+      <Card>
+        <CardContent className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 pt-5">
+          <div>
+            <div className="mb-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+              Profit estimado · <span className="tabular-nums normal-case">{rangeLabel}</span>
+            </div>
+            <div className={cn("text-3xl font-bold tabular-nums tracking-tight", rango.despachadas ? pnlColor(rProfitEst) : "text-muted-foreground")}>
+              {rango.despachadas ? fmtMoney(rProfitEst) : "—"}
+            </div>
+            {rango.despachadas ? (
+              <div className="pt-1 text-sm text-muted-foreground">
+                confirmado <span className="tabular-nums">{fmtMoney(rProfitConf)}</span>
+                <span className="mx-1.5">·</span>
+                <span className="font-medium tabular-nums text-amber-600 dark:text-amber-500">{fmtMoney(rEnCamino)} en camino</span>
+              </div>
+            ) : (
+              <div className="pt-1 text-sm text-muted-foreground">Sin despachos en el rango</div>
+            )}
+          </div>
+          <div className="flex gap-8">
+            <div>
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Despachos</div>
+              <div className="text-base font-semibold tabular-nums">{rango.despachadas}</div>
+            </div>
+            <div>
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Tasa proy.</div>
+              <div className="text-base font-semibold tabular-nums">{rango.despachadas ? fmtPct(rango.proyectadas / rango.despachadas) : "—"}</div>
+            </div>
+            <div>
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">ROAS est.</div>
+              <div className="text-base font-semibold tabular-nums">{adsTot > 0 ? fmtRatio(rango.revenueEst / adsTot) : "—"}</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className="space-y-3 pt-5">
           <div className="flex items-baseline justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Gastos en Ads · 30 días</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Gastos en Ads · <span className="normal-case tabular-nums">{rangeLabel}</span></span>
             <span className="text-sm text-muted-foreground">total <b className="tabular-nums text-foreground">{fmtMoney(adsTot)}</b></span>
           </div>
           <div className="flex flex-wrap gap-x-8 gap-y-3">
@@ -270,10 +307,10 @@ export default async function Resumen({
             </div>
           </div>
 
-          {!!adsSinCohorte?.length && (
+          {!!adsSinCohortePorProd.length && (
             <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">Sin cohorte hoy:</span>{" "}
-              {adsSinCohorte.map((a) => `${a.product ?? "sin producto"} ${fmtMoney(Number(a.spend))}`).join(" · ")}
+              <span className="font-medium text-foreground">Sin cohorte en el período:</span>{" "}
+              {adsSinCohortePorProd.slice(0, 8).map(([p, s]) => `${p} ${fmtMoney(s)}`).join(" · ")}
             </p>
           )}
 
@@ -385,7 +422,7 @@ export default async function Resumen({
           {!list.length && (
             <TableRow>
               <TableCell colSpan={8} className="text-center text-muted-foreground">
-                Sin despachos en los últimos 30 días
+                Sin despachos en el rango elegido
               </TableCell>
             </TableRow>
           )}
