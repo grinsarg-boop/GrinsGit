@@ -32,11 +32,21 @@ type Guia = {
     order_items: { product_id: number | null; qty: number; unit_price: number }[];
   } | null;
 };
+// Correo (cuotas 3, prepago): no genera guía. Es una orden, cohortada por creación ART.
+type CorreoOrder = {
+  order_number: string; customer_name: string | null; province: string | null;
+  financial_status: string; deposit_amount: number; cod_amount: number;
+  order_items: { product_id: number | null; qty: number; unit_price: number }[];
+};
 
 export default async function Dia({ params }: { params: Promise<{ fecha: string }> }) {
   const { fecha } = await params;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) notFound();
   const db = supabaseAdmin();
+  // Día ARGENTINA (UTC-3): [fecha 03:00Z, fecha+1 03:00Z) — para cohortar Correo por created_at, como el P&L (016).
+  const nd = new Date(`${fecha}T00:00:00Z`); nd.setUTCDate(nd.getUTCDate() + 1);
+  const artFrom = `${fecha}T03:00:00Z`;
+  const artTo = `${nd.toISOString().slice(0, 10)}T03:00:00Z`;
 
   // ad_spend con nivel de conjunto (adset). Resiliente: si la columna adset_name aún no está
   // migrada (017), cae a la consulta sin conjunto. ponytail: el fallback se borra post-017.
@@ -48,15 +58,17 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
     return (b.data ?? []).map((a) => ({ ...a, adset_name: null })) as Ad[];
   };
 
-  const [prodsRes, pnlRes, guiasRes, ads] = await Promise.all([
+  const [prodsRes, pnlRes, guiasRes, ads, correoRes] = await Promise.all([
     db.from("products").select("id, name"),
     db.from("daily_pnl").select("courier, product_id, despachadas, entregadas, en_transito, revenue_estimado, profit_estimado, profit_confirmado, ads, flete, tasa_proyectada").eq("dispatch_date", fecha),
     db.from("shipments").select("tracking, courier, status_canonical, freight_cost, province, orders(order_number, cod_amount, customer_name, order_items(product_id, qty, unit_price))").eq("dispatched_at", fecha).order("courier"),
     fetchAds(),
+    db.from("orders").select("order_number, customer_name, province, financial_status, deposit_amount, cod_amount, order_items(product_id, qty, unit_price)").ilike("tags", "%cuotas_3%").is("cancelled_at", null).in("financial_status", ["paid", "pending"]).gte("created_at", artFrom).lt("created_at", artTo),
   ]);
   const pname = new Map((prodsRes.data ?? []).map((p) => [p.id, p.name as string]));
   const pnl = (pnlRes.data ?? []) as Pnl[];
   const guias = (guiasRes.data ?? []) as unknown as Guia[];
+  const correo = (correoRes.data ?? []) as unknown as CorreoOrder[];
 
   const tot = pnl.reduce((a, r) => ({
     despachadas: a.despachadas + r.despachadas, entregadas: a.entregadas + r.entregadas,
@@ -81,28 +93,67 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
     return m;
   }, new Map<string, Camp>()).entries()].sort((a, b) => b[1].spend - a[1].spend);
 
-  // Guías agrupadas Courier → Producto → guías (colapsable, corta la lista interminable).
-  // Producto = el principal del pedido (línea de mayor qty×precio), espejo de order_primary_product.
-  const guiaProducto = (g: Guia): string => {
-    const items = (g.orders?.order_items ?? []).filter((i) => i.product_id != null);
-    if (!items.length) return "(sin producto)";
-    const top = items.reduce((a, b) => (b.qty * b.unit_price > a.qty * a.unit_price ? b : a));
+  // Despachos del día agrupados Courier → Producto → ítem (colapsable, corta la lista interminable).
+  // Urbano/Fixy son guías (entrega/COD); Correo son órdenes prepago (pagadas/generadas + confirmado).
+  // Producto = el principal del pedido (mayor qty×precio), espejo de order_primary_product.
+  const primaryProduct = (items: { product_id: number | null; qty: number; unit_price: number }[]): string => {
+    const withP = items.filter((i) => i.product_id != null);
+    if (!withP.length) return "(sin producto)";
+    const top = withP.reduce((a, b) => (b.qty * b.unit_price > a.qty * a.unit_price ? b : a));
     return pname.get(top.product_id!) ?? `#${top.product_id}`;
   };
-  type PGrp = { guias: Guia[]; cod: number; entregadas: number };
-  type CGrp = { total: number; cod: number; entregadas: number; prods: Map<string, PGrp> };
-  const guiasPorCourier = [...guias.reduce((m, g) => {
-    const ck = COURIER[g.courier] ?? g.courier;
-    const c = m.get(ck) ?? { total: 0, cod: 0, entregadas: 0, prods: new Map<string, PGrp>() };
-    const cod = Number(g.orders?.cod_amount ?? 0);
-    const ent = g.status_canonical === "entregado" ? 1 : 0;
-    c.total++; c.cod += cod; c.entregadas += ent;
-    const pk = guiaProducto(g);
-    const p = c.prods.get(pk) ?? { guias: [] as Guia[], cod: 0, entregadas: 0 };
-    p.guias.push(g); p.cod += cod; p.entregadas += ent;
-    c.prods.set(pk, p); m.set(ck, c);
-    return m;
-  }, new Map<string, CGrp>()).entries()].sort((a, b) => b[1].total - a[1].total);
+  type Item = {
+    key: string; estadoClass: string; estadoText: string; tracking: string | null;
+    orden: string | null; cliente: string | null; province: string | null; freight: number | null; monto: number;
+  };
+  type Prod = { name: string; count: number; ok: number; value: number; items: Item[] };
+  type Grupo = { name: string; unit: string; okWord: string; count: number; ok: number; value: number; prods: Prod[] };
+  const groupByProduct = (rows: { product: string; ok: boolean; value: number; item: Item }[]) => {
+    const m = new Map<string, Prod>();
+    let count = 0, ok = 0, value = 0;
+    for (const e of rows) {
+      count++; if (e.ok) ok++; value += e.value;
+      const p = m.get(e.product) ?? { name: e.product, count: 0, ok: 0, value: 0, items: [] };
+      p.count++; if (e.ok) p.ok++; p.value += e.value; p.items.push(e.item);
+      m.set(e.product, p);
+    }
+    return { prods: [...m.values()].sort((a, b) => b.count - a.count), count, ok, value };
+  };
+  const grupos: Grupo[] = [];
+  for (const ck of ["urbano", "fixy"] as const) {
+    const gs = guias.filter((g) => g.courier === ck);
+    if (!gs.length) continue;
+    const g = groupByProduct(gs.map((s) => ({
+      product: primaryProduct(s.orders?.order_items ?? []),
+      ok: s.status_canonical === "entregado",
+      value: Number(s.orders?.cod_amount ?? 0),
+      item: {
+        key: `${s.courier}-${s.tracking}`, estadoClass: estadoColor(s.status_canonical),
+        estadoText: s.status_canonical.replace(/_/g, " "), tracking: s.tracking,
+        orden: s.orders?.order_number ?? null, cliente: s.orders?.customer_name ?? null,
+        province: s.province, freight: s.freight_cost != null ? Number(s.freight_cost) : null,
+        monto: Number(s.orders?.cod_amount ?? 0),
+      },
+    })));
+    grupos.push({ name: COURIER[ck] ?? ck, unit: "guías", okWord: "entreg.", ...g });
+  }
+  if (correo.length) {
+    const g = groupByProduct(correo.map((o) => ({
+      product: primaryProduct(o.order_items ?? []),
+      ok: o.financial_status === "paid",
+      value: o.financial_status === "paid" ? Number(o.deposit_amount) : 0, // confirmado (prepago cobrado)
+      item: {
+        key: `correo-${o.order_number}`,
+        estadoClass: o.financial_status === "paid" ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-500",
+        estadoText: o.financial_status === "paid" ? "pagado" : "pendiente", tracking: null,
+        orden: o.order_number, cliente: o.customer_name, province: o.province, freight: null,
+        monto: Number(o.cod_amount),
+      },
+    })));
+    grupos.push({ name: "Correo", unit: "órdenes", okWord: "pag.", ...g });
+  }
+  grupos.sort((a, b) => b.count - a.count);
+  const totalDesp = grupos.reduce((s, g) => s + g.count, 0);
 
   return (
     <main className="space-y-6">
@@ -238,45 +289,47 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
         </Table>
       </section>
 
-      {/* Guías del día — agrupadas Courier → Producto, desplegables (antes: lista interminable) */}
+      {/* Despachos del día — agrupados Courier → Producto, desplegables (antes: lista interminable) */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold">Guías del día ({guias.length})</h2>
-        {guias.length ? (
-          <div className="divide-y overflow-hidden rounded-lg border text-sm">
-            <div className="flex items-center gap-3 bg-muted/40 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              <span className="flex-1">Courier · producto</span>
-              <span className="w-24 text-right">Entregadas</span>
-              <span className="w-28 text-right">COD</span>
-            </div>
-            {guiasPorCourier.map(([cname, c]) => {
-              const prods = [...c.prods.entries()].sort((a, b) => b[1].guias.length - a[1].guias.length);
-              return (
-                <details key={cname} className="group">
+        <h2 className="text-sm font-semibold">Despachos del día ({totalDesp})</h2>
+        {totalDesp ? (
+          <>
+            <p className="max-w-[70ch] text-xs text-muted-foreground">
+              Urbano y Fixy son guías (entrega / COD). <b className="text-foreground">Correo</b> es prepago (cuotas 3): órdenes, con <b className="text-foreground">pagadas/generadas</b> y monto confirmado — sin guía ni entrega.
+            </p>
+            <div className="divide-y overflow-hidden rounded-lg border text-sm">
+              <div className="flex items-center gap-3 bg-muted/40 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <span className="flex-1">Courier · producto</span>
+                <span className="w-28 text-right">Cerradas</span>
+                <span className="w-28 text-right">Monto</span>
+              </div>
+              {grupos.map((grp) => (
+                <details key={grp.name} className="group">
                   <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-accent/40 [&::-webkit-details-marker]:hidden">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
-                    <span className="min-w-0 flex-1 truncate font-medium">{cname} <span className="font-normal text-muted-foreground">· {c.total} guías</span></span>
-                    <span className="w-24 text-right tabular-nums text-muted-foreground">{c.entregadas}/{c.total}</span>
-                    <span className="w-28 text-right font-semibold tabular-nums">{fmtMoney(c.cod)}</span>
+                    <span className="min-w-0 flex-1 truncate font-medium">{grp.name} <span className="font-normal text-muted-foreground">· {grp.count} {grp.unit}</span></span>
+                    <span className="w-28 text-right tabular-nums text-muted-foreground">{grp.ok}/{grp.count} {grp.okWord}</span>
+                    <span className="w-28 text-right font-semibold tabular-nums">{fmtMoney(grp.value)}</span>
                   </summary>
                   <div className="bg-muted/20">
-                    {prods.map(([prodName, p]) => (
-                      <details key={prodName} className="group/prod border-t border-border/50">
+                    {grp.prods.map((p) => (
+                      <details key={p.name} className="group/prod border-t border-border/50">
                         <summary className="flex cursor-pointer list-none items-center gap-3 py-1.5 pl-8 pr-3 hover:bg-accent/30 [&::-webkit-details-marker]:hidden">
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3 shrink-0 text-muted-foreground transition-transform group-open/prod:rotate-90" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
-                          <span className="min-w-0 flex-1 truncate">{prodName} <span className="text-muted-foreground">· {p.guias.length}</span></span>
-                          <span className="w-24 text-right tabular-nums text-muted-foreground">{p.entregadas}/{p.guias.length}</span>
-                          <span className="w-28 text-right tabular-nums">{fmtMoney(p.cod)}</span>
+                          <span className="min-w-0 flex-1 truncate">{p.name} <span className="text-muted-foreground">· {p.count}</span></span>
+                          <span className="w-28 text-right tabular-nums text-muted-foreground">{p.ok}/{p.count} {grp.okWord}</span>
+                          <span className="w-28 text-right tabular-nums">{fmtMoney(p.value)}</span>
                         </summary>
                         <div>
-                          {p.guias.map((g) => (
-                            <div key={`${g.courier}-${g.tracking}`} className="flex items-center gap-3 border-t border-border/40 py-1.5 pl-14 pr-3">
-                              <span className={cn("w-24 shrink-0 truncate text-xs", estadoColor(g.status_canonical))}>{g.status_canonical.replace(/_/g, " ")}</span>
-                              <span className="shrink-0 font-mono text-xs text-muted-foreground">{g.tracking}</span>
-                              <span className="w-16 shrink-0">{g.orders?.order_number ? `#${g.orders.order_number}` : "—"}</span>
-                              <span className="min-w-0 flex-1 truncate text-muted-foreground">{g.orders?.customer_name ?? "—"}</span>
-                              <span className="hidden w-20 truncate text-right text-muted-foreground sm:inline">{g.province ?? "—"}</span>
-                              <span className="hidden w-24 text-right tabular-nums text-muted-foreground md:inline">{g.freight_cost ? fmtMoney(Number(g.freight_cost)) : "—"}</span>
-                              <span className="w-28 text-right tabular-nums">{g.orders?.cod_amount ? fmtMoney(Number(g.orders.cod_amount)) : "—"}</span>
+                          {p.items.map((it) => (
+                            <div key={it.key} className="flex items-center gap-3 border-t border-border/40 py-1.5 pl-14 pr-3">
+                              <span className={cn("w-24 shrink-0 truncate text-xs", it.estadoClass)}>{it.estadoText}</span>
+                              {it.tracking && <span className="shrink-0 font-mono text-xs text-muted-foreground">{it.tracking}</span>}
+                              <span className="w-16 shrink-0">{it.orden ? `#${it.orden}` : "—"}</span>
+                              <span className="min-w-0 flex-1 truncate text-muted-foreground">{it.cliente ?? "—"}</span>
+                              <span className="hidden w-20 truncate text-right text-muted-foreground sm:inline">{it.province ?? "—"}</span>
+                              <span className="hidden w-24 text-right tabular-nums text-muted-foreground md:inline">{it.freight != null ? fmtMoney(it.freight) : ""}</span>
+                              <span className="w-28 text-right tabular-nums">{it.monto ? fmtMoney(it.monto) : "—"}</span>
                             </div>
                           ))}
                         </div>
@@ -284,11 +337,11 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
                     ))}
                   </div>
                 </details>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          </>
         ) : (
-          <p className="text-sm text-muted-foreground">Sin guías COD ese día (las cuotas/Correo no tienen guía; se cuentan por pago).</p>
+          <p className="text-sm text-muted-foreground">Sin despachos ese día.</p>
         )}
       </section>
     </main>
