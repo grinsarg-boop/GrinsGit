@@ -78,6 +78,11 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
   }), { despachadas: 0, entregadas: 0, enTransito: 0, revenueEst: 0, profitEst: 0, profitConf: 0, ads: 0, flete: 0 });
   const adsTotal = ads.reduce((s, a) => s + Number(a.spend), 0);
   const adsVentas = ads.reduce((s, a) => s + (a.purchases ?? 0), 0);
+  // Gasto CRUDO por producto (Paso 1: keyword del anuncio) — antes del reparto por entregas del P&L.
+  const adsPorProducto = [...ads.reduce((m, a) => {
+    const k = a.product_id ? (pname.get(a.product_id) ?? `#${a.product_id}`) : "sin producto";
+    return m.set(k, (m.get(k) ?? 0) + Number(a.spend));
+  }, new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1]);
 
   // Agrupar Campaña → Conjunto (adset) → Anuncio. Cada nivel se despliega.
   type Adset = { spend: number; purchases: number; ads: Ad[] };
@@ -196,6 +201,19 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
             </span>
           )}
         </div>
+        {adsPorProducto.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1 font-medium uppercase tracking-wide">
+              Crudo por producto
+              <Tip tip="Gasto tal cual lo reporta Meta ese día, repartido por producto según la keyword del anuncio (Paso 1). En el P&L este gasto se re-reparte entre las entregas del período (Fixy ×1,4, Correo por generados), así que el 'Ads' del P&L no coincide con este número." />
+            </span>
+            {adsPorProducto.map(([p, v]) => (
+              <span key={p} className={cn("tabular-nums", p === "sin producto" && "text-amber-600 dark:text-amber-500")}>
+                {p} <b className="text-foreground">{fmtMoney(v)}</b>
+              </span>
+            ))}
+          </div>
+        )}
         {campañas.length ? (
           <div className="divide-y overflow-hidden rounded-lg border text-sm">
             {/* encabezado de columnas */}
