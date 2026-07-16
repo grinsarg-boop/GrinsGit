@@ -38,6 +38,14 @@ describe("_parsePage", () => {
     expect(r.unidades).toBe(3);
     expect(r.revisar).toBe(false);
   });
+  it("ML: pack por SKU VE4 (Veinguard x4, no x1 — la '1 Unidad' es la publicación)", () => {
+    const t = "Venta ID: 20000 17425245890 1 Unidad Fragancia: Menta SKU: VE4 Veinguard Solución Herbal Varices 4 X 30ml Uso Externo Remitente #262382468";
+    const r = _parsePage(t, 1);
+    expect(r.courier).toBe("ml");
+    expect(r.producto).toBe("Veinguard");
+    expect(r.unidades).toBe(4);
+    expect(r.revisar).toBe(false);
+  });
   it("ML mixto (2 productos) → revisar, no cuenta a ciegas", () => {
     const r = _parsePage("Venta ID 20000 111 1 Unidad Gotero Pureza Drenaje y BeeVenom", 1);
     expect(r.courier).toBe("ml");

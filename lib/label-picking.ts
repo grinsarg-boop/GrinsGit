@@ -46,7 +46,11 @@ function parsePage(text: string, page: number): Label {
   let revisar = false;
   if (courier === "ml" || courier === "flex") {
     const prods = matchAllProducts(text);                 // varios keywords = venta mixta
-    const packM = text.match(/pack\s*x?\s*(\d+)/i)
+    // El SKU trae el pack en el último dígito (VE4 = Veinguard x4, igual que B3 de /correo).
+    // Ojo: "1 Unidad" en ML es la cantidad de PUBLICACIONES compradas, no el pack.
+    const packM = text.match(/sku:\s*[a-z]+(\d{1,2})\b/i)
+      ?? text.match(/(\d+)\s*[xX]\s*\d+\s*ml\b/i)          // "4 X 30ml" → 4
+      ?? text.match(/pack\s*x?\s*(\d+)/i)
       ?? text.match(/(\d+)\s*(?:goteros?|frascos?|comprimidos?|c[aá]psulas?)\b/i)
       ?? text.match(/(\d+)\s*u\b/i);
     const pack = packM ? +packM[1] : 1;
