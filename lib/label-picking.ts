@@ -9,6 +9,7 @@ import { matchAllProducts } from "./product-match";
 export type LabelCourier = "urbano" | "fixy" | "correo" | "ml" | "flex" | "?";
 export type Label = {
   page: number;
+  file?: string;             // PDF de origen (para ubicar la etiqueta que falló)
   courier: LabelCourier;
   orden: string | null;      // COD: para cruzar con Shopify
   price: number | null;      // contrareembolso (validación)
@@ -73,7 +74,7 @@ export function packBreakdown(unidadesPorPedido: number[]): string {
   return [...packs.entries()].sort((a, b) => a[0] - b[0]).map(([u, n]) => `${n}×${u}`).join(" · ");
 }
 
-export async function extractLabels(input: ArrayBuffer): Promise<Label[]> {
+export async function extractLabels(input: ArrayBuffer, file?: string): Promise<Label[]> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc =
     typeof window === "undefined"
@@ -85,7 +86,7 @@ export async function extractLabels(input: ArrayBuffer): Promise<Label[]> {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
     const text = content.items.map((it) => ("str" in it ? it.str : "")).join(" ").replace(/\s+/g, " ").trim();
-    out.push(parsePage(text, i));
+    out.push({ ...parsePage(text, i), file });
   }
   return out;
 }

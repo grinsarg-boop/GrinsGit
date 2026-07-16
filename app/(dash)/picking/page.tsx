@@ -4,7 +4,8 @@ import { useState } from "react";
 import { extractLabels, packBreakdown, type Label } from "@/lib/label-picking";
 import type { PickingOrder } from "@/app/api/picking/route";
 
-const COURIER_LABEL: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", "?": "¿?" };
+const COURIER_LABEL: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML", flex: "Flex", "?": "¿?" };
+const loc = (l: Label) => `${l.file ?? "?"} p.${l.page}`;
 
 async function fetchOrders(ordenes: string[]): Promise<PickingOrder[]> {
   const out: PickingOrder[] = [];
@@ -22,17 +23,20 @@ export default function PickingPage() {
   const [files, setFiles] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [stats, setStats] = useState<{ pdfMs: number; crossMs: number; count: number } | null>(null);
 
   async function onFiles(fl: FileList) {
     setBusy(true);
     setMsg(null);
     try {
+      const t0 = performance.now();
       const nuevos: Label[] = [];
       for (const f of Array.from(fl)) {
-        const ls = await extractLabels(await f.arrayBuffer());
+        const ls = await extractLabels(await f.arrayBuffer(), f.name);
         nuevos.push(...ls);
         setFiles((p) => [...p, `${f.name} (${ls.length} etiquetas)`]);
       }
+      const tPdf = performance.now();
       const all = [...labels, ...nuevos];
       setLabels(all);
       // cruzar los N° de orden nuevos que aún no tenemos
@@ -42,6 +46,11 @@ export default function PickingPage() {
         const res = await fetchOrders(pedir);
         setOrders((p) => [...p, ...res]);
       }
+      setStats((s) => ({
+        pdfMs: (s?.pdfMs ?? 0) + (tPdf - t0),
+        crossMs: (s?.crossMs ?? 0) + (performance.now() - tPdf),
+        count: (s?.count ?? 0) + nuevos.length,
+      }));
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -50,7 +59,7 @@ export default function PickingPage() {
   }
 
   function reset() {
-    setLabels([]); setOrders([]); setFiles([]); setMsg(null);
+    setLabels([]); setOrders([]); setFiles([]); setMsg(null); setStats(null);
   }
 
   // ── Agregación ──
@@ -61,7 +70,8 @@ export default function PickingPage() {
     a.unidades += u; a.ordenes += 1; a.packs.push(u); agg.set(p, a);
   };
   const sinProducto: string[] = [];
-  const noEncontrados: string[] = [];
+  const noEncontrados: string[] = [];  // 200 pero no existe en Shopify
+  const errores: string[] = [];        // 429/5xx tras reintentos → reintentable, NO es "no existe"
 
   // COD (Correo/Fixy/Urbano): por pedido distinto, cruzado con Shopify.
   const ordMap = new Map(orders.map((o) => [o.orden, o]));
@@ -69,7 +79,8 @@ export default function PickingPage() {
   let ordenesOk = 0;
   for (const orden of distintos) {
     const o = ordMap.get(orden);
-    if (!o || !o.encontrado) { noEncontrados.push(orden); continue; }
+    if (!o || o.error) { errores.push(orden); continue; }
+    if (!o.encontrado) { noEncontrados.push(orden); continue; }
     ordenesOk++;
     const productos = o.items.filter((it) => it.producto);
     if (!productos.length) { sinProducto.push(`#${orden}`); continue; }
@@ -96,6 +107,13 @@ export default function PickingPage() {
   const noRecon = labels.filter((l) => l.courier === "?").length;
   const porCourier = labels.reduce<Record<string, number>>((m, l) => ((m[l.courier] = (m[l.courier] ?? 0) + 1), m), {});
 
+  // Para un N° de orden, de qué courier/archivo/página vino (responde "¿qué era el no encontrado?").
+  const ordenLoc = (orden: string) => {
+    const ls = labels.filter((l) => l.orden === orden);
+    const cs = [...new Set(ls.map((l) => COURIER_LABEL[l.courier] ?? l.courier))].join("/");
+    return `#${orden} (${cs} ${ls.map(loc).join(", ")})`;
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -120,6 +138,11 @@ export default function PickingPage() {
         <p className="text-xs text-muted-foreground">
           {files.join(" · ")} — {labels.length} etiquetas ·{" "}
           {Object.entries(porCourier).map(([c, n]) => `${COURIER_LABEL[c] ?? c}: ${n}`).join(" · ")}
+          {stats && (
+            <> · <b className="text-foreground">{((stats.pdfMs + stats.crossMs) / 1000).toFixed(1)}s</b>{" "}
+            ({(stats.count / Math.max(0.001, (stats.pdfMs + stats.crossMs) / 1000)).toFixed(0)} etiq/s —
+            leer PDF {(stats.pdfMs / 1000).toFixed(1)}s · cruzar Shopify {(stats.crossMs / 1000).toFixed(1)}s)</>
+          )}
         </p>
       )}
 
@@ -161,13 +184,14 @@ export default function PickingPage() {
         </p>
       )}
 
-      {(sinOrden.length > 0 || noEncontrados.length > 0 || sinProducto.length > 0 || mlRevisar.length > 0 || mlSinProd.length > 0 || noRecon > 0) && (
+      {(sinOrden.length > 0 || errores.length > 0 || noEncontrados.length > 0 || sinProducto.length > 0 || mlRevisar.length > 0 || mlSinProd.length > 0 || noRecon > 0) && (
         <div className="space-y-1 text-sm text-amber-600">
-          {sinOrden.length > 0 && <p>⚠️ {sinOrden.length} etiqueta(s) COD sin N° de orden legible ({[...new Set(sinOrden.map((l) => COURIER_LABEL[l.courier]))].join(", ")}) — pág. {sinOrden.map((l) => l.page).join(", ")}.</p>}
-          {noEncontrados.length > 0 && <p>⚠️ No encontrados en Shopify: {noEncontrados.map((o) => `#${o}`).join(", ")}</p>}
+          {sinOrden.length > 0 && <p>⚠️ {sinOrden.length} etiqueta(s) COD sin N° de orden legible ({[...new Set(sinOrden.map((l) => COURIER_LABEL[l.courier]))].join(", ")}) — {sinOrden.map(loc).join(" · ")}.</p>}
+          {errores.length > 0 && <p>🔁 Error al consultar Shopify (rate-limit/transitorio, <b>reintentá subiendo de nuevo</b>): {errores.map(ordenLoc).join(", ")}</p>}
+          {noEncontrados.length > 0 && <p>⚠️ No existen en Shopify (verificá el N° de orden): {noEncontrados.map(ordenLoc).join(", ")}</p>}
           {sinProducto.length > 0 && <p>⚠️ Ítems sin producto reconocido: {[...new Set(sinProducto)].join(", ")} — completá a mano.</p>}
-          {mlRevisar.length > 0 && <p>⚠️ {mlRevisar.length} etiqueta(s) ML/Flex mixtas o multi-compra (pág. {mlRevisar.map((l) => l.page).join(", ")}) — NO se cuentan solas, revisá a mano.</p>}
-          {mlSinProd.length > 0 && <p>⚠️ {mlSinProd.length} etiqueta(s) ML/Flex sin producto reconocido — completá a mano.</p>}
+          {mlRevisar.length > 0 && <p>⚠️ {mlRevisar.length} etiqueta(s) ML/Flex mixtas o multi-compra ({mlRevisar.map(loc).join(" · ")}) — NO se cuentan solas, revisá a mano.</p>}
+          {mlSinProd.length > 0 && <p>⚠️ {mlSinProd.length} etiqueta(s) ML/Flex sin producto reconocido ({mlSinProd.map(loc).join(" · ")}) — completá a mano.</p>}
           {noRecon > 0 && <p className="text-muted-foreground">{noRecon} página(s) no reconocidas (posible mitad de etiqueta ML / hoja de resumen) — ignoradas.</p>}
         </div>
       )}

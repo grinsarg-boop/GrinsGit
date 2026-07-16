@@ -10,6 +10,7 @@ describe("matchProduct", () => {
     expect(matchProduct("VeinGuard crema")).toBe("Veinguard");
     expect(matchProduct("BeeVenom gel")).toBe("BeeVenom");
     expect(matchProduct("ALTUS 2u")).toBe("Altus");
+    expect(matchProduct("Revival Oil Aceite Anticelulítico 240ml")).toBe("Revival Oil"); // solo ML/Flex
   });
   it("sin match → null (queda en v_sin_clasificar, no se inventa atribución)", () => {
     expect(matchProduct("Producto misterioso")).toBeNull();

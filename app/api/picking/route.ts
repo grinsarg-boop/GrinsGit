@@ -16,12 +16,14 @@ async function sessionOk(req: NextRequest): Promise<boolean> {
   return !!user && allowed.includes(user.email?.toLowerCase() ?? "");
 }
 
+export const maxDuration = 60; // cruzar ~60 pedidos con Shopify (con reintentos por 429) puede pasar los 10s default
+
 const FIELDS = "name,total_price,tags,line_items";
 const COURIERS = ["urbano", "fixy", "correo"] as const;
 
 export type PickingItem = { producto: string | null; unidades: number };
 export type PickingOrder = {
-  orden: string; encontrado: boolean; courier: string | null; total: number; items: PickingItem[];
+  orden: string; encontrado: boolean; error?: boolean; courier: string | null; total: number; items: PickingItem[];
 };
 
 export async function GET(req: NextRequest) {
@@ -40,7 +42,8 @@ export async function GET(req: NextRequest) {
     );
     if (!res.ok) {
       if (res.status === 401 || res.status === 403) return new NextResponse(`shopify auth ${res.status}`, { status: 502 });
-      result.push({ orden: name, encontrado: false, courier: null, total: 0, items: [] });
+      // 429 tras reintentos / 5xx: NO es "no existe", es fallo de consulta → reintentable.
+      result.push({ orden: name, encontrado: false, error: true, courier: null, total: 0, items: [] });
       continue;
     }
     const { orders: found } = await res.json();

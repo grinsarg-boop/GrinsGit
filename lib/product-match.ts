@@ -8,6 +8,10 @@ const PRODUCT_KEYWORDS: [string, string][] = [
   ["vein", "Veinguard"],
   ["bee", "BeeVenom"],
   ["altus", "Altus"],
+  // Revival Oil: se vende SOLO por MercadoLibre → nunca llega a orders/ads de
+  // Shopify, por eso no está en la versión SQL. Acá lo necesita el lector de
+  // etiquetas ML/Flex (/picking) para no marcarlo "sin producto".
+  ["revival", "Revival Oil"],
 ];
 
 export function matchProduct(text: string): string | null {

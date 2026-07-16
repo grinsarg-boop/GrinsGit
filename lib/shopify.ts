@@ -40,6 +40,16 @@ export async function shopifyFetch(url: string): Promise<Response> {
       headers: { "X-Shopify-Access-Token": await getShopifyToken(true) },
     });
   }
+  // Shopify REST limita a 2 req/s (bucket 40). Desde Vercel (baja latencia a
+  // Shopify) una corrida de picking dispara ráfagas que agotan el bucket → 429.
+  // Antes se trataba como "no encontrado". Respetar Retry-After y reintentar.
+  for (let i = 0; res.status === 429 && i < 5; i++) {
+    const wait = Math.max(0.5, Number(res.headers.get("retry-after") ?? 1)) * 1000;
+    await new Promise((r) => setTimeout(r, wait));
+    res = await fetch(url, {
+      headers: { "X-Shopify-Access-Token": await getShopifyToken() },
+    });
+  }
   return res;
 }
 
