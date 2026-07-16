@@ -11,8 +11,9 @@ const buttonVariants = cva(
       variant: {
         default: "bg-primary text-primary-foreground font-semibold hover:brightness-110 active:brightness-95",
         // Acción pesada (recompute/backfill): outline naranja, NO relleno — no grita. Pide modal de confirmación.
+        // Usa el token `heavy` (naranja), distinto de `destructive` (rojo = pérdidas/errores).
         destructive:
-          "border border-destructive bg-transparent text-destructive hover:bg-destructive/15 dark:text-destructive-foreground focus-visible:ring-destructive/30",
+          "border border-heavy bg-transparent text-heavy hover:bg-heavy/15 dark:text-heavy-foreground focus-visible:ring-heavy/30",
         outline:
           "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         secondary:

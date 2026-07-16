@@ -1,7 +1,8 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Tip } from "@/components/ui/tooltip";
+import { SyncRun } from "@/components/sync-run";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -11,6 +12,10 @@ import { supabaseAdmin } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 
 const CONNECTORS = ["meta", "urbano", "fixy", "shopify-backfill", "recompute"] as const;
+const SYNC_TIPS: Record<string, string> = {
+  recompute: "Recalcula todo el P&L desde cero. Puede tardar y pisa los valores actuales.",
+  "shopify-backfill": "Trae pedidos históricos de Shopify que falten. Úsalo solo si detectás huecos en los datos.",
+};
 
 async function runNow(formData: FormData) {
   "use server";
@@ -40,10 +45,10 @@ export default async function SyncPage() {
       <section className="flex flex-wrap items-center gap-2">
         <span className="mr-2 text-sm font-medium">Correr ahora:</span>
         {CONNECTORS.map((c) => (
-          <form key={c} action={runNow}>
-            <input type="hidden" name="connector" value={c} />
-            <Button type="submit" variant="outline" size="sm">{c}</Button>
-          </form>
+          <div key={c} className="flex items-center gap-1">
+            <SyncRun connector={c} run={runNow} />
+            {SYNC_TIPS[c] && <Tip label={`Qué hace ${c}`} tip={SYNC_TIPS[c]} />}
+          </div>
         ))}
       </section>
 
@@ -75,7 +80,13 @@ export default async function SyncPage() {
                       {r.status}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right">{r.rows_upserted}</TableCell>
+                  <TableCell className="text-right">
+                    {r.rows_upserted === 0 ? (
+                      <Tip label="Filas en 0" tip="Sin novedades para sincronizar en esta corrida (no es un error).">
+                        <span className="text-muted-foreground">0</span>
+                      </Tip>
+                    ) : r.rows_upserted}
+                  </TableCell>
                   <TableCell className="max-w-md">
                     {r.error && <span className="text-sm text-destructive">{r.error}</span>}
                     {warnings.length > 0 && (
@@ -104,10 +115,10 @@ export default async function SyncPage() {
       </section>
 
       <section>
-        <h2 className="mb-2 font-semibold">
-          Sin clasificar <span className="text-sm font-normal text-muted-foreground">
-            (fuera del P&L — no se inventan atribuciones)
-          </span>
+        <h2 className="mb-2 flex flex-wrap items-center gap-1.5 font-semibold">
+          Sin clasificar
+          <Tip label="Qué es sin clasificar" tip="Despachos que no pudimos matchear con un producto o pedido. Quedan fuera del P&L a propósito: preferimos no inventar atribuciones." />
+          <span className="text-sm font-normal text-muted-foreground">(fuera del P&L — no se inventan atribuciones)</span>
         </h2>
         <Table>
           <TableHeader>

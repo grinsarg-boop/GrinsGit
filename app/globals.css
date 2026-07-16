@@ -21,8 +21,10 @@
   --muted-foreground: oklch(0.5 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: #8A4B1E;          /* naranja tenido — acción pesada (outline) */
-  --destructive-foreground: #7A3E15;
+  --destructive: oklch(0.577 0.245 27.325);   /* rojo — pérdidas y errores */
+  --destructive-foreground: oklch(0.985 0 0);
+  --heavy: #8A4B1E;                /* naranja tenue — acción pesada (recompute/backfill), outline */
+  --heavy-foreground: #7A3E15;
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: #2E7D5B;
@@ -45,8 +47,10 @@
   --muted-foreground: #A1A1A8;     /* ≥4.5:1 sobre la base */
   --accent: #26262A;
   --accent-foreground: #F2F2F2;
-  --destructive: #8A4B1E;          /* borde naranja de acción pesada */
-  --destructive-foreground: #FFE9D6;
+  --destructive: oklch(0.704 0.191 22.216);   /* rojo legible sobre fondo oscuro */
+  --destructive-foreground: oklch(0.985 0 0);
+  --heavy: #8A4B1E;                /* naranja tenue — acción pesada (outline) */
+  --heavy-foreground: #FFE9D6;
   --border: #3A3A3E;
   --input: #3A3A3E;
   --ring: #3E9E77;                 /* verde más claro, visible sobre fondo oscuro */
@@ -69,6 +73,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-heavy: var(--heavy);
+  --color-heavy-foreground: var(--heavy-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);

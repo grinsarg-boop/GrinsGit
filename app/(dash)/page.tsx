@@ -1,4 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { Tip } from "@/components/ui/tooltip";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -124,22 +125,17 @@ export default async function Resumen({
 
   return (
     <main className="space-y-6">
-      {courier === "correo" ? (
-        <p className="max-w-[70ch] text-sm text-muted-foreground">
-          <b className="text-foreground">Correo = cuotas 3 s/i (prepago).</b> Lo confirmado ya está cobrado y{" "}
-          <b className="text-foreground">no se anula</b> — acá no se proyecta una tasa de entrega. La métrica es la{" "}
-          <b className="text-foreground">tasa de confirmación</b> (pagados / generados), actual; el estimado = el confirmado.
-        </p>
-      ) : (
-        <p className="max-w-[70ch] text-sm text-muted-foreground">
-          Un solo número manda: <b className="text-foreground">Profit estimado</b> — lo que vas a ganar con
-          lo ya despachado, incluyendo lo que sigue en la calle. Es el{" "}
-          <span className="rounded bg-muted px-1.5 font-medium text-foreground">confirmado</span> (plata que
-          YA cobraste) más una proyección de las guías{" "}
-          <span className="rounded bg-amber-100 px-1.5 font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-500">en camino</span>,
-          usando tu tasa de entrega histórica por zona y producto.
-        </p>
-      )}
+      <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        <span><b className="text-foreground">Profit estimado</b> — lo que vas a ganar con lo ya despachado.</span>
+        <Tip
+          label="Cómo se calcula el profit estimado"
+          tip={
+            courier === "correo"
+              ? "En Correo son cuotas 3 sin interés, prepago: lo confirmado ya está cobrado y no se anula, así que no proyectamos tasa de entrega. La métrica es la tasa de confirmación (pagados / generados) y el estimado es igual al confirmado."
+              : "Es el confirmado (plata que ya cobraste) más una proyección de las guías que siguen en la calle, usando tu tasa de entrega histórica por zona y producto. Por eso el número puede moverse hasta que todas las guías cierren."
+          }
+        />
+      </div>
 
       {stale.length > 0 && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">
@@ -148,7 +144,10 @@ export default async function Resumen({
       )}
 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
-        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Frescura del feed</span>
+        <span className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          Frescura del feed
+          <Tip label="Qué es la frescura del feed" tip="Fecha de la última guía que entró por cada courier. Si un courier quedó viejo, puede faltar sincronizar." />
+        </span>
         {freshness.map((f) => {
           const n = f.last ? daysSince(f.last) : Infinity;
           const color = n <= 1 ? "text-emerald-600 dark:text-emerald-400" : n <= STALE_DAYS ? "text-amber-600 dark:text-amber-500" : "text-destructive";
@@ -247,12 +246,18 @@ export default async function Resumen({
           </div>
           <div className="flex flex-wrap gap-x-8 gap-y-3">
             <div>
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Atribuido a cohortes</div>
+              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+                Atribuido a cohortes
+                <Tip tip="Gasto repartido entre productos y canales según los despachos de cada día." />
+              </div>
               <div className="text-lg font-semibold tabular-nums">{fmtMoney(adsAtrib)}</div>
               <div className="text-xs text-muted-foreground">repartido por producto y canal</div>
             </div>
             <div>
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Sin cohorte</div>
+              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+                Sin cohorte
+                <Tip tip="Gasto de Meta que no pudimos atribuir a ningún producto ni pedido. Se resta directo del profit y suma al denominador del ROAS." />
+              </div>
               <div className="text-lg font-semibold tabular-nums text-amber-600 dark:text-amber-500">{fmtMoney(adsSin)}</div>
               <div className="text-xs text-muted-foreground">{adsTot ? fmtPct(adsSin / adsTot) : "—"} del total · se resta del profit</div>
             </div>
@@ -289,12 +294,35 @@ export default async function Resumen({
           <TableRow>
             <TableHead>Fecha</TableHead>
             <TableHead className="text-right">Despachos</TableHead>
-            <TableHead className="w-36">Madurez</TableHead>
-            <TableHead className="text-right">{courier === "correo" ? "Confirmación" : "Tasa hoy → final"}</TableHead>
-            <TableHead className="text-right text-amber-600 dark:text-amber-500">Profit estimado</TableHead>
-            <TableHead className="text-right">confirmado</TableHead>
+            <TableHead className="w-36">
+              <span className="inline-flex items-center gap-1">Madurez
+                <Tip tip="Qué porcentaje de las guías de ese día ya se resolvieron (entregadas o canceladas). A más madurez, más confiable el estimado." />
+              </span>
+            </TableHead>
+            <TableHead className="text-right">
+              <span className="inline-flex items-center gap-1">
+                {courier === "correo" ? "Confirmación" : "Tasa hoy → final"}
+                <Tip tip={courier === "correo"
+                  ? "Pagados sobre generados. En prepago no proyectamos entrega, así que este valor no cambia."
+                  : "Izquierda: tasa de entrega real hasta ahora. Derecha: tasa final que proyectamos según tu histórico. Cuando el día madura, ambas se igualan."} />
+              </span>
+            </TableHead>
+            <TableHead className="text-right text-amber-600 dark:text-amber-500">
+              <span className="inline-flex items-center gap-1">Profit estimado
+                <Tip tip="Confirmado más la proyección de lo que sigue en camino, menos Ads." />
+              </span>
+            </TableHead>
+            <TableHead className="text-right">
+              <span className="inline-flex items-center gap-1">confirmado
+                <Tip tip="Plata que ya cobraste, neta del gasto de Ads del período. Puede dar negativo de forma temporal: significa que todavía gastaste más en Ads de lo que maduró en ventas, y se corrige a medida que las guías se entregan." />
+              </span>
+            </TableHead>
             <TableHead className="text-right">Ads</TableHead>
-            <TableHead className="text-right">ROAS est.</TableHead>
+            <TableHead className="text-right">
+              <span className="inline-flex items-center gap-1">ROAS est.
+                <Tip tip="Revenue estimado dividido el gasto total en Ads. Cuánto facturás por cada peso invertido en publicidad." />
+              </span>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -330,14 +358,22 @@ export default async function Resumen({
                   inmaduro ? "text-muted-foreground" : pnlColor(d.profitEst),
                 )}>
                   {fmtMoney(d.profitEst)}
-                  {inmaduro && (
-                    <span className="ml-1.5 rounded bg-amber-100 px-1 py-px align-middle text-[0.6rem] uppercase tracking-wide text-amber-700 dark:bg-amber-950/50 dark:text-amber-500">
-                      inmaduro
-                    </span>
-                  )}
+                  {inmaduro ? (
+                    <Tip label="Qué significa inmaduro" tip="La tasa de entrega de este día todavía puede cambiar, así que el estimado no es definitivo. Se vuelve firme cuando las guías terminan de entregarse.">
+                      <span className="ml-1.5 rounded bg-amber-100 px-1 py-px align-middle text-[0.6rem] uppercase tracking-wide text-amber-700 dark:bg-amber-950/50 dark:text-amber-500">inmaduro</span>
+                    </Tip>
+                  ) : pct >= 1 ? (
+                    <Tip label="Qué significa cerrado" tip="Todas las guías de este día ya se resolvieron: este número es definitivo.">
+                      <span className="ml-1.5 rounded bg-muted px-1 py-px align-middle text-[0.6rem] uppercase tracking-wide text-muted-foreground">cerrado</span>
+                    </Tip>
+                  ) : null}
                 </TableCell>
                 <TableCell className={cn("text-right tabular-nums", d.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>
-                  {fmtMoney(d.profitConf)}
+                  {d.profitConf < 0 ? (
+                    <Tip label="Por qué es negativo" tip="Negativo transitorio: las guías de este día aún no maduraron lo suficiente para cubrir el gasto de Ads. No es una pérdida cerrada.">
+                      {fmtMoney(d.profitConf)}
+                    </Tip>
+                  ) : fmtMoney(d.profitConf)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads ? fmtMoney(d.ads) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums">{d.ads > 0 ? fmtRatio(d.revenueEst / d.ads) : "—"}</TableCell>

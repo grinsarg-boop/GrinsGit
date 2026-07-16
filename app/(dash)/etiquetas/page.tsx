@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { mlLabelsTo10x15 } from "@/lib/split-labels";
+import { Dropzone } from "@/components/ui/dropzone";
 
 export default function EtiquetasPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -60,14 +61,12 @@ export default function EtiquetasPage() {
         la hoja A4 de resumen. Todo se procesa en tu navegador, no se sube a ningún lado.
       </p>
 
-      <input
-        type="file"
+      <Dropzone
         accept="application/pdf"
-        onChange={(e) => {
-          bytesRef.current = null;
-          setFile(e.target.files?.[0] ?? null);
-        }}
-        className="block text-sm"
+        busy={busy}
+        files={file ? [{ name: file.name, size: file.size }] : []}
+        onFiles={(fl) => { bytesRef.current = null; setFile(fl[0] ?? null); }}
+        onClear={() => { bytesRef.current = null; setFile(null); setUrl(null); setCounts(null); setError(null); }}
       />
 
       {file && (
@@ -82,7 +81,6 @@ export default function EtiquetasPage() {
       )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}
-      {busy && <p className="text-sm text-muted-foreground">Procesando…</p>}
 
       {url && counts && !busy && (
         <>

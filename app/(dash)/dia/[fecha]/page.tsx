@@ -1,4 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { Tip } from "@/components/ui/tooltip";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -65,14 +66,17 @@ export default async function Dia({ params }: { params: Promise<{ fecha: string 
       {/* Totales del día */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          { label: "Profit estimado", value: fmtMoney(tot.profitEst), color: pnlColor(tot.profitEst) },
-          { label: "Confirmado", value: fmtMoney(tot.profitConf), color: tot.profitConf < 0 ? "text-destructive/80" : "text-foreground" },
-          { label: "Revenue estimado", value: fmtMoney(tot.revenueEst), color: "text-foreground" },
-          { label: "Gasto en Ads", value: fmtMoney(adsTotal), color: "text-foreground" },
+          { label: "Profit estimado", value: fmtMoney(tot.profitEst), color: pnlColor(tot.profitEst), tip: "Confirmado más la proyección de lo que sigue en camino, menos Ads." },
+          { label: "Confirmado", value: fmtMoney(tot.profitConf), color: tot.profitConf < 0 ? "text-destructive/80" : "text-foreground", tip: "Plata que ya cobraste, neta del gasto de Ads del período. Puede dar negativo de forma temporal: significa que todavía gastaste más en Ads de lo que maduró en ventas, y se corrige a medida que las guías se entregan." },
+          { label: "Revenue estimado", value: fmtMoney(tot.revenueEst), color: "text-foreground", tip: null },
+          { label: "Gasto en Ads", value: fmtMoney(adsTotal), color: "text-foreground", tip: null },
         ].map((k) => (
           <Card key={k.label}>
             <CardContent className="pt-5">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{k.label}</div>
+              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+                {k.label}
+                {k.tip && <Tip tip={k.tip} />}
+              </div>
               <div className={cn("text-2xl font-bold tabular-nums tracking-tight", k.color)}>{k.value}</div>
             </CardContent>
           </Card>

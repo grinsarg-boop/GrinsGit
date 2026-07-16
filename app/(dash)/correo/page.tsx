@@ -5,6 +5,7 @@ import {
   buildCsv, needsSucursal, normalizeRow, parseCsv, pedidoToRow, productoCode,
   rowErrors, toSucursal, type CorreoRow, type ShopifyPedido,
 } from "@/lib/correo";
+import { Dropzone } from "@/components/ui/dropzone";
 
 type Sucursal = { c: string; l: string; p: string; d: string };
 
@@ -75,13 +76,11 @@ function Etiquetas() {
         contiene y estampa el código (B3 = BeeVenom x3) en el recuadro vacío al pie. Editable antes
         de descargar.
       </p>
-      <input
-        type="file"
+      <Dropzone
         accept="application/pdf"
-        className="block text-sm"
-        onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
+        busy={busy}
+        onFiles={(fl) => fl[0] && onFile(fl[0])}
       />
-      {busy && <p className="text-sm text-muted-foreground">Leyendo etiquetas…</p>}
       {msg && <p className="text-sm text-amber-600">{msg}</p>}
       {entries.length > 0 && (
         <>
@@ -188,26 +187,28 @@ function CargaMasiva() {
         Aplica la receta completa: ASCII, CP de 4 dígitos, peso con punto, CRLF, y área de cel de 4
         dígitos → sucursal.
       </p>
-      <div className="flex flex-wrap items-center gap-3">
-        <input
-          type="file"
+      <div className="space-y-3">
+        <Dropzone
           accept=".csv,text/csv"
-          className="block text-sm"
-          onChange={(e) => e.target.files?.[0] && onCsv(e.target.files[0])}
+          onFiles={(fl) => fl[0] && onCsv(fl[0])}
+          hint="borrador de 21 columnas separado por ;"
         />
-        <input
-          value={ordersText}
-          onChange={(e) => setOrdersText(e.target.value)}
-          placeholder="pedidos: 16072, 15807…"
-          className="w-56 rounded border px-2 py-1 text-sm"
-        />
-        <button
-          onClick={addPedidos}
-          disabled={busy}
-          className="rounded border px-3 py-1 text-sm disabled:opacity-50"
-        >
-          {busy ? "Buscando…" : "Agregar de Shopify"}
-        </button>
+        {/* grupo input+botón pegado (audit §5): mismo alto, sin gap, radios sólo a los extremos */}
+        <div className="flex items-center">
+          <input
+            value={ordersText}
+            onChange={(e) => setOrdersText(e.target.value)}
+            placeholder="pedidos: 16072, 15807…"
+            className="h-9 w-56 rounded-l-md border border-r-0 px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <button
+            onClick={addPedidos}
+            disabled={busy}
+            className="h-9 rounded-r-md border bg-secondary px-3 text-sm font-medium text-secondary-foreground transition-colors hover:bg-accent disabled:opacity-50"
+          >
+            {busy ? "Buscando…" : "Agregar de Shopify"}
+          </button>
+        </div>
       </div>
       {msg && <p className="text-sm text-amber-600">{msg}</p>}
       {rows.length > 0 && (
