@@ -46,9 +46,10 @@ try {
                    'supabase/migrations/019_urbano_estado_autoritativo.sql',
                    'supabase/migrations/020_ml_orders.sql',
                    'supabase/migrations/021_ml_flete_pack.sql',
+                   'supabase/migrations/022_pnl_canal_ml.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
-                   'supabase/tests/correo_check.sql']) {
+                   'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');
