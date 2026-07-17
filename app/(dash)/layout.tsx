@@ -11,6 +11,7 @@ export default function DashLayout({ children }: { children: React.ReactNode }) 
         <Link href="/etiquetas" className="text-sm text-muted-foreground hover:text-foreground">Etiquetas</Link>
         <Link href="/correo" className="text-sm text-muted-foreground hover:text-foreground">Correo</Link>
         <Link href="/picking" className="text-sm text-muted-foreground hover:text-foreground">Picking</Link>
+        <Link href="/config" className="text-sm text-muted-foreground hover:text-foreground">Config</Link>
         <div className="ml-auto"><ThemeToggle /></div>
       </nav>
       {children}
