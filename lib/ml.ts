@@ -265,6 +265,46 @@ export async function estimateFlexByCP(db: Db = supabaseAdmin(), limit = 200): P
   return { estimated, sinCP };
 }
 
+// --- Product Ads de ML (publicidad) ---
+
+const ADS_SITE = "MLA"; // Argentina
+
+async function getMlAdvertiserId(token: string): Promise<number | null> {
+  const res = await fetch(`${API}/advertising/advertisers?product_id=PADS`, {
+    headers: { authorization: `Bearer ${token}`, "api-version": "1" },
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  const j = await res.json();
+  return j.advertisers?.[0]?.advertiser_id ?? null;
+}
+
+// Gasto diario de Product Ads de ML → ml_ad_spend. El endpoint da métricas agregadas por rango, así que
+// se pide día por día (concurrencia acotada). El recompute lo reparte entre los productos por revenue.
+export async function syncMlAdSpend(days = 60, db: Db = supabaseAdmin()): Promise<{ days: number; total: number }> {
+  const token = await getMlAccessToken(db);
+  const adv = await getMlAdvertiserId(token);
+  if (!adv) return { days: 0, total: 0 };
+  const fechas: string[] = [];
+  for (let i = 0; i < days; i++) fechas.push(new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10));
+  const rows: { date: string; cost: number }[] = [];
+  const CONC = 6;
+  for (let i = 0; i < fechas.length; i += CONC) {
+    await Promise.all(fechas.slice(i, i + CONC).map(async (d) => {
+      try {
+        const url = `${API}/marketplace/advertising/${ADS_SITE}/advertisers/${adv}/product_ads/campaigns/search`
+          + `?date_from=${d}&date_to=${d}&metrics=cost&limit=100`;
+        const res = await fetch(url, { headers: { authorization: `Bearer ${token}`, "api-version": "2" } });
+        if (!res.ok) return;
+        const j = await res.json();
+        const cost = ((j.results ?? []) as { metrics?: { cost?: number } }[]).reduce((s, c) => s + (c.metrics?.cost ?? 0), 0);
+        rows.push({ date: d, cost });
+      } catch { /* se saltea */ }
+    }));
+  }
+  if (rows.length) await db.from("ml_ad_spend").upsert(rows, { onConflict: "date" });
+  return { days: rows.length, total: rows.reduce((s, r) => s + r.cost, 0) };
+}
+
 // Import completo de la liquidación Flex (archivo → staging → ship_cost + tabla CP→costo → recompute).
 // Auto-detecta el formato: listado DarLogistica (trae CP e ID venta) o el xlsx semanal de Santiago.
 // Lo usan el endpoint /api/import/ml-flex y la subida desde /sync, para no duplicar la lógica.

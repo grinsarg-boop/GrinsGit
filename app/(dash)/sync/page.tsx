@@ -17,7 +17,7 @@ const CONNECTORS = ["meta", "urbano", "fixy", "ml", "shopify-backfill", "recompu
 const SYNC_TIPS: Record<string, string> = {
   recompute: "Recalcula todo el P&L desde cero. Puede tardar y pisa los valores actuales.",
   "shopify-backfill": "Trae pedidos históricos de Shopify que falten. Úsalo solo si detectás huecos en los datos.",
-  ml: "Trae las ventas de MercadoLibre y enriquece el flete normal desde el envío. El flete Flex se carga con el xlsx de Santiago (abajo).",
+  ml: "Trae las ventas de MercadoLibre, el flete (normal del envío / Flex estimado por CP) y el gasto de Product Ads de ML. El flete Flex real se carga con el listado semanal (abajo).",
 };
 
 async function runNow(formData: FormData) {

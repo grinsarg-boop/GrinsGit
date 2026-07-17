@@ -50,11 +50,12 @@ try {
                    'supabase/migrations/023_bot_pnl.sql',
                    'supabase/migrations/024_producto_override.sql',
                    'supabase/migrations/025_flex_estimado.sql',
+                   'supabase/migrations/026_ml_ads.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
                    'supabase/tests/bot_pnl_check.sql', 'supabase/tests/override_check.sql',
-                   'supabase/tests/flex_estimado_check.sql']) {
+                   'supabase/tests/flex_estimado_check.sql', 'supabase/tests/ml_ads_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');
