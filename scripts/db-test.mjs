@@ -51,6 +51,7 @@ try {
                    'supabase/migrations/024_producto_override.sql',
                    'supabase/migrations/025_flex_estimado.sql',
                    'supabase/migrations/026_ml_ads.sql',
+                   'supabase/migrations/027_producto_m3.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',

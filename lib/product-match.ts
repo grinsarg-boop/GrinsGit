@@ -12,6 +12,8 @@ const PRODUCT_KEYWORDS: [string, string][] = [
   // Shopify, por eso no está en la versión SQL. Acá lo necesita el lector de
   // etiquetas ML/Flex (/picking) para no marcarlo "sin producto".
   ["revival", "Revival Oil"],
+  // M3 (Aceite Reafirmante Anti-celulítico): Shopify + ML. En SQL también (027).
+  ["reafirmante", "M3"],
 ];
 
 export function matchProduct(text: string): string | null {

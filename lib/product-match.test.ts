@@ -11,6 +11,11 @@ describe("matchProduct", () => {
     expect(matchProduct("BeeVenom gel")).toBe("BeeVenom");
     expect(matchProduct("ALTUS 2u")).toBe("Altus");
     expect(matchProduct("Revival Oil Aceite Anticelulítico 240ml")).toBe("Revival Oil"); // solo ML/Flex
+    expect(matchProduct("Aceite Reafirmante Anti-celulítico M3 | 2x1!")).toBe("M3"); // 027, distinto de Revival
+  });
+  it("M3 y Revival no colisionan, y 'celulitis' de Altus no matchea M3", () => {
+    expect(matchProduct("ALTUS reducción de celulitis")).toBe("Altus"); // no cae en M3
+    expect(matchProduct("2 Revival Oil Aceite Anticelulitico Masajes 240ml")).toBe("Revival Oil"); // no cae en M3
   });
   it("sin match → null (queda en v_sin_clasificar, no se inventa atribución)", () => {
     expect(matchProduct("Producto misterioso")).toBeNull();
