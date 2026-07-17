@@ -44,6 +44,8 @@ try {
                    'supabase/migrations/017_ads_adset.sql',
                    'supabase/migrations/018_no_despachado.sql',
                    'supabase/migrations/019_urbano_estado_autoritativo.sql',
+                   'supabase/migrations/020_ml_orders.sql',
+                   'supabase/migrations/021_ml_flete_pack.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql']) {

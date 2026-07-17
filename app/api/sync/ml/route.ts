@@ -1,18 +1,22 @@
-import { syncMlOrders } from "@/lib/ml";
-import { badCronAuth, logSyncRun } from "@/lib/supabase";
+import { enrichMlShipments, syncMlOrders } from "@/lib/ml";
+import { badCronAuth, logSyncRun, supabaseAdmin } from "@/lib/supabase";
 
-// OAuth (refresh 6h) + paginado de órdenes → puede pasar los 10s default de Hobby.
+// OAuth + paginado de órdenes + enriquecimiento de shipments (1 fetch/orden) → puede pasar los 10s.
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const bad = badCronAuth(req);
   if (bad) return bad;
 
-  const days = Number(new URL(req.url).searchParams.get("days")) || 30;
+  const url = new URL(req.url);
+  const days = Number(url.searchParams.get("days")) || 30;
+  const enrichLimit = Number(url.searchParams.get("enrich")) || 300;
   try {
     const { rows } = await syncMlOrders(days);
-    await logSyncRun("ml", "ok", rows);
-    return Response.json({ ok: true, rows });
+    // Enriquece el flete normal-ME de las órdenes que aún no lo tienen (Flex queda para el xlsx).
+    const { enriched, flex } = await enrichMlShipments(supabaseAdmin(), enrichLimit);
+    await logSyncRun("ml", "ok", rows, [{ enriched, flex }]);
+    return Response.json({ ok: true, rows, enriched, flex });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await logSyncRun("ml", "error", 0, [], msg);

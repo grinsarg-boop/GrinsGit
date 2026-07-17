@@ -1,5 +1,6 @@
+import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
-import { mapMlOrder, needsRefresh, nextTokenState } from "./ml";
+import { mapMlOrder, needsRefresh, nextTokenState, parseMlPack, parseSantiagoFlex, sellerFlete } from "./ml";
 
 const NOW = 1_700_000_000_000;
 
@@ -42,5 +43,57 @@ describe("mapMlOrder", () => {
   it("product = null si ningún título matchea", () => {
     const row = mapMlOrder({ id: 1, date_created: "x", status: "paid", order_items: [{ item: { title: "Otra cosa" } }] });
     expect(row.product).toBeNull();
+  });
+});
+
+describe("parseMlPack", () => {
+  it("saca el pack del número que encabeza el título", () => {
+    expect(parseMlPack("3 Gotero Pureza Drenaje Linfático")).toBe(3);
+    expect(parseMlPack("2 Gotero Pureza")).toBe(2);
+    expect(parseMlPack("4 Gotero Pureza")).toBe(4);
+  });
+  it("saca el pack del patrón 'N X' cuando no encabeza", () => {
+    expect(parseMlPack("Veinguard Solución Herbal Varices 4 X 30ml Uso Externo Menta")).toBe(4);
+  });
+  it("pack 1 cuando no hay número de pack", () => {
+    expect(parseMlPack("Gotas Pureza Drenaje Linfático")).toBe(1);
+    expect(parseMlPack("Gotero Pureza Menta")).toBe(1);
+    expect(parseMlPack("")).toBe(1);
+    expect(parseMlPack(null)).toBe(1);
+  });
+});
+
+describe("sellerFlete", () => {
+  it("normal ME: list_cost menos lo que pagó el comprador", () => {
+    expect(sellerFlete("xd_drop_off", 6600, 0)).toBe(6600); // envío gratis: lo absorbe todo
+    expect(sellerFlete("xd_drop_off", 11354.92, 3884.92)).toBeCloseTo(7470, 2); // comprador paga parte
+  });
+  it("Flex (self_service) → null: lo resuelve el xlsx de Santiago", () => {
+    expect(sellerFlete("self_service", 5000, 0)).toBeNull();
+  });
+  it("sin list_cost → null (no inventar)", () => {
+    expect(sellerFlete("xd_drop_off", null, 0)).toBeNull();
+  });
+});
+
+describe("parseSantiagoFlex", () => {
+  // Reproduce el layout real: hoja RESUMEN (ignorada) + hoja de día con header en fila 2, leyenda a la derecha.
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["RESUMEN"]]), "RESUMEN SEMANAL");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    [null, "Paquetes del dia:", 2],
+    [null, "Precio del dia:", 10784],
+    [null, "FECHA", "CODIGO DE VENTA", "LOCALIDAD", "PAQUETES", "PRECIO", null, "ZONA 1", "Zona", "Precio"],
+    [1, 46209, 47452325919, "SAN ISIDRO", 1, 4150, null, null, "SAN ISIDRO", 4150],
+    [2, 46209, 47451415519, "CABA", 1, 6634, null, null, "CABA", 6634],
+    [3, null, null, null, null, null, null, null, "TIGRE", 6634], // fila sólo-leyenda → se ignora
+  ]), "LUNES");
+  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+
+  it("extrae shipment_id + precio de las hojas de día, ignora RESUMEN y la leyenda", () => {
+    const rows = parseSantiagoFlex(buf);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ shipment_id: 47452325919, price: 4150, localidad: "SAN ISIDRO" });
+    expect(rows[1]).toMatchObject({ shipment_id: 47451415519, price: 6634 });
   });
 });
