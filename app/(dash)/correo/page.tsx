@@ -248,7 +248,34 @@ function CargaMasiva() {
                         ))}
                       </select>
                     ) : errores[i].length ? (
-                      <span className="text-red-600">{errores[i].join(" · ")}</span>
+                      <div className="space-y-1">
+                        {/* Shopify a veces manda un teléfono que splitPhone no puede partir → "cel inválido".
+                            Editable acá para no trabar todo el CSV por una fila. Área de 4 díg. → cae al
+                            selector de sucursal de arriba (needsSucursal). */}
+                        {errores[i].includes("cel inválido") && (
+                          <div className="flex items-center gap-1">
+                            <input
+                              value={r.area}
+                              onChange={(ev) =>
+                                setRows((prev) => prev.map((x, j) => (j === i ? { ...x, area: ev.target.value.replace(/\D/g, "") } : x)))
+                              }
+                              placeholder="área"
+                              aria-label={`Código de área del pedido ${r.orden}`}
+                              className="w-14 rounded border px-2 py-0.5"
+                            />
+                            <input
+                              value={r.cel}
+                              onChange={(ev) =>
+                                setRows((prev) => prev.map((x, j) => (j === i ? { ...x, cel: ev.target.value.replace(/\D/g, "") } : x)))
+                              }
+                              placeholder="celular"
+                              aria-label={`Celular del pedido ${r.orden}`}
+                              className="w-28 rounded border px-2 py-0.5"
+                            />
+                          </div>
+                        )}
+                        <span className="text-red-600">{errores[i].join(" · ")}</span>
+                      </div>
                     ) : (
                       <span className="text-green-700">ok</span>
                     )}
