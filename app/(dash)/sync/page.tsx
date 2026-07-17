@@ -75,14 +75,17 @@ async function setProducto(formData: FormData) {
 
 export default async function SyncPage() {
   const db = supabaseAdmin();
-  const [{ data: runs }, { data: sinClasificar }, { count: flexPend }] = await Promise.all([
+  const [{ data: runs }, { data: sinClasificar }, { count: flexPend }, { count: flexEst }] = await Promise.all([
     db.from("sync_runs").select("*").order("started_at", { ascending: false }).limit(50),
     // limit explícito: lista de display (guías fuera del P&L para el operador). Si pasa 1000 es una
     // alarma de datos, no algo a mostrar entero — el límite evita el truncado silencioso de PostgREST.
     db.from("v_sin_clasificar").select("*").order("dispatched_at", { ascending: false }).limit(1000),
-    // Flex (reparto propio) pagadas sin flete cargado aún → cuántas liquidaciones de Santiago faltan.
+    // Flex (reparto propio) SIN flete: ni real ni estimado. Cuentan $0 e inflan el profit.
     db.from("ml_orders").select("*", { count: "exact", head: true })
       .eq("status", "paid").eq("ship_type", "self_service").is("ship_cost", null),
+    // Flex con flete ESTIMADO por CP (esperan el listado real que lo confirme).
+    db.from("ml_orders").select("*", { count: "exact", head: true })
+      .eq("status", "paid").eq("ship_cost_estimated", true),
   ]);
   const { data: products } = await db.from("products").select("id, name").eq("active", true).order("name");
   const prods = (products ?? []) as { id: number; name: string }[];
@@ -105,10 +108,11 @@ export default async function SyncPage() {
         <Tip label="Qué es esto" tip="Subí el xlsx semanal de la liquidación Flex de Santiago. La app lee el código de venta + precio de cada envío y le pone el flete real a las órdenes ML de reparto propio. Recalcula el P&L al terminar." />
         {typeof flexPend === "number" && (
           <span className="w-full text-xs text-muted-foreground">
-            {flexPend > 0 ? (
-              <><b className="tabular-nums text-foreground">{flexPend}</b> órdenes Flex todavía sin flete cargado — subí las liquidaciones que falten (llega a 0 cuando estén todas).</>
-            ) : (
-              "✓ Todas las órdenes Flex tienen su flete cargado."
+            {flexPend > 0
+              ? <><b className="tabular-nums text-foreground">{flexPend}</b> órdenes Flex sin flete (cuentan $0). </>
+              : "✓ Ninguna orden Flex cuenta flete $0. "}
+            {typeof flexEst === "number" && flexEst > 0 && (
+              <><b className="tabular-nums text-foreground">{flexEst}</b> con flete estimado por CP (esperan el listado real que lo confirme).</>
             )}
           </span>
         )}

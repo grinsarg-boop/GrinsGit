@@ -205,7 +205,8 @@ export async function enrichMlShipments(db: Db = supabaseAdmin(), limit = 300): 
   return { enriched, flex };
 }
 
-// Copia el flete Flex del staging (ml_flex_flete) a ml_orders.ship_cost por shipment_id.
+// Copia el flete Flex REAL del staging (ml_flex_flete) a ml_orders.ship_cost por shipment_id. Marca
+// ship_cost_estimated=false (es de un listado, pisa cualquier estimado previo por CP).
 // ponytail: loop por fila (~30-100/semana). Si escala, un update con join en una RPC.
 export async function applyFlexFlete(db: Db = supabaseAdmin()): Promise<{ updated: number }> {
   const { data } = await db.from("ml_flex_flete").select("shipment_id, price");
@@ -213,11 +214,55 @@ export async function applyFlexFlete(db: Db = supabaseAdmin()): Promise<{ update
   let updated = 0;
   for (const f of data) {
     const { count } = await db.from("ml_orders")
-      .update({ ship_cost: f.price, ship_type: "self_service" }, { count: "exact" })
+      .update({ ship_cost: f.price, ship_type: "self_service", ship_cost_estimated: false }, { count: "exact" })
       .eq("shipment_id", f.shipment_id);
     updated += count ?? 0;
   }
   return { updated };
+}
+
+// Estima el flete de los envíos Flex EN CURSO (self_service, sin flete real) por su CP destino, usando
+// la tabla settings.flex_freight_by_cp. Marca ship_cost_estimated=true; applyFlexFlete lo pisa cuando
+// llega el listado real. (1) captura dest_cp de los que no lo tienen (1 fetch/shipment), (2) aplica la
+// tabla a todos los pendientes con CP conocido (barato, sin API — cubre CPs que se agregaron después).
+export async function estimateFlexByCP(db: Db = supabaseAdmin(), limit = 200): Promise<{ estimated: number; sinCP: number }> {
+  const { data: st } = await db.from("settings").select("value").eq("key", "flex_freight_by_cp").maybeSingle();
+  const table = (st?.value as Record<string, number>) ?? {};
+  if (!Object.keys(table).length) return { estimated: 0, sinCP: 0 };
+
+  // (1) capturar CP destino de los Flex pendientes que aún no lo tienen
+  const { data: nuevos } = await db.from("ml_orders")
+    .select("ml_id, shipment_id")
+    .eq("status", "paid").eq("ship_type", "self_service").is("ship_cost", null).is("dest_cp", null)
+    .not("shipment_id", "is", null).limit(limit);
+  if (nuevos?.length) {
+    const token = await getMlAccessToken(db);
+    const CONC = 8;
+    for (let i = 0; i < nuevos.length; i += CONC) {
+      await Promise.all(nuevos.slice(i, i + CONC).map(async (r) => {
+        try {
+          const res = await fetch(`${API}/shipments/${r.shipment_id}`, { headers: { authorization: `Bearer ${token}` } });
+          if (!res.ok) return;
+          const cp = String((await res.json())?.receiver_address?.zip_code ?? "").replace(/\D/g, "").slice(0, 4);
+          if (cp) await db.from("ml_orders").update({ dest_cp: cp }).eq("ml_id", r.ml_id);
+        } catch { /* se saltea */ }
+      }));
+    }
+  }
+
+  // (2) aplicar la tabla a los pendientes con CP conocido
+  const { data: pend } = await db.from("ml_orders")
+    .select("ml_id, dest_cp")
+    .eq("status", "paid").eq("ship_type", "self_service").is("ship_cost", null).not("dest_cp", "is", null);
+  let estimated = 0, sinCP = 0;
+  for (const r of pend ?? []) {
+    const price = table[r.dest_cp as string];
+    if (price != null) {
+      await db.from("ml_orders").update({ ship_cost: price, ship_cost_estimated: true }).eq("ml_id", r.ml_id);
+      estimated++;
+    } else sinCP++;
+  }
+  return { estimated, sinCP };
 }
 
 // Import completo de la liquidación Flex (archivo → staging → ship_cost + tabla CP→costo → recompute).
@@ -245,6 +290,8 @@ export async function importMlFlex(buf: Buffer, db: Db = supabaseAdmin()): Promi
     cps = Object.keys(byCp).length;
   }
   const { updated } = await applyFlexFlete(db);
+  // Con la tabla ya actualizada, estima por CP los pendientes que no entraron en este listado.
+  await estimateFlexByCP(db);
   const from = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
   await db.rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
   return { parsed: rows.length, matched: updated, cps };
