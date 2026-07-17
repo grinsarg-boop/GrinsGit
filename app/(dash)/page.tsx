@@ -27,7 +27,7 @@ const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-40
 const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const monthLabel = (ym: string) => { const [y, m] = ym.split("-"); return `${MES[+m - 1]} ${y}`; };
 
-const COURIER_LABEL: Record<string, string> = { urbano: "Urbano", fixy: "Fixy" };
+const COURIER_LABEL: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML" };
 // >3 días sin guías nuevas = feo (urbano saltea domingos, así que ≤1 ok · 2-3 ámbar · >3 rojo).
 const STALE_DAYS = 3;
 
@@ -46,7 +46,7 @@ export default async function Resumen({
   let from = desde && ISO.test(desde) ? desde : daysAgoIso(30);
   if (from > to) from = to;
   const rangeLabel = `${fmtDate(from)} → ${fmtDate(to)}`;
-  const courierParam = courier === "urbano" || courier === "fixy" || courier === "correo" ? courier : null;
+  const courierParam = courier === "urbano" || courier === "fixy" || courier === "correo" || courier === "ml" ? courier : null;
 
   type Row = {
     dispatch_date: string; despachadas: number; entregadas: number; resueltas: number; proyectadas: number;
@@ -162,6 +162,8 @@ export default async function Resumen({
           tip={
             courier === "correo"
               ? "En Correo son cuotas 3 sin interés, prepago: lo confirmado ya está cobrado y no se anula, así que no proyectamos tasa de entrega. La métrica es la tasa de confirmación (pagados / generados) y el estimado es igual al confirmado."
+              : courier === "ml"
+              ? "En MercadoLibre la venta ya está cobrada y la entrega la hace ML: no proyectamos nada, el estimado es igual al confirmado. La comisión (sale_fee) y el flete son los reales de cada orden; los envíos Flex sin liquidación cargada todavía cuentan flete $0 (ver % de flete estimado)."
               : "Es el confirmado (plata que ya cobraste) más una proyección de las guías que siguen en la calle, usando tu tasa de entrega histórica por zona y producto. Por eso el número puede moverse hasta que todas las guías cierren."
           }
         />
@@ -223,7 +225,7 @@ export default async function Resumen({
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
-          {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"]].map(([val, label]) => (
+          {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
             <Link
               key={val}
               href={hrefWith({ courier: val })}
@@ -357,9 +359,11 @@ export default async function Resumen({
             </TableHead>
             <TableHead className="text-right">
               <span className="inline-flex items-center gap-1">
-                {courier === "correo" ? "Confirmación" : "Tasa hoy → final"}
+                {courier === "correo" ? "Confirmación" : courier === "ml" ? "Entrega" : "Tasa hoy → final"}
                 <Tip tip={courier === "correo"
                   ? "Pagados sobre generados. En prepago no proyectamos entrega, así que este valor no cambia."
+                  : courier === "ml"
+                  ? "En MercadoLibre la entrega la hace ML: contamos las ventas pagadas como entregadas (100%), sin proyección."
                   : "Izquierda: tasa de entrega real hasta ahora. Derecha: tasa final que proyectamos según tu histórico. Cuando el día madura, ambas se igualan."} />
               </span>
             </TableHead>

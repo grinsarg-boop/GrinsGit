@@ -1,20 +1,22 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Tip } from "@/components/ui/tooltip";
 import { SyncRun } from "@/components/sync-run";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { fmtDate } from "@/lib/format";
-import { supabaseAdmin } from "@/lib/supabase";
+import { logSyncRun, supabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
-const CONNECTORS = ["meta", "urbano", "fixy", "shopify-backfill", "recompute"] as const;
+const CONNECTORS = ["meta", "urbano", "fixy", "ml", "shopify-backfill", "recompute"] as const;
 const SYNC_TIPS: Record<string, string> = {
   recompute: "Recalcula todo el P&L desde cero. Puede tardar y pisa los valores actuales.",
   "shopify-backfill": "Trae pedidos históricos de Shopify que falten. Úsalo solo si detectás huecos en los datos.",
+  ml: "Trae las ventas de MercadoLibre y enriquece el flete normal desde el envío. El flete Flex se carga con el xlsx de Santiago (abajo).",
 };
 
 async function runNow(formData: FormData) {
@@ -28,6 +30,21 @@ async function runNow(formData: FormData) {
     method: "POST",
     headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
   }).catch(() => {}); // el resultado queda en sync_runs igual
+  revalidatePath("/sync");
+}
+
+// Subida de la liquidación Flex de Santiago (xlsx). Corre server-side el mismo import que el endpoint.
+async function importFlex(formData: FormData) {
+  "use server";
+  const file = formData.get("file");
+  if (!(file instanceof File) || !file.size) return;
+  const { importMlFlex } = await import("@/lib/ml");
+  try {
+    const { parsed, matched } = await importMlFlex(Buffer.from(await file.arrayBuffer()));
+    await logSyncRun("ml-flex", "ok", parsed, [{ matched_to_orders: matched }]);
+  } catch (e) {
+    await logSyncRun("ml-flex", "error", 0, [], String(e));
+  }
   revalidatePath("/sync");
 }
 
@@ -50,6 +67,16 @@ export default async function SyncPage() {
             {SYNC_TIPS[c] && <Tip label={`Qué hace ${c}`} tip={SYNC_TIPS[c]} />}
           </div>
         ))}
+      </section>
+
+      <section className="flex flex-wrap items-center gap-2">
+        <span className="mr-2 text-sm font-medium">Flete Flex (xlsx de Santiago):</span>
+        <form action={importFlex} className="flex items-center gap-2">
+          <input type="file" name="file" accept=".xlsx" required
+            className="text-sm file:mr-2 file:rounded file:border file:bg-muted file:px-2 file:py-1 file:text-sm" />
+          <Button type="submit" size="sm" variant="outline">Subir liquidación</Button>
+        </form>
+        <Tip label="Qué es esto" tip="Subí el xlsx semanal de la liquidación Flex de Santiago. La app lee el código de venta + precio de cada envío y le pone el flete real a las órdenes ML de reparto propio. Recalcula el P&L al terminar." />
       </section>
 
       <section>

@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 export const revalidate = 60;
 
 const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
-const COURIER: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo" };
+const COURIER: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML" };
 // entregado verde · terminales malos (plata perdida) rojo · incidencia naranja (accionable: reclamar
 // a Urbano) · resto (en la calle, normal) ámbar. La incidencia sale del rojo para no perderse entre
 // los cerrados-malos.
@@ -50,7 +50,7 @@ export default async function Dia({ params, searchParams }: {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) notFound();
   const sp = await searchParams;
   // Filtro de courier heredado del panel principal (Urbano/Fixy/Correo o null = Todos).
-  const courierParam = sp.courier === "urbano" || sp.courier === "fixy" || sp.courier === "correo" ? sp.courier : null;
+  const courierParam = sp.courier === "urbano" || sp.courier === "fixy" || sp.courier === "correo" || sp.courier === "ml" ? sp.courier : null;
   // "Volver" preserva el estado del panel (courier + rango + vista).
   const backQs = new URLSearchParams();
   if (sp.courier) backQs.set("courier", sp.courier);

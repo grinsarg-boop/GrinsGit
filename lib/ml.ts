@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { today } from "@/lib/couriers/sync";
 import { supabaseAdmin } from "@/lib/supabase";
 import { matchProduct } from "@/lib/product-match";
 
@@ -211,6 +212,20 @@ export async function applyFlexFlete(db: Db = supabaseAdmin()): Promise<{ update
     updated += count ?? 0;
   }
   return { updated };
+}
+
+// Import completo de la liquidación Flex (xlsx → staging → ship_cost → recompute). Lo usan el endpoint
+// /api/import/ml-flex y la subida desde la app (/sync), para no duplicar la lógica.
+export async function importMlFlex(buf: Buffer, db: Db = supabaseAdmin()): Promise<{ parsed: number; matched: number }> {
+  const rows = parseSantiagoFlex(buf);
+  if (rows.length) {
+    const { error } = await db.from("ml_flex_flete").upsert(rows, { onConflict: "shipment_id" });
+    if (error) throw new Error(`ml_flex_flete upsert: ${error.message}`);
+  }
+  const { updated } = await applyFlexFlete(db);
+  const from = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
+  await db.rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
+  return { parsed: rows.length, matched: updated };
 }
 
 // Parsea la liquidación Flex de Santiago (xlsx): una hoja por día, header con "CODIGO DE VENTA" +
