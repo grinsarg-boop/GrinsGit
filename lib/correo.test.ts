@@ -88,4 +88,13 @@ describe("correo", () => {
     expect(fixed[0].localidad).toBe("Perico el carmen");
     expect(rowErrors(fixed[0])).toEqual([]);
   });
+
+  it("calle con signos (Correo rechaza . / en texto, no solo en localidad)", () => {
+    // fila real 17104: "B. Roldan e/ingenieros y echeverria" hacía rechazar TODO el archivo
+    const draft = "CP;12;12;12;0.2;48999;B;;Ensenada;B. Roldan e/ingenieros y echeverria;61;;;1925;Gustavo Roldan;gustavoaleroldan@hotmail.com;;;221;6012040;17104";
+    const fixed = parseCsv(draft).map(normalizeRow);
+    expect(fixed[0].calle).toBe("B Roldan e ingenieros y echeverria");
+    expect(rowErrors(fixed[0])).toEqual([]);
+    expect(() => buildCsv(fixed)).not.toThrow();
+  });
 });

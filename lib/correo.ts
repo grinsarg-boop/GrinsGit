@@ -65,18 +65,13 @@ export function toSucursal(row: CorreoRow, codigo: string): CorreoRow {
   return { ...row, sucursal: codigo, localidad: "", calle: "", altura: "", piso: "", dpto: "", cp: "" };
 }
 
+// Mi Correo rechaza CUALQUIER signo en los campos de texto (localidad, calle,
+// nombre, piso, dpto): un "." o "/" ("Ana.p.Elicagaray", "B. Roldan e/ingenieros")
+// hace rechazar el archivo entero con "caracteres especiales". Dejo solo letras,
+// números y espacio; el resto → espacio y colapso, así "X.Y" → "X Y" (no se pegan
+// las palabras) y "Perico _el carmen" → "Perico el carmen".
 function clean(s: string): string {
-  // La coma no es válida en ningún campo de texto de Mi Correo (localidad,
-  // calle, nombre…): "Avellaneda," no resuelve a la localidad real. La paso a
-  // espacio y colapso, así "X,Y" queda "X Y" y no se pegan las palabras.
-  return asciiStrip(s).replace(/,/g, " ").replace(/\s+/g, " ").trim();
-}
-
-// Mi Correo: la localidad "solo acepta letras y números" — cualquier signo
-// (guion bajo, guion, punto…) hace rechazar la fila ("Perico _el carmen"). Los
-// paso a espacio y colapso: "Perico _el carmen" → "Perico el carmen".
-export function cleanLocalidad(s: string): string {
-  return clean(s).replace(/[^A-Za-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  return asciiStrip(s).replace(/[^A-Za-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 export function normalizeRow(row: CorreoRow): CorreoRow {
@@ -85,7 +80,7 @@ export function normalizeRow(row: CorreoRow): CorreoRow {
     valor: row.valor.replace(/\D/g, ""),
     provincia: clean(row.provincia).toUpperCase(),
     sucursal: clean(row.sucursal).toUpperCase(),
-    localidad: cleanLocalidad(row.localidad),
+    localidad: clean(row.localidad),
     calle: clean(row.calle),
     // altura sin número → vacío (nunca "S/n" con barra)
     altura: /\d/.test(row.altura) ? clean(row.altura) : "",
