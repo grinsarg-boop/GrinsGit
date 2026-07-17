@@ -53,11 +53,14 @@ async function importFlex(_prev: FlexResult | null, formData: FormData): Promise
 
 export default async function SyncPage() {
   const db = supabaseAdmin();
-  const [{ data: runs }, { data: sinClasificar }] = await Promise.all([
+  const [{ data: runs }, { data: sinClasificar }, { count: flexPend }] = await Promise.all([
     db.from("sync_runs").select("*").order("started_at", { ascending: false }).limit(50),
     // limit explícito: lista de display (guías fuera del P&L para el operador). Si pasa 1000 es una
     // alarma de datos, no algo a mostrar entero — el límite evita el truncado silencioso de PostgREST.
     db.from("v_sin_clasificar").select("*").order("dispatched_at", { ascending: false }).limit(1000),
+    // Flex (reparto propio) pagadas sin flete cargado aún → cuántas liquidaciones de Santiago faltan.
+    db.from("ml_orders").select("*", { count: "exact", head: true })
+      .eq("status", "paid").eq("ship_type", "self_service").is("ship_cost", null),
   ]);
 
   return (
@@ -76,6 +79,15 @@ export default async function SyncPage() {
         <span className="mr-2 text-sm font-medium">Flete Flex (xlsx de Santiago):</span>
         <FlexUpload action={importFlex} />
         <Tip label="Qué es esto" tip="Subí el xlsx semanal de la liquidación Flex de Santiago. La app lee el código de venta + precio de cada envío y le pone el flete real a las órdenes ML de reparto propio. Recalcula el P&L al terminar." />
+        {typeof flexPend === "number" && (
+          <span className="w-full text-xs text-muted-foreground">
+            {flexPend > 0 ? (
+              <><b className="tabular-nums text-foreground">{flexPend}</b> órdenes Flex todavía sin flete cargado — subí las liquidaciones que falten (llega a 0 cuando estén todas).</>
+            ) : (
+              "✓ Todas las órdenes Flex tienen su flete cargado."
+            )}
+          </span>
+        )}
       </section>
 
       <section>
