@@ -4,6 +4,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import Link from "next/link";
+import { ProfitBars } from "@/components/profit-bars";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -83,6 +84,20 @@ export default async function Ventas({
     const s = q.toString();
     return s ? `/ventas?${s}` : "/ventas";
   };
+
+  // Drill-down del día de venta: hereda courier + rango + vista (para reconstruir el panel al "Volver").
+  const diaHref = (date: string) => {
+    const q = new URLSearchParams();
+    if (courier) q.set("courier", courier);
+    if (desde) q.set("desde", desde);
+    if (hasta) q.set("hasta", hasta);
+    if (vista === "meses") q.set("v", "meses");
+    const s = q.toString();
+    return s ? `/ventas/${date}?${s}` : `/ventas/${date}`;
+  };
+
+  // Gráfico: profit cerrado (barra) + estimado (vela) por día, en orden cronológico (la tabla va al revés).
+  const chartData = [...list].reverse().map((d) => ({ date: d.date, confirmado: d.profitConf, estimado: d.profitEst }));
 
   const [ey, em] = today.slice(0, 7).split("-").map(Number);
   const pmY = em === 1 ? ey - 1 : ey;
@@ -187,6 +202,25 @@ export default async function Ventas({
         </div>
       </div>
 
+      {vista === "dias" && (
+        <Card>
+          <CardContent className="space-y-3 pt-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Profit por día de venta · <span className="normal-case tabular-nums">{rangeLabel}</span>
+              </span>
+              <span className="flex items-center gap-4 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500/85" /> cerrado +</span>
+                <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-destructive/85" /> cerrado −</span>
+                <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-0.5 bg-muted-foreground/60" /> estimado</span>
+              </span>
+            </div>
+            <ProfitBars data={chartData} hrefFor={diaHref} />
+            <p className="text-xs text-muted-foreground">La barra es el profit ya <b className="text-foreground">cerrado</b> (cobrado) de las ventas de ese día; la vela gris llega hasta el <b className="text-foreground">estimado</b>. Tocá un día para ver el detalle.</p>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardContent className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 pt-5">
           <div>
@@ -277,8 +311,13 @@ export default async function Ventas({
             const inmaduro = madurez < 0.8;
             const cpaDia = d.generadas ? d.ads / d.generadas : 0;
             return (
-              <TableRow key={d.date} className="hover:bg-accent/40">
-                <TableCell className="font-medium">{fmtDate(d.date)}</TableCell>
+              <TableRow key={d.date} className="group hover:bg-accent/40">
+                <TableCell>
+                  <Link href={diaHref(d.date)} className="font-medium underline-offset-4 group-hover:underline">
+                    {fmtDate(d.date)}
+                    <span className="ml-1 text-muted-foreground opacity-0 transition group-hover:opacity-100">→</span>
+                  </Link>
+                </TableCell>
                 <TableCell className="text-right tabular-nums">{d.generadas}</TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
