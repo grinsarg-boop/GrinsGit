@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tip } from "@/components/ui/tooltip";
 import { SyncRun } from "@/components/sync-run";
 import { FlexUpload, type FlexResult } from "@/components/flex-upload";
+import { AssignProduct } from "@/components/assign-product";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -51,6 +52,26 @@ async function importFlex(_prev: FlexResult | null, formData: FormData): Promise
   }
 }
 
+// Corrección de una guía "producto desconocido": asigna el producto elegido a su orden (override
+// durable) y recalcula el día → entra al P&L con atribución y costo reales. "Sin pedido" no aplica
+// (no hay orden que atribuir), la UI ni muestra el selector.
+async function setProducto(formData: FormData) {
+  "use server";
+  const shipmentId = Number(formData.get("shipmentId"));
+  const productId = Number(formData.get("productId"));
+  if (!shipmentId || !productId) return;
+  const db = supabaseAdmin();
+  const { data: sh } = await db.from("shipments").select("order_id, dispatched_at").eq("id", shipmentId).maybeSingle();
+  if (!sh?.order_id) return;
+  await db.from("orders").update({ product_override: productId }).eq("id", sh.order_id);
+  await db.from("order_items").update({ product_id: productId }).eq("order_id", sh.order_id).is("product_id", null);
+  const day = String(sh.dispatched_at).slice(0, 10);
+  await db.rpc("recompute_priors");
+  await db.rpc("recompute_daily_pnl", { p_from: day, p_to: day });
+  revalidatePath("/sync");
+  revalidatePath("/");
+}
+
 export default async function SyncPage() {
   const db = supabaseAdmin();
   const [{ data: runs }, { data: sinClasificar }, { count: flexPend }] = await Promise.all([
@@ -62,6 +83,8 @@ export default async function SyncPage() {
     db.from("ml_orders").select("*", { count: "exact", head: true })
       .eq("status", "paid").eq("ship_type", "self_service").is("ship_cost", null),
   ]);
+  const { data: products } = await db.from("products").select("id, name").eq("active", true).order("name");
+  const prods = (products ?? []) as { id: number; name: string }[];
 
   return (
     <main className="space-y-8">
@@ -167,6 +190,7 @@ export default async function SyncPage() {
               <TableHead>Despacho</TableHead>
               <TableHead>Estado</TableHead>
               <TableHead>Motivo</TableHead>
+              <TableHead>Corregir</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -178,11 +202,18 @@ export default async function SyncPage() {
                 <TableCell>{s.dispatched_at ? fmtDate(s.dispatched_at) : "—"}</TableCell>
                 <TableCell>{s.status_canonical}</TableCell>
                 <TableCell>{s.motivo}</TableCell>
+                <TableCell>
+                  {s.motivo === "producto desconocido" ? (
+                    <AssignProduct shipmentId={s.id} products={prods} action={setProducto} />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">falta linkear el pedido</span>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
             {!sinClasificar?.length && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   Nada sin clasificar 🎉
                 </TableCell>
               </TableRow>
