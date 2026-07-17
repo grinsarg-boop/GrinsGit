@@ -66,6 +66,18 @@ export default async function Resumen({
   const { data: rows } = await db.rpc("dashboard_days", { p_from: from, p_courier: courierParam });
   const list: Day[] = ((rows ?? []) as Row[]).map(mapDay).filter((d) => d.date <= to);
 
+  // Flete Flex de ML sin cargar, por semana (solo en la vista ML o Todos). Las órdenes Flex
+  // (self_service) con ship_cost null cuentan flete $0 hasta subir el xlsx de Santiago de esa semana.
+  let flexPend: { semana: string; n: number }[] = [];
+  if (!courierParam || courierParam === "ml") {
+    const { data: fp } = await db.from("ml_orders").select("created_at")
+      .eq("status", "paid").eq("ship_type", "self_service").is("ship_cost", null);
+    const wk = (iso: string) => { const x = new Date(iso); x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7)); return x.toISOString().slice(0, 10); };
+    const m = new Map<string, number>();
+    for (const r of (fp ?? []) as { created_at: string }[]) { const k = wk(r.created_at); m.set(k, (m.get(k) ?? 0) + 1); }
+    flexPend = [...m.entries()].map(([semana, n]) => ({ semana, n })).sort((a, b) => (a.semana < b.semana ? 1 : -1));
+  }
+
   // Vista MESES: agrupa los días DEL RANGO por mes (para todo el histórico, usá el preset "Máx").
   let meses: MonthAgg[] = [];
   if (vista === "meses") {
@@ -259,6 +271,12 @@ export default async function Resumen({
           ))}
         </div>
       </div>
+
+      {flexPend.length > 0 && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+          <span className="font-medium">Flete Flex de ML sin cargar</span> — {flexPend.reduce((s, w) => s + w.n, 0)} órdenes cuentan flete $0 hasta subir la liquidación de Santiago (en <Link href="/sync" className="underline">Sync</Link>). Semanas: {flexPend.map((w) => `${fmtDate(w.semana)} (${w.n})`).join(" · ")}.
+        </div>
+      )}
 
       <Card>
         <CardContent className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 pt-5">
