@@ -220,18 +220,68 @@ export async function applyFlexFlete(db: Db = supabaseAdmin()): Promise<{ update
   return { updated };
 }
 
-// Import completo de la liquidación Flex (xlsx → staging → ship_cost → recompute). Lo usan el endpoint
-// /api/import/ml-flex y la subida desde la app (/sync), para no duplicar la lógica.
-export async function importMlFlex(buf: Buffer, db: Db = supabaseAdmin()): Promise<{ parsed: number; matched: number }> {
-  const rows = parseSantiagoFlex(buf);
+// Import completo de la liquidación Flex (archivo → staging → ship_cost + tabla CP→costo → recompute).
+// Auto-detecta el formato: listado DarLogistica (trae CP e ID venta) o el xlsx semanal de Santiago.
+// Lo usan el endpoint /api/import/ml-flex y la subida desde /sync, para no duplicar la lógica.
+export async function importMlFlex(buf: Buffer, db: Db = supabaseAdmin()): Promise<{ parsed: number; matched: number; cps: number }> {
+  const dar = parseDarLogistica(buf);
+  const rows = dar.length ? dar : parseSantiagoFlex(buf).map((r) => ({ ...r, cp: null as string | null }));
   if (rows.length) {
-    const { error } = await db.from("ml_flex_flete").upsert(rows, { onConflict: "shipment_id" });
+    const { error } = await db.from("ml_flex_flete").upsert(
+      rows.map((r) => ({ shipment_id: r.shipment_id, price: r.price, localidad: r.localidad, fecha: r.fecha })),
+      { onConflict: "shipment_id" },
+    );
     if (error) throw new Error(`ml_flex_flete upsert: ${error.message}`);
+  }
+  // Tabla CP→costo (settings.flex_freight_by_cp): mergea los CP con precio de este archivo. Sirve para
+  // estimar el flete de los pedidos en curso que todavía no están en ningún listado (editable en /config).
+  const byCp: Record<string, number> = {};
+  for (const r of rows) if (r.cp && r.price > 0) byCp[r.cp] = r.price;
+  let cps = 0;
+  if (Object.keys(byCp).length) {
+    const { data: cur } = await db.from("settings").select("value").eq("key", "flex_freight_by_cp").maybeSingle();
+    const merged = { ...((cur?.value as Record<string, number>) ?? {}), ...byCp };
+    await db.from("settings").upsert({ key: "flex_freight_by_cp", value: merged });
+    cps = Object.keys(byCp).length;
   }
   const { updated } = await applyFlexFlete(db);
   const from = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
   await db.rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
-  return { parsed: rows.length, matched: updated };
+  return { parsed: rows.length, matched: updated, cps };
+}
+
+// Parsea el listado de envíos de DarLogistica (.xls): header con "Número Tracking" (=shipment_id) +
+// "CP" + "Precio" (la col standalone, NO "Zona precio"). Trae el CP para armar la tabla CP→costo.
+export function parseDarLogistica(buf: Buffer): { shipment_id: number; price: number; cp: string | null; localidad: string | null; fecha: string | null }[] {
+  const wb = XLSX.read(buf, { type: "buffer", cellDates: true });
+  const out: { shipment_id: number; price: number; cp: string | null; localidad: string | null; fecha: string | null }[] = [];
+  for (const name of wb.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, blankrows: false, defval: null });
+    const hi = rows.findIndex((r) => (r ?? []).some((c) => typeof c === "string" && /n[úu]mero tracking/i.test(c)));
+    if (hi < 0) continue;
+    const H = (rows[hi] as unknown[]).map((c) => (typeof c === "string" ? c.trim().toLowerCase() : ""));
+    const cTrack = H.findIndex((c) => /n[úu]mero tracking/.test(c));
+    const cPrecio = H.findIndex((c) => c === "precio"); // exacto → la col Precio, no "Zona precio"
+    const cCP = H.findIndex((c) => c === "cp");
+    const cLoc = H.findIndex((c) => c === "localidad");
+    const cFec = H.findIndex((c) => c === "fecha venta");
+    if (cTrack < 0 || cPrecio < 0) continue;
+    for (let i = hi + 1; i < rows.length; i++) {
+      const r = rows[i] as unknown[]; if (!r) continue;
+      const ship = Number(String(r[cTrack] ?? "").replace(/\D/g, ""));
+      const price = Number(r[cPrecio]);
+      if (!ship || !Number.isFinite(price) || price <= 0) continue;
+      const fec = cFec >= 0 ? r[cFec] : null;
+      out.push({
+        shipment_id: ship,
+        price,
+        cp: cCP >= 0 && r[cCP] != null ? String(r[cCP]).replace(/\D/g, "").slice(0, 4) || null : null,
+        localidad: cLoc >= 0 && r[cLoc] != null ? String(r[cLoc]) : null,
+        fecha: fec instanceof Date ? fec.toISOString().slice(0, 10) : null,
+      });
+    }
+  }
+  return out;
 }
 
 // Parsea la liquidación Flex de Santiago (xlsx): una hoja por día, header con "CODIGO DE VENTA" +

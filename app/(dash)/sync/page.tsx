@@ -42,10 +42,11 @@ async function importFlex(_prev: FlexResult | null, formData: FormData): Promise
   if (!(file instanceof File) || !file.size) return { ok: false, error: "elegí un archivo .xlsx" };
   try {
     const { importMlFlex } = await import("@/lib/ml");
-    const { parsed, matched } = await importMlFlex(Buffer.from(await file.arrayBuffer()));
-    await logSyncRun("ml-flex", "ok", parsed, [{ matched_to_orders: matched }]);
+    const { parsed, matched, cps } = await importMlFlex(Buffer.from(await file.arrayBuffer()));
+    await logSyncRun("ml-flex", "ok", parsed, [{ matched_to_orders: matched, cps }]);
     revalidatePath("/sync");
-    return { ok: true, parsed, matched };
+    revalidatePath("/");
+    return { ok: true, parsed, matched, cps };
   } catch (e) {
     await logSyncRun("ml-flex", "error", 0, [], String(e));
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
 export type FlexResult =
-  | { ok: true; parsed: number; matched: number }
+  | { ok: true; parsed: number; matched: number; cps: number }
   | { ok: false; error: string };
 
 // Botón que muestra la rueda + "Procesando…" mientras el server action corre (useFormStatus).
@@ -32,7 +32,8 @@ export function FlexUpload({ action }: { action: (prev: FlexResult | null, fd: F
       {state && (state.ok ? (
         <p className="text-sm text-muted-foreground">
           ✓ {state.parsed} envío{state.parsed === 1 ? "" : "s"} leído{state.parsed === 1 ? "" : "s"} ·{" "}
-          {state.matched} flete{state.matched === 1 ? "" : "s"} aplicado{state.matched === 1 ? "" : "s"} a órdenes · P&amp;L recalculado.
+          {state.matched} flete{state.matched === 1 ? "" : "s"} aplicado{state.matched === 1 ? "" : "s"} a órdenes
+          {state.cps > 0 && <> · {state.cps} CP{state.cps === 1 ? "" : "s"} a la tabla de costos</>} · P&amp;L recalculado.
         </p>
       ) : (
         <p className="text-sm text-destructive">No se pudo procesar: {state.error}</p>

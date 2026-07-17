@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
-import { mapMlOrder, needsRefresh, nextTokenState, parseMlPack, parseSantiagoFlex, sellerFlete } from "./ml";
+import { mapMlOrder, needsRefresh, nextTokenState, parseDarLogistica, parseMlPack, parseSantiagoFlex, sellerFlete } from "./ml";
 
 const NOW = 1_700_000_000_000;
 
@@ -95,5 +95,25 @@ describe("parseSantiagoFlex", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ shipment_id: 47452325919, price: 4150, localidad: "SAN ISIDRO" });
     expect(rows[1]).toMatchObject({ shipment_id: 47451415519, price: 6634 });
+  });
+});
+
+describe("parseDarLogistica", () => {
+  // Header real: "Precio" convive con "Zona precio" → hay que tomar la col exacta "Precio".
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ["Filtros Aplicados"],
+    ["Número Tracking", "ID venta ML", "Fecha Venta", "CP", "Localidad", "Zona", "Zona precio", "Precio"],
+    [47530552328, 2000017429280900, "15/07/2026", 1702, "Ciudadela", "3DEFEBRERO", "BIOLABS ZONA2", 6634],
+    [47531258883, 2000017431131508, "15/07/2026", 1837, "Sourigues", "BERAZATEGUI", "BIOLABS ZONA3", 9221],
+    [null, null, null, null, null, null, null, null], // fila vacía → se ignora
+  ]), "Simple");
+  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+
+  it("toma shipment_id, CP y la columna Precio (no Zona precio)", () => {
+    const rows = parseDarLogistica(buf);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ shipment_id: 47530552328, price: 6634, cp: "1702", localidad: "Ciudadela" });
+    expect(rows[1]).toMatchObject({ shipment_id: 47531258883, price: 9221, cp: "1837" });
   });
 });
