@@ -1,9 +1,9 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Tip } from "@/components/ui/tooltip";
 import { SyncRun } from "@/components/sync-run";
+import { FlexUpload, type FlexResult } from "@/components/flex-upload";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -33,19 +33,22 @@ async function runNow(formData: FormData) {
   revalidatePath("/sync");
 }
 
-// Subida de la liquidación Flex de Santiago (xlsx). Corre server-side el mismo import que el endpoint.
-async function importFlex(formData: FormData) {
+// Subida de la liquidación Flex de Santiago (xlsx). Corre server-side el mismo import que el endpoint
+// y devuelve el resultado para mostrar el detalle simple en la UI (useActionState).
+async function importFlex(_prev: FlexResult | null, formData: FormData): Promise<FlexResult> {
   "use server";
   const file = formData.get("file");
-  if (!(file instanceof File) || !file.size) return;
-  const { importMlFlex } = await import("@/lib/ml");
+  if (!(file instanceof File) || !file.size) return { ok: false, error: "elegí un archivo .xlsx" };
   try {
+    const { importMlFlex } = await import("@/lib/ml");
     const { parsed, matched } = await importMlFlex(Buffer.from(await file.arrayBuffer()));
     await logSyncRun("ml-flex", "ok", parsed, [{ matched_to_orders: matched }]);
+    revalidatePath("/sync");
+    return { ok: true, parsed, matched };
   } catch (e) {
     await logSyncRun("ml-flex", "error", 0, [], String(e));
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
-  revalidatePath("/sync");
 }
 
 export default async function SyncPage() {
@@ -71,11 +74,7 @@ export default async function SyncPage() {
 
       <section className="flex flex-wrap items-center gap-2">
         <span className="mr-2 text-sm font-medium">Flete Flex (xlsx de Santiago):</span>
-        <form action={importFlex} className="flex items-center gap-2">
-          <input type="file" name="file" accept=".xlsx" required
-            className="text-sm file:mr-2 file:rounded file:border file:bg-muted file:px-2 file:py-1 file:text-sm" />
-          <Button type="submit" size="sm" variant="outline">Subir liquidación</Button>
-        </form>
+        <FlexUpload action={importFlex} />
         <Tip label="Qué es esto" tip="Subí el xlsx semanal de la liquidación Flex de Santiago. La app lee el código de venta + precio de cada envío y le pone el flete real a las órdenes ML de reparto propio. Recalcula el P&L al terminar." />
       </section>
 

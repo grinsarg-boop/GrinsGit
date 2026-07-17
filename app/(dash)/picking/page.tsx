@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { extractLabels, packBreakdown, type Label } from "@/lib/label-picking";
+import { Spinner } from "@/components/ui/spinner";
 import type { PickingOrder } from "@/app/api/picking/route";
 
 const COURIER_LABEL: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML", flex: "Flex", "?": "¿?" };
@@ -132,7 +133,7 @@ export default function PickingPage() {
         {!!labels.length && <button onClick={reset} className="text-sm text-muted-foreground underline">limpiar</button>}
       </div>
 
-      {busy && <p className="text-sm text-muted-foreground">Leyendo etiquetas y cruzando con Shopify…</p>}
+      {busy && <p className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Leyendo etiquetas y cruzando con Shopify…</p>}
       {msg && <p className="text-sm text-amber-600">{msg}</p>}
       {!!files.length && (
         <p className="text-xs text-muted-foreground">
