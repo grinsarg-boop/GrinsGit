@@ -102,8 +102,10 @@ export function sellerFlete(
   buyerShipCost: number | null | undefined,
 ): number | null {
   if (logisticType === "self_service") return null; // Flex → xlsx
-  if (listCost == null) return null;
-  return Math.max(0, listCost - (buyerShipCost ?? 0));
+  if (listCost == null) return null; // sin dato → no inventar (Number(null)=0, así que hay que chequear antes)
+  const c = Number(listCost);
+  if (!Number.isFinite(c)) return null; // no-numérico → null, nunca NaN persistido
+  return Math.max(0, c - (Number(buyerShipCost) || 0));
 }
 
 // Una order de ML → fila de ml_orders. `units` = Σ order_items.quantity (nº de listados, casi siempre 1);
@@ -156,13 +158,16 @@ export async function fetchMlOrders(days: number, db: Db = supabaseAdmin()): Pro
 }
 
 // Fase 1: landa las órdenes en ml_orders. Devuelve cuántas filas tocó.
-export async function syncMlOrders(days = 30, db: Db = supabaseAdmin()): Promise<{ rows: number }> {
+export async function syncMlOrders(days = 60, db: Db = supabaseAdmin()): Promise<{ rows: number; sinProducto: number }> {
   const orders = await fetchMlOrders(days, db);
-  if (orders.length === 0) return { rows: 0 };
+  if (orders.length === 0) return { rows: 0, sinProducto: 0 };
   const rows = orders.map(mapMlOrder);
   const { error } = await db.from("ml_orders").upsert(rows, { onConflict: "ml_id" });
   if (error) throw new Error(`ml_orders upsert: ${error.message}`);
-  return { rows: rows.length };
+  // Ventas pagadas cuyo título no matcheó ningún producto → se caen del P&L (inner join). Hoy 0, pero
+  // un listado nuevo/typo sería plata invisible: se cuenta para alertar en logSyncRun.
+  const sinProducto = rows.filter((r) => r.status === "paid" && !r.product).length;
+  return { rows: rows.length, sinProducto };
 }
 
 // --- Fase 1.5: flete del vendedor ---
@@ -187,13 +192,14 @@ export async function enrichMlShipments(db: Db = supabaseAdmin(), limit = 300): 
   const CONC = 8;
   for (let i = 0; i < data.length; i += CONC) {
     await Promise.all(data.slice(i, i + CONC).map(async (r) => {
-      const res = await fetch(`${API}/shipments/${r.shipment_id}`, { headers: { authorization: `Bearer ${token}` } })
-        .catch(() => null);
-      if (!res?.ok) return;
-      const sh = await res.json();
-      const fc = sellerFlete(sh.logistic_type, sh.shipping_option?.list_cost, buyerShipCost(r.raw as MlOrder));
-      await db.from("ml_orders").update({ ship_type: sh.logistic_type ?? "?", ship_cost: fc }).eq("ml_id", r.ml_id);
-      if (sh.logistic_type === "self_service") flex++; else if (fc != null) enriched++;
+      try { // falla por-orden (fetch, json roto o update) = se saltea, no aborta la tanda
+        const res = await fetch(`${API}/shipments/${r.shipment_id}`, { headers: { authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const sh = await res.json();
+        const fc = sellerFlete(sh.logistic_type, sh.shipping_option?.list_cost, buyerShipCost(r.raw as MlOrder));
+        await db.from("ml_orders").update({ ship_type: sh.logistic_type ?? "?", ship_cost: fc }).eq("ml_id", r.ml_id);
+        if (sh.logistic_type === "self_service") flex++; else if (fc != null) enriched++;
+      } catch { /* se saltea */ }
     }));
   }
   return { enriched, flex };
