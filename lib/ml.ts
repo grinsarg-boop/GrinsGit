@@ -122,9 +122,9 @@ export function mapMlOrder(o: MlOrder) {
     shipment_id: o.shipping?.id ?? null,
     total_amount: o.total_amount ?? 0,
     sale_fee: items.reduce((s, it) => s + (it.sale_fee ?? 0), 0), // comisión ML
-    ship_type: o.shipping?.logistic_type ?? null,
-    ship_cost: null as number | null, // lo llena enrichMlShipments (normal) / import Flex (Santiago)
-    province: null as string | null, //   la provincia vive en el shipment
+    // ship_type/ship_cost/province NO van acá a propósito: los llenan enrichMlShipments (flete normal)
+    // e importMlFlex (Flex). Incluirlos en el upsert pisaría con null el flete ya enriquecido en cada
+    // re-sync (y el cron diario lo borraría). Al insertar arrancan null por default de columna.
     status: o.status,
     raw: o,
   };
