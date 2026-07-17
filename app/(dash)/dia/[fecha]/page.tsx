@@ -64,16 +64,6 @@ export default async function Dia({ params, searchParams }: {
   const artFrom = `${fecha}T03:00:00Z`;
   const artTo = `${nd.toISOString().slice(0, 10)}T03:00:00Z`;
 
-  // ad_spend con nivel de conjunto (adset). Resiliente: si la columna adset_name aún no está
-  // migrada (017), cae a la consulta sin conjunto. ponytail: el fallback se borra post-017.
-  type Ad = { ad_name: string | null; adset_name: string | null; campaign_name: string | null; spend: number; purchases: number; product_id: number | null };
-  const fetchAds = async (): Promise<Ad[]> => {
-    const r = await db.from("ad_spend").select("ad_name, adset_name, campaign_name, spend, purchases, product_id").eq("date", fecha).order("spend", { ascending: false });
-    if (!r.error) return (r.data ?? []) as Ad[];
-    const b = await db.from("ad_spend").select("ad_name, campaign_name, spend, purchases, product_id").eq("date", fecha).order("spend", { ascending: false });
-    return (b.data ?? []).map((a) => ({ ...a, adset_name: null })) as Ad[];
-  };
-
   // El filtro de courier del panel se aplica a cada sección: P&L, guías y (según corresponda) Correo.
   let pnlQ = db.from("daily_pnl").select("courier, product_id, despachadas, entregadas, en_transito, revenue_estimado, profit_estimado, profit_confirmado, ads, flete, tasa_proyectada").eq("dispatch_date", fecha);
   let guiasQ = db.from("shipments").select("tracking, courier, status_canonical, status_raw, freight_cost, province, orders(order_number, cod_amount, customer_name, order_items(product_id, qty, unit_price))").eq("dispatched_at", fecha).order("courier");
@@ -84,11 +74,10 @@ export default async function Dia({ params, searchParams }: {
     ? db.from("orders").select("order_number, customer_name, province, financial_status, deposit_amount, cod_amount, order_items(product_id, qty, unit_price)").ilike("tags", "%cuotas_3%").is("cancelled_at", null).in("financial_status", ["paid", "pending"]).gte("created_at", artFrom).lt("created_at", artTo)
     : Promise.resolve({ data: [] as CorreoOrder[] });
 
-  const [prodsRes, pnlRes, guiasRes, ads, correoRes] = await Promise.all([
+  const [prodsRes, pnlRes, guiasRes, correoRes] = await Promise.all([
     db.from("products").select("id, name"),
     pnlQ,
     guiasQ,
-    fetchAds(),
     correoQ,
   ]);
   const pname = new Map((prodsRes.data ?? []).map((p) => [p.id, p.name as string]));
@@ -102,28 +91,6 @@ export default async function Dia({ params, searchParams }: {
     profitEst: a.profitEst + Number(r.profit_estimado), profitConf: a.profitConf + Number(r.profit_confirmado),
     ads: a.ads + Number(r.ads), flete: a.flete + Number(r.flete),
   }), { despachadas: 0, entregadas: 0, enTransito: 0, revenueEst: 0, profitEst: 0, profitConf: 0, ads: 0, flete: 0 });
-  const adsTotal = ads.reduce((s, a) => s + Number(a.spend), 0);
-  const adsVentas = ads.reduce((s, a) => s + (a.purchases ?? 0), 0);
-  // Gasto CRUDO por producto (Paso 1: keyword del anuncio) — antes del reparto por entregas del P&L.
-  const adsPorProducto = [...ads.reduce((m, a) => {
-    const k = a.product_id ? (pname.get(a.product_id) ?? `#${a.product_id}`) : "sin producto";
-    return m.set(k, (m.get(k) ?? 0) + Number(a.spend));
-  }, new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1]);
-
-  // Agrupar Campaña → Conjunto (adset) → Anuncio. Cada nivel se despliega.
-  type Adset = { spend: number; purchases: number; ads: Ad[] };
-  type Camp = { spend: number; purchases: number; adsets: Map<string, Adset> };
-  const campañas = [...ads.reduce((m, a) => {
-    const ck = a.campaign_name || "(sin campaña)";
-    const c = m.get(ck) ?? { spend: 0, purchases: 0, adsets: new Map<string, Adset>() };
-    c.spend += Number(a.spend); c.purchases += a.purchases ?? 0;
-    const ak = a.adset_name || "(sin conjunto)";
-    const s = c.adsets.get(ak) ?? { spend: 0, purchases: 0, ads: [] as Ad[] };
-    s.spend += Number(a.spend); s.purchases += a.purchases ?? 0; s.ads.push(a);
-    c.adsets.set(ak, s); m.set(ck, c);
-    return m;
-  }, new Map<string, Camp>()).entries()].sort((a, b) => b[1].spend - a[1].spend);
-
   // Despachos del día agrupados Courier → Producto → ítem (colapsable, corta la lista interminable).
   // Urbano/Fixy son guías (entrega/COD); Correo son órdenes prepago (pagadas/generadas + confirmado).
   // Producto = el principal del pedido (mayor qty×precio), espejo de order_primary_product.
@@ -254,86 +221,6 @@ export default async function Dia({ params, searchParams }: {
           </Card>
         ))}
       </div>
-
-      {/* Gasto en Ads del día — por campaña, desplegable a sus anuncios (ahorra espacio) */}
-      <section className="space-y-2">
-        <div className="flex flex-wrap items-baseline gap-x-3">
-          <h2 className="text-sm font-semibold">Gasto en Ads del día — {fmtMoney(adsTotal)}</h2>
-          {courierParam && <span className="text-xs text-muted-foreground">(total del día · Meta no lo separa por courier)</span>}
-          {adsVentas > 0 && (
-            <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-              {adsVentas} venta{adsVentas === 1 ? "" : "s"}
-              <Tip tip="Compras que Meta le atribuye a los anuncios (según su ventana de atribución), no necesariamente entregas COD." />
-            </span>
-          )}
-        </div>
-        {adsPorProducto.length > 0 && (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span className="inline-flex items-center gap-1 font-medium uppercase tracking-wide">
-              Crudo por producto
-              <Tip tip="Gasto tal cual lo reporta Meta ese día, repartido por producto según la keyword del anuncio (Paso 1). En el P&L este gasto se re-reparte entre las entregas del período (Fixy ×1,4, Correo por generados), así que el 'Ads' del P&L no coincide con este número." />
-            </span>
-            {adsPorProducto.map(([p, v]) => (
-              <span key={p} className={cn("tabular-nums", p === "sin producto" && "text-amber-600 dark:text-amber-500")}>
-                {p} <b className="text-foreground">{fmtMoney(v)}</b>
-              </span>
-            ))}
-          </div>
-        )}
-        {campañas.length ? (
-          <div className="divide-y overflow-hidden rounded-lg border text-sm">
-            {/* encabezado de columnas */}
-            <div className="flex items-center gap-3 bg-muted/40 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              <span className="flex-1">Campaña · conjunto · anuncio</span>
-              <span className="w-20 text-right">Anuncios</span>
-              <span className="w-16 text-right">Ventas</span>
-              <span className="w-24 text-right">Gasto</span>
-            </div>
-            {campañas.map(([cname, c]) => {
-              const nAds = [...c.adsets.values()].reduce((n, s) => n + s.ads.length, 0);
-              const adsets = [...c.adsets.entries()].sort((a, b) => b[1].spend - a[1].spend);
-              return (
-                <details key={cname} className="group">
-                  <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-accent/40 [&::-webkit-details-marker]:hidden">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
-                    <span className="min-w-0 flex-1 truncate font-medium">{cname}</span>
-                    <span className="w-20 text-right tabular-nums text-muted-foreground">{nAds}</span>
-                    <span className="w-16 text-right tabular-nums">{c.purchases > 0 ? c.purchases : "—"}</span>
-                    <span className="w-24 text-right font-semibold tabular-nums">{fmtMoney(c.spend)}</span>
-                  </summary>
-                  <div className="bg-muted/20">
-                    {adsets.map(([aname, s]) => (
-                      <details key={aname} className="group/as border-t border-border/50">
-                        <summary className="flex cursor-pointer list-none items-center gap-3 py-1.5 pl-8 pr-3 hover:bg-accent/30 [&::-webkit-details-marker]:hidden">
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3 shrink-0 text-muted-foreground transition-transform group-open/as:rotate-90" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
-                          <span className="min-w-0 flex-1 truncate">{aname}</span>
-                          <span className="w-20 text-right tabular-nums text-muted-foreground">{s.ads.length}</span>
-                          <span className="w-16 text-right tabular-nums">{s.purchases > 0 ? s.purchases : "—"}</span>
-                          <span className="w-24 text-right tabular-nums">{fmtMoney(s.spend)}</span>
-                        </summary>
-                        <div>
-                          {[...s.ads].sort((a, b) => Number(b.spend) - Number(a.spend)).map((a, i) => (
-                            <div key={i} className="flex items-center gap-3 border-t border-border/40 py-1.5 pl-14 pr-3">
-                              <span className="min-w-0 flex-1 truncate text-muted-foreground">{a.ad_name || "—"}</span>
-                              <span className={cn("hidden w-28 truncate text-right text-xs sm:inline", !a.product_id && "text-amber-600 dark:text-amber-500")}>
-                                {a.product_id ? pname.get(a.product_id) ?? `#${a.product_id}` : "sin producto"}
-                              </span>
-                              <span className="w-16 text-right tabular-nums">{a.purchases > 0 ? a.purchases : "—"}</span>
-                              <span className="w-24 text-right tabular-nums text-muted-foreground">{fmtMoney(Number(a.spend))}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    ))}
-                  </div>
-                </details>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Sin gasto en Ads registrado ese día.</p>
-        )}
-      </section>
 
       {/* P&L por producto */}
       <section className="space-y-2">
