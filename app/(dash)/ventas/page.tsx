@@ -16,6 +16,7 @@ export const revalidate = 60;
 type Day = {
   date: string; generadas: number; despachadas: number; entregadas: number; resueltas: number;
   revenueConf: number; revenueEst: number; profitConf: number; profitEst: number; ads: number; adsSinCohorte: number;
+  trabadas: number;
 };
 type MonthAgg = {
   month: string; generadas: number; despachadas: number; entregadas: number;
@@ -45,8 +46,8 @@ export default async function Ventas({
 
   type Row = {
     sale_date: string; generadas: number; despachadas: number; entregadas: number; resueltas: number;
-    revenue_confirmado: number; revenue_estimado: number; profit_confirmado: number; profit_estimado: number;
-    ads: number; ads_sin_cohorte: number;
+    trabadas: number; revenue_confirmado: number; revenue_estimado: number; profit_confirmado: number;
+    profit_estimado: number; ads: number; ads_sin_cohorte: number;
   };
   const { data: rows } = await db.rpc("sales_days", { p_from: from, p_courier: courierParam });
   const list: Day[] = ((rows ?? []) as Row[])
@@ -54,7 +55,7 @@ export default async function Ventas({
       date: r.sale_date, generadas: r.generadas, despachadas: r.despachadas, entregadas: r.entregadas,
       resueltas: r.resueltas, revenueConf: Number(r.revenue_confirmado), revenueEst: Number(r.revenue_estimado),
       profitConf: Number(r.profit_confirmado), profitEst: Number(r.profit_estimado),
-      ads: Number(r.ads), adsSinCohorte: Number(r.ads_sin_cohorte),
+      ads: Number(r.ads), adsSinCohorte: Number(r.ads_sin_cohorte), trabadas: r.trabadas ?? 0,
     }))
     .filter((d) => d.date <= to);
 
@@ -326,6 +327,14 @@ export default async function Ventas({
                       <div className="h-1.5 rounded bg-foreground" style={{ width: `${Math.min(resPct, 1) * 100}%` }} />
                     </div>
                     <span className="w-8 text-xs tabular-nums text-muted-foreground">{fmtPct(resPct)}</span>
+                    {d.trabadas > 0 && (
+                      <Tip
+                        label="Pedidos trabados"
+                        tip={`${d.trabadas} ${d.trabadas === 1 ? "pedido sigue" : "pedidos siguen"} en la calle sin ningún movimiento de estado hace más de 2 semanas. No debería pasar: reclamalos a la logística — hasta que se resuelvan, este día no cierra.`}
+                      >
+                        <span className="cursor-help font-bold text-orange-500" aria-label={`${d.trabadas} pedidos trabados`}>!</span>
+                      </Tip>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className={cn(

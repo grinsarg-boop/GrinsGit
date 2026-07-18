@@ -127,3 +127,31 @@ begin
 end $t$;
 
 rollback;
+
+-- ===== 030: trabadas = en tránsito y sin movimiento de estado hace 2 semanas =====
+begin;
+do $t$
+declare
+  d3 date := current_date - 25;   -- día de VENTA viejo
+  dd3 date := current_date - 20;  -- despacho hace 20 días, sin movimientos desde entonces
+  s_trab int; s_trab_reciente int;
+begin
+  perform upsert_order(jsonb_build_object('id', 2221, 'name', '#2221', 'created_at', d3::text || 'T12:00:00-03:00',
+    'financial_status', 'pending', 'tags', '', 'total_price', '40000',
+    'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000"}'::jsonb,
+    'line_items', '[{"title":"Natures","quantity":1,"price":"40000"}]'::jsonb));
+  -- guía despachada hace 20d y ahí quedó (MA = en tránsito) → TRABADA
+  perform upsert_shipment_events(jsonb_build_array(
+    jsonb_build_object('courier','urbano','tracking','ST','order_ref','2221','status_raw','MA','occurred_at', dd3::text || 'T08:00:00Z')));
+  perform recompute_daily_pnl(d3, current_date);
+
+  select trabadas into s_trab from sales_days(d3, 'urbano') where sale_date = d3;
+  assert s_trab = 1, format('030: la guía sin movimiento hace 20d cuenta como trabada (got %s)', s_trab);
+
+  -- una guía en tránsito RECIENTE no es trabada
+  select trabadas into s_trab_reciente from sales_days(current_date - 5, 'urbano') where sale_date = current_date - 5;
+  assert coalesce(s_trab_reciente, 0) = 0, format('030: la guía en tránsito reciente NO es trabada (got %s)', s_trab_reciente);
+
+  raise notice '030 trabadas (sin movimiento +14d): OK';
+end $t$;
+rollback;

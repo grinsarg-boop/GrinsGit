@@ -54,6 +54,7 @@ try {
                    'supabase/migrations/027_producto_m3.sql',
                    'supabase/migrations/028_sales_pnl.sql',
                    'supabase/migrations/029_urbano_discover.sql',
+                   'supabase/migrations/030_sales_trabadas.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
