@@ -278,12 +278,8 @@ export default async function Ventas({
               </span>
             </TableHead>
             <TableHead className="w-40">
-              <span className="inline-flex items-center gap-1">Despachadas
-                <Tip tip={courier === "ml"
-                  ? "En ML la venta ya está entregada por ML."
-                  : courier === "correo"
-                  ? "En Correo (cuotas prepago) es la tasa de confirmación: pagados sobre generados."
-                  : "Cuántas de las ventas generadas ese día ya salieron a la calle. El profit de las que faltan despachar todavía no está contado, por eso los días recientes maduran."} />
+              <span className="inline-flex items-center gap-1">Resolución
+                <Tip tip="Qué porcentaje de las ventas de ese día ya tienen un desenlace definitivo: cobradas (entregadas) o perdidas (devueltas, rehusadas, o sin despachar a esta altura). Los pedidos en tránsito o sin guía recientes NO cuentan como resueltos. A más resolución, más firme el número — un día con 100% ya está cerrado." />
               </span>
             </TableHead>
             <TableHead className="text-right text-amber-600 dark:text-amber-500">
@@ -306,8 +302,13 @@ export default async function Ventas({
         </TableHeader>
         <TableBody>
           {list.map((d) => {
-            const despPct = d.generadas ? d.despachadas / d.generadas : 0;
-            const madurez = d.generadas ? d.resueltas / d.generadas : 0;   // resueltas / generadas
+            // Resolución = ventas con desenlace definitivo / generadas. Firmes: entregadas/devueltas/rehusadas
+            // (d.resueltas). A los 7 días, las que siguen sin despacharse ya no van a salir → cuentan como
+            // perdidas (resueltas). Las en tránsito o sin guía recientes NO cuentan (aún pueden cambiar).
+            const diasCohorte = Math.floor((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${d.date}T00:00:00Z`)) / 86400000);
+            const resueltos = d.resueltas + (diasCohorte >= 7 ? Math.max(d.generadas - d.despachadas, 0) : 0);
+            const resPct = d.generadas ? resueltos / d.generadas : 0;
+            const madurez = resPct;
             const inmaduro = madurez < 0.8;
             const cpaDia = d.generadas ? d.ads / d.generadas : 0;
             return (
@@ -322,9 +323,9 @@ export default async function Ventas({
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <div className="h-1.5 w-[74px] flex-none rounded bg-muted">
-                      <div className="h-1.5 rounded bg-foreground" style={{ width: `${Math.min(despPct, 1) * 100}%` }} />
+                      <div className="h-1.5 rounded bg-foreground" style={{ width: `${Math.min(resPct, 1) * 100}%` }} />
                     </div>
-                    <span className="w-8 text-xs tabular-nums text-muted-foreground">{fmtPct(despPct)}</span>
+                    <span className="w-8 text-xs tabular-nums text-muted-foreground">{fmtPct(resPct)}</span>
                   </div>
                 </TableCell>
                 <TableCell className={cn(
