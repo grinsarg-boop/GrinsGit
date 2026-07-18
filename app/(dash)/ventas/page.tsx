@@ -322,9 +322,8 @@ export default async function Ventas({
                       <TableCell className="font-medium">
                         {p.product}
                         {p.trabadas > 0 && (
-                          <Tip label="Pedidos trabados" tip={`${p.trabadas} de este producto siguen en la calle sin movimiento hace +2 semanas.`}>
-                            <span className="ml-1.5 cursor-help font-bold text-orange-500">!</span>
-                          </Tip>
+                          <span className="ml-1.5 cursor-help font-bold text-orange-500"
+                                title={`${p.trabadas} ${p.trabadas === 1 ? "pedido de este producto sigue" : "pedidos de este producto siguen"} en la calle sin movimiento hace +2 semanas`}>!</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{p.generadas}</TableCell>

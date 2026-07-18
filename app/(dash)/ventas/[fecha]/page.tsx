@@ -182,9 +182,8 @@ export default async function VentaDia({ params, searchParams }: {
         </a>
       ) : <span className="truncate">#{v.orden}</span>}
       {v.trabado && (
-        <Tip label="Pedido trabado" tip="Sigue en la calle y hace más de 2 semanas que no registra ningún movimiento de estado. Reclamalo a la logística.">
-          <span className="cursor-help font-bold text-orange-500" aria-label="trabado">!</span>
-        </Tip>
+        <span className="cursor-help font-bold text-orange-500" aria-label="trabado"
+              title="Trabado: sigue en la calle y hace más de 2 semanas que no registra movimiento de estado. Reclamalo a la logística.">!</span>
       )}
     </span>
   );
@@ -262,9 +261,8 @@ export default async function VentaDia({ params, searchParams }: {
                   <span className="min-w-0 flex-1 truncate font-medium">
                     {r.product}
                     {r.trabadas > 0 && (
-                      <Tip label="Pedidos trabados" tip={`${r.trabadas} sin movimiento hace +2 semanas.`}>
-                        <span className="ml-1.5 cursor-help font-bold text-orange-500">!</span>
-                      </Tip>
+                      <span className="ml-1.5 cursor-help font-bold text-orange-500"
+                            title={`${r.trabadas} sin movimiento hace +2 semanas`}>!</span>
                     )}
                   </span>
                   <span className="w-16 text-right text-muted-foreground">{COURIER[r.courier] ?? r.courier}</span>
