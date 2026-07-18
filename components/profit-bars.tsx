@@ -6,9 +6,10 @@ import { fmtDate, fmtMoney } from "@/lib/format";
 // vela gris = profit ESTIMADO (proyección de lo que falta madurar) en el mismo día. SVG puro, sin libs.
 // Al pasar el mouse por una columna se muestra un tooltip con el profit de ese día. Cada columna es un
 // link al drill-down. ponytail: <a> SVG = nav normal, alcanza para un drill-down.
-type Bar = { date: string; confirmado: number; estimado: number };
+// href se pre-construye en el server (no se puede pasar una función a un client component).
+type Bar = { date: string; confirmado: number; estimado: number; href?: string };
 
-export function ProfitBars({ data, hrefFor }: { data: Bar[]; hrefFor?: (date: string) => string }) {
+export function ProfitBars({ data }: { data: Bar[] }) {
   const [hi, setHi] = useState<number | null>(null);
   if (!data.length) return <div className="py-8 text-center text-sm text-muted-foreground">Sin datos para graficar</div>;
 
@@ -38,7 +39,7 @@ export function ProfitBars({ data, hrefFor }: { data: Bar[]; hrefFor?: (date: st
             const confTop = Math.min(y0, yConf), confH = Math.max(Math.abs(yConf - y0), 1);
             const showLabel = i % step === 0;
             return (
-              <a key={d.date} href={hrefFor ? hrefFor(d.date) : undefined}
+              <a key={d.date} href={d.href}
                  onMouseEnter={() => setHi(i)} onMouseLeave={() => setHi(null)}>
                 <rect x={colW * i} y={padT} width={colW} height={plotH}
                       className={hi === i ? "fill-accent" : "fill-transparent"} />

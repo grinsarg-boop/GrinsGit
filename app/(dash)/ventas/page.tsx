@@ -97,7 +97,7 @@ export default async function Ventas({
   };
 
   // Gráfico: profit cerrado (barra) + estimado (vela) por día, en orden cronológico (la tabla va al revés).
-  const chartData = [...list].reverse().map((d) => ({ date: d.date, confirmado: d.profitConf, estimado: d.profitEst }));
+  const chartData = [...list].reverse().map((d) => ({ date: d.date, confirmado: d.profitConf, estimado: d.profitEst, href: diaHref(d.date) }));
 
   const [ey, em] = today.slice(0, 7).split("-").map(Number);
   const pmY = em === 1 ? ey - 1 : ey;
@@ -215,7 +215,7 @@ export default async function Ventas({
                 <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-0.5 bg-muted-foreground/60" /> estimado</span>
               </span>
             </div>
-            <ProfitBars data={chartData} hrefFor={diaHref} />
+            <ProfitBars data={chartData} />
             <p className="text-xs text-muted-foreground">La barra es el profit ya <b className="text-foreground">cerrado</b> (cobrado) de las ventas de ese día; la vela gris llega hasta el <b className="text-foreground">estimado</b>. Tocá un día para ver el detalle.</p>
           </CardContent>
         </Card>
