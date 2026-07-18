@@ -29,7 +29,7 @@ type EstadoKey = typeof ESTADOS[number]["key"];
 const ESTADO_TXT: Record<string, string> = Object.fromEntries(ESTADOS.map((e) => [e.key, e.label]));
 const ESTADO_CLS: Record<string, string> = Object.fromEntries(ESTADOS.map((e) => [e.key, e.cls]));
 
-type Ship = { courier: string; tracking: string; status_canonical: string; status_raw: string | null; dispatched_at: string | null };
+type Ship = { courier: string; tracking: string; status_canonical: string; status_raw: string | null; dispatched_at: string | null; status_at: string | null };
 type OrderRow = {
   order_number: string; customer_name: string | null; province: string | null; courier: string | null;
   cancelled_at: string | null; cod_amount: number; financial_status: string | null; tags: string | null;
@@ -78,7 +78,7 @@ export default async function VentaDia({ params, searchParams }: {
     db.rpc("sales_days", { p_from: fecha, p_courier: courierParam }),
     db.from("products").select("id, name"),
     db.from("orders")
-      .select("order_number, customer_name, province, courier, cancelled_at, cod_amount, financial_status, tags, order_items(product_id, qty, unit_price), shipments(courier, tracking, status_canonical, status_raw, dispatched_at)")
+      .select("order_number, customer_name, province, courier, cancelled_at, cod_amount, financial_status, tags, order_items(product_id, qty, unit_price), shipments(courier, tracking, status_canonical, status_raw, dispatched_at, status_at)")
       .gte("created_at", artFrom).lt("created_at", artTo),
     wantMl
       ? db.from("ml_orders").select("units, total_amount").eq("status", "paid").gte("created_at", artFrom).lt("created_at", artTo)
@@ -95,28 +95,32 @@ export default async function VentaDia({ params, searchParams }: {
     const top = withP.reduce((a, b) => (b.qty * b.unit_price > a.qty * a.unit_price ? b : a));
     return { id: top.product_id, name: pname.get(top.product_id!) ?? `#${top.product_id}` };
   };
-  const estadoDe = (o: OrderRow): { estado: EstadoKey; tracking: string | null } => {
+  // Trabado: sigue en la calle y hace 2 semanas que no registra movimiento de estado (para reclamar).
+  const CUT14 = Date.now() - 14 * 86400000;
+  const estadoDe = (o: OrderRow): { estado: EstadoKey; tracking: string | null; trabado: boolean } => {
     const desp = o.shipments.filter((s) => s.dispatched_at && s.status_canonical !== "cancelado");
-    if (!desp.length) return { estado: cohorteVencida ? "sin_guia_vencida" : "pendiente", tracking: null };
+    if (!desp.length) return { estado: cohorteVencida ? "sin_guia_vencida" : "pendiente", tracking: null, trabado: false };
     const s = desp.reduce((a, b) => ((b.dispatched_at ?? "") > (a.dispatched_at ?? "") ? b : a));
     const tk = s.courier === "urbano" ? s.tracking : null;   // el seguimiento web es de Urbano (como en /dia)
     const noDesp = diasDesde(s.dispatched_at) > 7 && (
       (s.courier === "urbano" && s.status_raw === "PI") ||
       (s.courier === "fixy" && (s.status_raw === "41" || (s.status_raw ?? "").toLowerCase().includes("pendiente de retiro")))
     );
-    if (noDesp) return { estado: "no_despachado", tracking: tk };
+    if (noDesp) return { estado: "no_despachado", tracking: tk, trabado: false };
     const st = s.status_canonical;
     const estado: EstadoKey = st === "entregado" ? "entregado"
       : ["en_devolucion", "devuelto", "rehusado", "siniestro", "incidencia"].includes(st) ? (st as EstadoKey)
       : "en_camino";
-    return { estado, tracking: tk };
+    const enCalle = !["entregado", "en_devolucion", "devuelto", "rehusado", "siniestro"].includes(estado);
+    const mov = Date.parse(s.status_at ?? s.dispatched_at ?? "");
+    return { estado, tracking: tk, trabado: enCalle && !Number.isNaN(mov) && mov < CUT14 };
   };
   // Seguimiento de Urbano (mismo patrón que /dia): cli_codigo = tracking (id Shopify).
   const urbanoTrack = (tk: string) =>
     `https://www.urbano.com.ar/webservice/cespecifica/?shi_codigo=${Number(process.env.URBANO_SHIPPER) || 4362}&cli_codigo=${tk}`;
 
   // Órdenes COD del día (no cuotas, no ML). Canceladas / sin-producto = contexto (no cuentan en generadas).
-  type Venta = { estado: EstadoKey; producto: string; courier: string; orden: string; cliente: string | null; province: string | null; monto: number; tracking: string | null };
+  type Venta = { estado: EstadoKey; producto: string; courier: string; orden: string; cliente: string | null; province: string | null; monto: number; tracking: string | null; trabado: boolean };
   const ventas: Venta[] = [];
   let canceladas = 0, sinProducto = 0, cancMonto = 0;
   for (const o of orders) {
@@ -126,13 +130,14 @@ export default async function VentaDia({ params, searchParams }: {
     if (prod.id == null) { sinProducto++; continue; }
     const courier = o.courier ?? o.shipments.find((s) => s.dispatched_at)?.courier ?? "sin ruta";
     if ((courierParam === "urbano" || courierParam === "fixy") && courier !== courierParam) continue;
-    const { estado, tracking } = estadoDe(o);
+    const { estado, tracking, trabado } = estadoDe(o);
     ventas.push({
-      estado, producto: prod.name, courier, tracking,
+      estado, producto: prod.name, courier, tracking, trabado,
       orden: o.order_number, cliente: o.customer_name, province: o.province, monto: Number(o.cod_amount),
     });
   }
   const codGen = ventas.length;
+  const trabados = ventas.filter((v) => v.trabado).length;
   const desglose = ESTADOS.map((e) => {
     const rows = ventas.filter((v) => v.estado === e.key);
     return { ...e, n: rows.length, monto: rows.reduce((s, v) => s + v.monto, 0) };
@@ -142,13 +147,23 @@ export default async function VentaDia({ params, searchParams }: {
     g.rows.push(v); return m.set(v.producto, g);
   }, new Map<string, { producto: string; rows: Venta[] }>()).values()].sort((a, b) => b.rows.length - a.rows.length);
 
-  // #orden como link al seguimiento de Urbano si la guía tiene tracking; si no, texto plano.
-  const ordenCell = (v: Venta) => v.tracking ? (
-    <a href={urbanoTrack(v.tracking)} target="_blank" rel="noopener noreferrer" title="Ver seguimiento en Urbano"
-       className="w-16 shrink-0 truncate text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">
-      #{v.orden}<span aria-hidden className="ml-0.5 no-underline">↗</span>
-    </a>
-  ) : <span className="w-16 shrink-0">#{v.orden}</span>;
+  // #orden como link al seguimiento de Urbano si la guía tiene tracking; si no, texto plano. Los trabados
+  // (en la calle sin movimiento hace +14d) llevan un ! naranja para reclamarlos a la logística.
+  const ordenCell = (v: Venta) => (
+    <span className="flex w-20 shrink-0 items-center gap-1">
+      {v.tracking ? (
+        <a href={urbanoTrack(v.tracking)} target="_blank" rel="noopener noreferrer" title="Ver seguimiento en Urbano"
+           className="truncate text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">
+          #{v.orden}<span aria-hidden className="ml-0.5 no-underline">↗</span>
+        </a>
+      ) : <span className="truncate">#{v.orden}</span>}
+      {v.trabado && (
+        <Tip label="Pedido trabado" tip="Sigue en la calle y hace más de 2 semanas que no registra ningún movimiento de estado. Reclamalo a la logística.">
+          <span className="cursor-help font-bold text-orange-500" aria-label="trabado">!</span>
+        </Tip>
+      )}
+    </span>
+  );
 
   const correo = wantCorreo ? orders.filter((o) => (o.tags ?? "").toLowerCase().includes("cuotas_3") && !o.cancelled_at) : [];
   const correoPagadas = correo.filter((o) => o.financial_status === "paid").length;
@@ -201,9 +216,18 @@ export default async function VentaDia({ params, searchParams }: {
 
       {codGen > 0 ? (
         <section className="space-y-2">
-          <h2 className="text-sm font-semibold">
-            Estado de despacho · {codGen} ventas COD
-            {otros > 0 && <span className="font-normal text-muted-foreground"> (de {generadas}; las otras {otros} son ML/Correo, que entregan al 100% y suben el % de arriba)</span>}
+          <h2 className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+            <span>
+              Estado de despacho · {codGen} ventas COD
+              {otros > 0 && <span className="font-normal text-muted-foreground"> (de {generadas}; las otras {otros} son ML/Correo, que entregan al 100% y suben el % de arriba)</span>}
+            </span>
+            {trabados > 0 && (
+              <Tip label="Pedidos trabados" tip="Siguen en la calle y hace más de 2 semanas que no registran movimiento de estado. No deberían existir: reclamalos a la logística — hasta que se resuelvan, este día no cierra.">
+                <span className="cursor-help rounded bg-orange-500/15 px-1.5 py-0.5 text-[0.7rem] font-bold uppercase tracking-wide text-orange-600 dark:text-orange-500">
+                  ! {trabados} trabado{trabados === 1 ? "" : "s"}
+                </span>
+              </Tip>
+            )}
           </h2>
           <div className="flex h-3 overflow-hidden rounded-full bg-muted">
             {desglose.map((e) => (
