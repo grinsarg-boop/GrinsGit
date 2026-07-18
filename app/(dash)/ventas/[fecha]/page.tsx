@@ -22,6 +22,7 @@ const ESTADOS = [
   { key: "rehusado",      label: "Rehusada",            cls: "bg-red-500" },
   { key: "siniestro",     label: "Siniestro",           cls: "bg-red-700" },
   { key: "no_despachado", label: "No despachada (+7d)", cls: "bg-red-600" },
+  { key: "sin_guia_vencida", label: "No se va a despachar (+7d sin guía)", cls: "bg-red-500" },
   { key: "pendiente",     label: "Sin guía todavía",    cls: "bg-slate-400" },
 ] as const;
 type EstadoKey = typeof ESTADOS[number]["key"];
@@ -63,6 +64,9 @@ export default async function VentaDia({ params, searchParams }: {
   const artTo = `${nd.toISOString().slice(0, 10)}T03:00:00Z`;
   const hoy = new Date().toISOString().slice(0, 10);
   const diasDesde = (d: string | null) => d ? Math.floor((Date.parse(`${hoy}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86400000) : 0;
+  // Antigüedad de la cohorte de venta: si ya pasaron 7 días y la orden sigue sin guía, a esta altura no se
+  // va a despachar (regla del dueño) → se muestra como pérdida definitiva, no como "sin guía todavía".
+  const cohorteVencida = diasDesde(fecha) >= 7;
 
   const wantCorreo = !courierParam || courierParam === "correo";
   const wantMl = !courierParam || courierParam === "ml";
@@ -93,7 +97,7 @@ export default async function VentaDia({ params, searchParams }: {
   };
   const estadoDe = (o: OrderRow): EstadoKey => {
     const desp = o.shipments.filter((s) => s.dispatched_at && s.status_canonical !== "cancelado");
-    if (!desp.length) return "pendiente";
+    if (!desp.length) return cohorteVencida ? "sin_guia_vencida" : "pendiente";
     const s = desp.reduce((a, b) => ((b.dispatched_at ?? "") > (a.dispatched_at ?? "") ? b : a));
     const noDesp = diasDesde(s.dispatched_at) > 7 && (
       (s.courier === "urbano" && s.status_raw === "PI") ||
@@ -220,7 +224,7 @@ export default async function VentaDia({ params, searchParams }: {
           <h2 className="text-sm font-semibold">Órdenes por producto</h2>
           <div className="divide-y overflow-hidden rounded-lg border text-sm">
             {porProducto.map((g) => {
-              const desp = g.rows.filter((v) => v.estado !== "pendiente" && v.estado !== "no_despachado").length;
+              const desp = g.rows.filter((v) => !["pendiente", "no_despachado", "sin_guia_vencida"].includes(v.estado)).length;
               return (
                 <details key={g.producto} className="group">
                   <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-accent/40 [&::-webkit-details-marker]:hidden">

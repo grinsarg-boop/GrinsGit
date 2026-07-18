@@ -77,7 +77,9 @@ export async function discoverUrbano(
   client: CourierClient,
   opts: { sinceDays?: number; limit?: number; chunk?: number } = {},
 ): Promise<{ consultadas: number; recuperadas: number; rows: number; warnings: unknown[] }> {
-  const { sinceDays = 21, limit = 150, chunk = 50 } = opts;
+  // Ventana 10d: una orden que a los 7 días sigue sin guía ya no se va a despachar (regla del dueño); +3d de
+  // margen para que Urbano indexe. Consultar más viejas es gastar consultas en órdenes que no aparecerán.
+  const { sinceDays = 10, limit = 150, chunk = 50 } = opts;
   const db = supabaseAdmin();
   const since = new Date(Date.now() - sinceDays * 86400_000).toISOString();
   const { data, error } = await db.rpc("urbano_sin_guia", { p_since: since, p_limit: limit });
