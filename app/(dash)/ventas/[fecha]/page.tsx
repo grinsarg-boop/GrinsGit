@@ -197,15 +197,33 @@ export default async function VentaDia({ params, searchParams }: {
             ))}
           </div>
           <div className="divide-y overflow-hidden rounded-lg border text-sm">
-            {desglose.map((e) => (
-              <div key={e.key} className="flex items-center gap-3 px-3 py-2">
-                <span className={cn("size-2.5 shrink-0 rounded-sm", e.cls)} />
-                <span className="flex-1">{ESTADO_TXT[e.key]}</span>
-                <span className="w-16 text-right tabular-nums text-muted-foreground">{fmtPct(e.n / codGen)}</span>
-                <span className="w-12 text-right font-medium tabular-nums">{e.n}</span>
-                <span className="w-28 text-right tabular-nums text-muted-foreground">{fmtMoney(e.monto)}</span>
-              </div>
-            ))}
+            {desglose.map((e) => {
+              const rows = ventas.filter((v) => v.estado === e.key);
+              return (
+                <details key={e.key} className="group">
+                  <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-accent/40 [&::-webkit-details-marker]:hidden">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden><path d="m9 18 6-6-6-6" /></svg>
+                    <span className={cn("size-2.5 shrink-0 rounded-sm", e.cls)} />
+                    <span className="flex-1">{ESTADO_TXT[e.key]}</span>
+                    <span className="w-16 text-right tabular-nums text-muted-foreground">{fmtPct(e.n / codGen)}</span>
+                    <span className="w-12 text-right font-medium tabular-nums">{e.n}</span>
+                    <span className="w-28 text-right tabular-nums text-muted-foreground">{fmtMoney(e.monto)}</span>
+                  </summary>
+                  <div className="bg-muted/20 text-xs">
+                    {rows.map((v) => (
+                      <div key={`${v.courier}-${v.orden}`} className="flex items-center gap-3 border-t border-border/40 py-1.5 pl-9 pr-3">
+                        <span className="w-14 shrink-0 text-muted-foreground">{COURIER[v.courier] ?? v.courier}</span>
+                        <span className="w-16 shrink-0">#{v.orden}</span>
+                        <span className="min-w-0 flex-1 truncate text-muted-foreground">{v.cliente ?? "—"}</span>
+                        <span className="hidden w-24 truncate text-muted-foreground sm:inline">{v.producto}</span>
+                        <span className="hidden w-24 truncate text-right text-muted-foreground md:inline">{v.province ?? "—"}</span>
+                        <span className="w-24 text-right tabular-nums">{v.monto ? fmtMoney(v.monto) : "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              );
+            })}
           </div>
           {(canceladas > 0 || sinProducto > 0) && (
             <p className="text-xs text-muted-foreground">
