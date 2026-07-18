@@ -66,6 +66,45 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
   }
 }
 
+// DESCUBRIMIENTO de guías Urbano (fix 029): el sync de arriba sólo REFRESCA guías ya en `shipments`;
+// nunca crea las nuevas. Las órdenes que Urbano despacha sin el tag guia-<código> jamás crean su shipment
+// (figuran "sin despachar" aunque Urbano las tiene, ej. #16003). Acá tomamos las órdenes urbano activas
+// sin guía de una ventana reciente, consultamos la masiva por su shopify_id (mismo client/parseo que el
+// refresh) y creamos los eventos — upsert_shipment_events las matchea por shopify_id (006). NO recomputa
+// (runCourierSync lo hace después). Un fallo de la API acá NO debe abortar el refresh (el route lo envuelve
+// en try/catch). Se corre 1×/ciclo, no en cada round del auto-drenado.
+export async function discoverUrbano(
+  client: CourierClient,
+  opts: { sinceDays?: number; limit?: number; chunk?: number } = {},
+): Promise<{ consultadas: number; recuperadas: number; rows: number; warnings: unknown[] }> {
+  const { sinceDays = 21, limit = 150, chunk = 50 } = opts;
+  const db = supabaseAdmin();
+  const since = new Date(Date.now() - sinceDays * 86400_000).toISOString();
+  const { data, error } = await db.rpc("urbano_sin_guia", { p_since: since, p_limit: limit });
+  if (error) throw new Error(error.message);
+  const ids = (data ?? []).map((r: { shopify_id: number | string }) => Number(r.shopify_id));
+  if (!ids.length) return { consultadas: 0, recuperadas: 0, rows: 0, warnings: [] };
+  // Consultar + upsertear + MARCAR POR CHUNK: (1) si el presupuesto de 60s se agota a mitad, lo persistido
+  // queda firme (upsert idempotente) y el resto sigue el próximo ciclo — nunca "todo o nada"; (2) marcar
+  // urbano_discovery_at de las intentadas (haya guía o no) las manda al fondo de la cola → el discover rota
+  // por TODO el set en corridas sucesivas en vez de re-consultar siempre las mismas.
+  const recuperadas = new Set<string>();
+  const warnings: unknown[] = [];
+  let rows = 0;
+  for (let i = 0; i < ids.length; i += chunk) {
+    const batch = ids.slice(i, i + chunk);
+    const { events, warnings: w } = await client.fetchStatuses(batch.map(String));
+    if (w.length) warnings.push(...w);
+    for (const e of events) recuperadas.add(e.tracking);
+    rows += await upsertEvents(events);
+    await db.from("orders").update({ urbano_discovery_at: new Date().toISOString() }).in("shopify_id", batch);
+  }
+  // Recompute acotado a la ventana sólo si se crearon guías (si se cortó antes, el refresh del próximo ciclo
+  // —que ya ve las guías nuevas en shipments— las recomputa igual).
+  if (rows > 0) await supabaseAdmin().rpc("recompute_daily_pnl", { p_from: since.slice(0, 10), p_to: today() });
+  return { consultadas: ids.length, recuperadas: recuperadas.size, rows, warnings };
+}
+
 // Import manual (fixy-xlsx / facturación): mismos eventos, mismo RPC (§5.4).
 export async function upsertEvents(events: CourierEvent[]): Promise<number> {
   if (!events.length) return 0;

@@ -53,12 +53,14 @@ try {
                    'supabase/migrations/026_ml_ads.sql',
                    'supabase/migrations/027_producto_m3.sql',
                    'supabase/migrations/028_sales_pnl.sql',
+                   'supabase/migrations/029_urbano_discover.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
                    'supabase/tests/bot_pnl_check.sql', 'supabase/tests/override_check.sql',
                    'supabase/tests/flex_estimado_check.sql', 'supabase/tests/ml_ads_check.sql',
-                   'supabase/tests/sales_check.sql']) {
+                   'supabase/tests/sales_check.sql',
+                   'supabase/tests/urbano_discover_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');
