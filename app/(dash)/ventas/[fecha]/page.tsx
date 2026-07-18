@@ -29,7 +29,7 @@ type EstadoKey = typeof ESTADOS[number]["key"];
 const ESTADO_TXT: Record<string, string> = Object.fromEntries(ESTADOS.map((e) => [e.key, e.label]));
 const ESTADO_CLS: Record<string, string> = Object.fromEntries(ESTADOS.map((e) => [e.key, e.cls]));
 
-type Ship = { courier: string; status_canonical: string; status_raw: string | null; dispatched_at: string | null };
+type Ship = { courier: string; tracking: string; status_canonical: string; status_raw: string | null; dispatched_at: string | null };
 type OrderRow = {
   order_number: string; customer_name: string | null; province: string | null; courier: string | null;
   cancelled_at: string | null; cod_amount: number; financial_status: string | null; tags: string | null;
@@ -78,7 +78,7 @@ export default async function VentaDia({ params, searchParams }: {
     db.rpc("sales_days", { p_from: fecha, p_courier: courierParam }),
     db.from("products").select("id, name"),
     db.from("orders")
-      .select("order_number, customer_name, province, courier, cancelled_at, cod_amount, financial_status, tags, order_items(product_id, qty, unit_price), shipments(courier, status_canonical, status_raw, dispatched_at)")
+      .select("order_number, customer_name, province, courier, cancelled_at, cod_amount, financial_status, tags, order_items(product_id, qty, unit_price), shipments(courier, tracking, status_canonical, status_raw, dispatched_at)")
       .gte("created_at", artFrom).lt("created_at", artTo),
     wantMl
       ? db.from("ml_orders").select("units, total_amount").eq("status", "paid").gte("created_at", artFrom).lt("created_at", artTo)
@@ -95,23 +95,28 @@ export default async function VentaDia({ params, searchParams }: {
     const top = withP.reduce((a, b) => (b.qty * b.unit_price > a.qty * a.unit_price ? b : a));
     return { id: top.product_id, name: pname.get(top.product_id!) ?? `#${top.product_id}` };
   };
-  const estadoDe = (o: OrderRow): EstadoKey => {
+  const estadoDe = (o: OrderRow): { estado: EstadoKey; tracking: string | null } => {
     const desp = o.shipments.filter((s) => s.dispatched_at && s.status_canonical !== "cancelado");
-    if (!desp.length) return cohorteVencida ? "sin_guia_vencida" : "pendiente";
+    if (!desp.length) return { estado: cohorteVencida ? "sin_guia_vencida" : "pendiente", tracking: null };
     const s = desp.reduce((a, b) => ((b.dispatched_at ?? "") > (a.dispatched_at ?? "") ? b : a));
+    const tk = s.courier === "urbano" ? s.tracking : null;   // el seguimiento web es de Urbano (como en /dia)
     const noDesp = diasDesde(s.dispatched_at) > 7 && (
       (s.courier === "urbano" && s.status_raw === "PI") ||
       (s.courier === "fixy" && (s.status_raw === "41" || (s.status_raw ?? "").toLowerCase().includes("pendiente de retiro")))
     );
-    if (noDesp) return "no_despachado";
+    if (noDesp) return { estado: "no_despachado", tracking: tk };
     const st = s.status_canonical;
-    if (st === "entregado") return "entregado";
-    if (["en_devolucion", "devuelto", "rehusado", "siniestro", "incidencia"].includes(st)) return st as EstadoKey;
-    return "en_camino";
+    const estado: EstadoKey = st === "entregado" ? "entregado"
+      : ["en_devolucion", "devuelto", "rehusado", "siniestro", "incidencia"].includes(st) ? (st as EstadoKey)
+      : "en_camino";
+    return { estado, tracking: tk };
   };
+  // Seguimiento de Urbano (mismo patrón que /dia): cli_codigo = tracking (id Shopify).
+  const urbanoTrack = (tk: string) =>
+    `https://www.urbano.com.ar/webservice/cespecifica/?shi_codigo=${Number(process.env.URBANO_SHIPPER) || 4362}&cli_codigo=${tk}`;
 
   // Órdenes COD del día (no cuotas, no ML). Canceladas / sin-producto = contexto (no cuentan en generadas).
-  type Venta = { estado: EstadoKey; producto: string; courier: string; orden: string; cliente: string | null; province: string | null; monto: number };
+  type Venta = { estado: EstadoKey; producto: string; courier: string; orden: string; cliente: string | null; province: string | null; monto: number; tracking: string | null };
   const ventas: Venta[] = [];
   let canceladas = 0, sinProducto = 0, cancMonto = 0;
   for (const o of orders) {
@@ -121,8 +126,9 @@ export default async function VentaDia({ params, searchParams }: {
     if (prod.id == null) { sinProducto++; continue; }
     const courier = o.courier ?? o.shipments.find((s) => s.dispatched_at)?.courier ?? "sin ruta";
     if ((courierParam === "urbano" || courierParam === "fixy") && courier !== courierParam) continue;
+    const { estado, tracking } = estadoDe(o);
     ventas.push({
-      estado: estadoDe(o), producto: prod.name, courier,
+      estado, producto: prod.name, courier, tracking,
       orden: o.order_number, cliente: o.customer_name, province: o.province, monto: Number(o.cod_amount),
     });
   }
@@ -135,6 +141,14 @@ export default async function VentaDia({ params, searchParams }: {
     const g = m.get(v.producto) ?? { producto: v.producto, rows: [] as Venta[] };
     g.rows.push(v); return m.set(v.producto, g);
   }, new Map<string, { producto: string; rows: Venta[] }>()).values()].sort((a, b) => b.rows.length - a.rows.length);
+
+  // #orden como link al seguimiento de Urbano si la guía tiene tracking; si no, texto plano.
+  const ordenCell = (v: Venta) => v.tracking ? (
+    <a href={urbanoTrack(v.tracking)} target="_blank" rel="noopener noreferrer" title="Ver seguimiento en Urbano"
+       className="w-16 shrink-0 truncate text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">
+      #{v.orden}<span aria-hidden className="ml-0.5 no-underline">↗</span>
+    </a>
+  ) : <span className="w-16 shrink-0">#{v.orden}</span>;
 
   const correo = wantCorreo ? orders.filter((o) => (o.tags ?? "").toLowerCase().includes("cuotas_3") && !o.cancelled_at) : [];
   const correoPagadas = correo.filter((o) => o.financial_status === "paid").length;
@@ -213,7 +227,7 @@ export default async function VentaDia({ params, searchParams }: {
                     {rows.map((v) => (
                       <div key={`${v.courier}-${v.orden}`} className="flex items-center gap-3 border-t border-border/40 py-1.5 pl-9 pr-3">
                         <span className="w-14 shrink-0 text-muted-foreground">{COURIER[v.courier] ?? v.courier}</span>
-                        <span className="w-16 shrink-0">#{v.orden}</span>
+                        {ordenCell(v)}
                         <span className="min-w-0 flex-1 truncate text-muted-foreground">{v.cliente ?? "—"}</span>
                         <span className="hidden w-24 truncate text-muted-foreground sm:inline">{v.producto}</span>
                         <span className="hidden w-24 truncate text-right text-muted-foreground md:inline">{v.province ?? "—"}</span>
@@ -258,7 +272,7 @@ export default async function VentaDia({ params, searchParams }: {
                           <span className="truncate text-muted-foreground">{ESTADO_TXT[v.estado]}</span>
                         </span>
                         <span className="w-16 shrink-0 text-muted-foreground">{COURIER[v.courier] ?? v.courier}</span>
-                        <span className="w-16 shrink-0">#{v.orden}</span>
+                        {ordenCell(v)}
                         <span className="min-w-0 flex-1 truncate text-muted-foreground">{v.cliente ?? "—"}</span>
                         <span className="hidden w-24 truncate text-right text-muted-foreground sm:inline">{v.province ?? "—"}</span>
                         <span className="w-24 text-right tabular-nums">{v.monto ? fmtMoney(v.monto) : "—"}</span>
