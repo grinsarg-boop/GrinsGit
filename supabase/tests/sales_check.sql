@@ -155,3 +155,20 @@ begin
   raise notice '030 trabadas (sin movimiento +14d): OK';
 end $t$;
 rollback;
+
+-- ===== 031: la segmentación por producto suma exactamente lo mismo que el panel por día =====
+begin;
+do $t$
+declare p_prod numeric; p_dias numeric; g_prod int; g_dias int;
+begin
+  select coalesce(sum(profit_estimado), 0), coalesce(sum(generadas), 0)
+    into p_prod, g_prod from sales_by_product(current_date - 40, current_date, null);
+  select coalesce(sum(profit_estimado), 0), coalesce(sum(generadas), 0)
+    into p_dias, g_dias from sales_days(current_date - 40, null);
+  assert round(p_prod, 2) = round(p_dias, 2),
+    format('031: profit por producto (%s) debe igualar al del panel por día (%s)', p_prod, p_dias);
+  assert g_prod = g_dias,
+    format('031: generadas por producto (%s) = por día (%s)', g_prod, g_dias);
+  raise notice '031 sales_by_product (consistencia con sales_days): OK';
+end $t$;
+rollback;

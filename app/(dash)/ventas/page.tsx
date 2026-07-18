@@ -49,7 +49,15 @@ export default async function Ventas({
     trabadas: number; revenue_confirmado: number; revenue_estimado: number; profit_confirmado: number;
     profit_estimado: number; ads: number; ads_sin_cohorte: number;
   };
-  const { data: rows } = await db.rpc("sales_days", { p_from: from, p_courier: courierParam });
+  type ProdRow = {
+    courier: string; product_id: number | null; product: string;
+    generadas: number; despachadas: number; resueltas: number; trabadas: number;
+    revenue_estimado: number; profit_confirmado: number; profit_estimado: number; ads: number;
+  };
+  const [{ data: rows }, { data: prodRows }] = await Promise.all([
+    db.rpc("sales_days", { p_from: from, p_courier: courierParam }),
+    db.rpc("sales_by_product", { p_from: from, p_to: to, p_courier: courierParam }),
+  ]);
   const list: Day[] = ((rows ?? []) as Row[])
     .map((r): Day => ({
       date: r.sale_date, generadas: r.generadas, despachadas: r.despachadas, entregadas: r.entregadas,
@@ -99,6 +107,17 @@ export default async function Ventas({
 
   // Gráfico: profit cerrado (barra) + estimado (vela) por día, en orden cronológico (la tabla va al revés).
   const chartData = [...list].reverse().map((d) => ({ date: d.date, confirmado: d.profitConf, estimado: d.profitEst, href: diaHref(d.date) }));
+
+  // Profit del rango POR PRODUCTO (suma los couriers del filtro activo). Sale de la misma base que el panel
+  // (sales_rows), así que los totales cuadran. Ordenado de menor a mayor profit: lo deficitario primero.
+  type ProdAgg = { product: string; generadas: number; despachadas: number; resueltas: number; trabadas: number; revEst: number; profitEst: number; profitConf: number; ads: number };
+  const porProducto: ProdAgg[] = [...((prodRows ?? []) as ProdRow[]).reduce((m, r) => {
+    const g = m.get(r.product) ?? { product: r.product, generadas: 0, despachadas: 0, resueltas: 0, trabadas: 0, revEst: 0, profitEst: 0, profitConf: 0, ads: 0 };
+    g.generadas += r.generadas; g.despachadas += r.despachadas; g.resueltas += r.resueltas; g.trabadas += r.trabadas;
+    g.revEst += Number(r.revenue_estimado); g.profitEst += Number(r.profit_estimado);
+    g.profitConf += Number(r.profit_confirmado); g.ads += Number(r.ads);
+    return m.set(r.product, g);
+  }, new Map<string, ProdAgg>()).values()].sort((a, b) => a.profitEst - b.profitEst);
 
   const [ey, em] = today.slice(0, 7).split("-").map(Number);
   const pmY = em === 1 ? ey - 1 : ey;
@@ -267,6 +286,62 @@ export default async function Ventas({
           </div>
         </CardContent>
       </Card>
+
+      {porProducto.length > 0 && (
+        <Card>
+          <CardContent className="space-y-3 pt-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Profit por producto · <span className="normal-case tabular-nums">{rangeLabel}</span>
+              </span>
+              <span className="text-xs text-muted-foreground">de menor a mayor profit — lo que va a pérdida, primero</span>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Producto</TableHead>
+                  <TableHead className="text-right">Generadas</TableHead>
+                  <TableHead className="text-right">
+                    <span className="inline-flex items-center gap-1">Resolución
+                      <Tip tip="Ventas con desenlace definitivo (cobradas o perdidas) sobre las generadas del producto." />
+                    </span>
+                  </TableHead>
+                  <TableHead className="text-right">Ads</TableHead>
+                  <TableHead className="text-right">CPA</TableHead>
+                  <TableHead className="text-right text-amber-600 dark:text-amber-500">Profit estimado</TableHead>
+                  <TableHead className="text-right">cerrado</TableHead>
+                  <TableHead className="text-right">ROAS est.</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {porProducto.map((p) => {
+                  const resPct = p.generadas ? p.resueltas / p.generadas : 0;
+                  const cpaP = p.generadas ? p.ads / p.generadas : 0;
+                  return (
+                    <TableRow key={p.product} className="hover:bg-accent/40">
+                      <TableCell className="font-medium">
+                        {p.product}
+                        {p.trabadas > 0 && (
+                          <Tip label="Pedidos trabados" tip={`${p.trabadas} de este producto siguen en la calle sin movimiento hace +2 semanas.`}>
+                            <span className="ml-1.5 cursor-help font-bold text-orange-500">!</span>
+                          </Tip>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{p.generadas}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(resPct)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{p.ads ? fmtMoney(p.ads) : "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{cpaP > 0 ? fmtMoney(cpaP) : "—"}</TableCell>
+                      <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(p.profitEst))}>{fmtMoney(p.profitEst)}</TableCell>
+                      <TableCell className={cn("text-right tabular-nums", p.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(p.profitConf)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{p.ads > 0 ? fmtRatio(p.revEst / p.ads) : "—"}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
 
       {vista === "dias" ? (
       <Table>

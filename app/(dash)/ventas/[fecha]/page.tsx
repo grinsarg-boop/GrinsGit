@@ -74,8 +74,9 @@ export default async function VentaDia({ params, searchParams }: {
   // El RESUMEN sale de sales_days (idéntico al panel → los números cuadran con la fila que clickeaste).
   // El DESGLOSE de estados sale de las órdenes crudas (el "por qué" del despacho COD).
   // ponytail: un día son ~100-300 órdenes (< límite 1000 de PostgREST); si algún día lo supera, paginar.
-  const [sdRes, prodsRes, ordersRes, mlRes] = await Promise.all([
+  const [sdRes, bpRes, prodsRes, ordersRes, mlRes] = await Promise.all([
     db.rpc("sales_days", { p_from: fecha, p_courier: courierParam }),
+    db.rpc("sales_by_product", { p_from: fecha, p_to: fecha, p_courier: courierParam }),
     db.from("products").select("id, name"),
     db.from("orders")
       .select("order_number, customer_name, province, courier, cancelled_at, cod_amount, financial_status, tags, order_items(product_id, qty, unit_price), shipments(courier, tracking, status_canonical, status_raw, dispatched_at, status_at)")
@@ -85,6 +86,13 @@ export default async function VentaDia({ params, searchParams }: {
       : Promise.resolve({ data: [] as MlRow[] }),
   ]);
   const panel = ((sdRes.data ?? []) as PanelRow[]).find((r) => r.sale_date === fecha);
+  // P&L del día segmentado por producto × courier (misma base que el panel: sales_rows).
+  type BpRow = {
+    courier: string; product: string; generadas: number; despachadas: number; resueltas: number; trabadas: number;
+    revenue_estimado: number; profit_confirmado: number; profit_estimado: number; ads: number;
+  };
+  const porProdCourier = ((bpRes.data ?? []) as BpRow[]).slice()
+    .sort((a, b) => Number(a.profit_estimado) - Number(b.profit_estimado));
   const pname = new Map((prodsRes.data ?? []).map((p) => [p.id, p.name as string]));
   const orders = (ordersRes.data ?? []) as unknown as OrderRow[];
   const ml = (mlRes.data ?? []) as MlRow[];
@@ -229,6 +237,48 @@ export default async function VentaDia({ params, searchParams }: {
           </Card>
         ))}
       </div>
+
+      {porProdCourier.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold">
+            Profit por producto y canal
+            <span className="ml-1 font-normal text-muted-foreground">— de menor a mayor</span>
+          </h2>
+          <div className="divide-y overflow-hidden rounded-lg border text-sm">
+            <div className="flex items-center gap-3 bg-muted/40 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <span className="min-w-0 flex-1">Producto</span>
+              <span className="w-16 text-right">Canal</span>
+              <span className="w-16 text-right">Ventas</span>
+              <span className="hidden w-20 text-right sm:inline">Resol.</span>
+              <span className="hidden w-24 text-right md:inline">Ads</span>
+              <span className="w-28 text-right">Profit est.</span>
+              <span className="hidden w-28 text-right lg:inline">cerrado</span>
+            </div>
+            {porProdCourier.map((r) => {
+              const gen = r.generadas, res = gen ? r.resueltas / gen : 0;
+              const pe = Number(r.profit_estimado), pc = Number(r.profit_confirmado);
+              return (
+                <div key={`${r.courier}-${r.product}`} className="flex items-center gap-3 px-3 py-2">
+                  <span className="min-w-0 flex-1 truncate font-medium">
+                    {r.product}
+                    {r.trabadas > 0 && (
+                      <Tip label="Pedidos trabados" tip={`${r.trabadas} sin movimiento hace +2 semanas.`}>
+                        <span className="ml-1.5 cursor-help font-bold text-orange-500">!</span>
+                      </Tip>
+                    )}
+                  </span>
+                  <span className="w-16 text-right text-muted-foreground">{COURIER[r.courier] ?? r.courier}</span>
+                  <span className="w-16 text-right tabular-nums">{gen}</span>
+                  <span className="hidden w-20 text-right tabular-nums text-muted-foreground sm:inline">{fmtPct(res)}</span>
+                  <span className="hidden w-24 text-right tabular-nums text-muted-foreground md:inline">{Number(r.ads) ? fmtMoney(Number(r.ads)) : "—"}</span>
+                  <span className={cn("w-28 text-right font-semibold tabular-nums", pnlColor(pe))}>{fmtMoney(pe)}</span>
+                  <span className={cn("hidden w-28 text-right tabular-nums lg:inline", pc < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(pc)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {codGen > 0 ? (
         <section className="space-y-2">
