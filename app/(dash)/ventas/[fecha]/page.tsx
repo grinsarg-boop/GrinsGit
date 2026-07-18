@@ -44,7 +44,7 @@ type PanelRow = {
 
 export default async function VentaDia({ params, searchParams }: {
   params: Promise<{ fecha: string }>;
-  searchParams: Promise<{ courier?: string; desde?: string; hasta?: string; v?: string }>;
+  searchParams: Promise<{ courier?: string; desde?: string; hasta?: string; v?: string; ord?: string }>;
 }) {
   const { fecha } = await params;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) notFound();
@@ -138,6 +138,20 @@ export default async function VentaDia({ params, searchParams }: {
   }
   const codGen = ventas.length;
   const trabados = ventas.filter((v) => v.trabado).length;
+  // Orden de la lista de pedidos: por estado (ESTADOS ya va de mejor a peor) o por monto. Los trabados
+  // primero dentro de cada estado, que son los accionables.
+  const ord = sp.ord === "monto" ? "monto" : "estado";
+  const rankEstado = (e: EstadoKey) => ESTADOS.findIndex((x) => x.key === e);
+  const sortVentas = (a: Venta, b: Venta) =>
+    ord === "monto"
+      ? b.monto - a.monto
+      : (rankEstado(a.estado) - rankEstado(b.estado)) || (Number(b.trabado) - Number(a.trabado)) || (b.monto - a.monto);
+  const ordHref = (o: string) => {
+    const q = new URLSearchParams(back.toString());
+    if (o !== "estado") q.set("ord", o);
+    const t = q.toString();
+    return t ? `/ventas/${fecha}?${t}` : `/ventas/${fecha}`;
+  };
   const desglose = ESTADOS.map((e) => {
     const rows = ventas.filter((v) => v.estado === e.key);
     return { ...e, n: rows.length, monto: rows.reduce((s, v) => s + v.monto, 0) };
@@ -145,7 +159,9 @@ export default async function VentaDia({ params, searchParams }: {
   const porProducto = [...ventas.reduce((m, v) => {
     const g = m.get(v.producto) ?? { producto: v.producto, rows: [] as Venta[] };
     g.rows.push(v); return m.set(v.producto, g);
-  }, new Map<string, { producto: string; rows: Venta[] }>()).values()].sort((a, b) => b.rows.length - a.rows.length);
+  }, new Map<string, { producto: string; rows: Venta[] }>()).values()]
+    .map((g) => ({ ...g, rows: [...g.rows].sort(sortVentas) }))
+    .sort((a, b) => b.rows.length - a.rows.length);
 
   // #orden como link al seguimiento de Urbano si la guía tiene tracking; si no, texto plano. Los trabados
   // (en la calle sin movimiento hace +14d) llevan un ! naranja para reclamarlos a la logística.
@@ -236,7 +252,7 @@ export default async function VentaDia({ params, searchParams }: {
           </div>
           <div className="divide-y overflow-hidden rounded-lg border text-sm">
             {desglose.map((e) => {
-              const rows = ventas.filter((v) => v.estado === e.key);
+              const rows = ventas.filter((v) => v.estado === e.key).sort(sortVentas);
               return (
                 <details key={e.key} className="group">
                   <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-accent/40 [&::-webkit-details-marker]:hidden">
@@ -277,7 +293,19 @@ export default async function VentaDia({ params, searchParams }: {
 
       {codGen > 0 && (
         <section className="space-y-2">
-          <h2 className="text-sm font-semibold">Órdenes por producto</h2>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-sm font-semibold">Órdenes por producto</h2>
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              Ordenar por
+              {[["estado", "Estado"], ["monto", "Monto"]].map(([val, label]) => (
+                <Link key={val} href={ordHref(val)} aria-current={ord === val ? "page" : undefined}
+                  className={cn("rounded px-1.5 py-0.5 transition-colors",
+                    ord === val ? "bg-foreground font-medium text-background" : "hover:text-foreground")}>
+                  {label}
+                </Link>
+              ))}
+            </span>
+          </div>
           <div className="divide-y overflow-hidden rounded-lg border text-sm">
             {porProducto.map((g) => {
               const desp = g.rows.filter((v) => !["pendiente", "no_despachado", "sin_guia_vencida"].includes(v.estado)).length;

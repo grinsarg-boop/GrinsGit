@@ -44,7 +44,7 @@ type CorreoOrder = {
 
 export default async function Dia({ params, searchParams }: {
   params: Promise<{ fecha: string }>;
-  searchParams: Promise<{ courier?: string; desde?: string; hasta?: string; v?: string }>;
+  searchParams: Promise<{ courier?: string; desde?: string; hasta?: string; v?: string; ord?: string }>;
 }) {
   const { fecha } = await params;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) notFound();
@@ -112,9 +112,22 @@ export default async function Dia({ params, searchParams }: {
   const urbanoTrack = (tk: string) =>
     `https://www.urbano.com.ar/webservice/cespecifica/?shi_codigo=${Number(process.env.URBANO_SHIPPER) || 4362}&cli_codigo=${tk}`;
 
+  // Orden de la lista: por estado (de mejor a peor: entregado → en la calle → incidencia → devoluciones →
+  // no despachado) o por monto. Simple, por query param — sin JS de cliente.
+  const ord = sp.ord === "monto" ? "monto" : "estado";
+  const RANK: Record<string, number> = { entregado: 1, en_transito: 2, despachado: 2, en_reparto: 2, en_sucursal: 2, incidencia: 3, en_devolucion: 4, devuelto: 5, rehusado: 6, siniestro: 7 };
+  const rankDe = (st: string, noDesp: boolean) => (noDesp ? 9 : (RANK[st] ?? 8));
+  const ordHref = (o: string) => {
+    const q = new URLSearchParams(backQs.toString());
+    if (o !== "estado") q.set("ord", o);
+    const t = q.toString();
+    return t ? `/dia/${fecha}?${t}` : `/dia/${fecha}`;
+  };
+
   type Item = {
     key: string; estadoClass: string; estadoText: string; tracking: string | null; trackUrl: string | null;
     orden: string | null; cliente: string | null; province: string | null; freight: number | null; monto: number;
+    rank: number;
   };
   type Prod = { name: string; count: number; ok: number; value: number; noDesp: number; items: Item[] };
   type Grupo = { name: string; unit: string; okWord: string; count: number; ok: number; value: number; noDesp: number; prods: Prod[] };
@@ -129,7 +142,12 @@ export default async function Dia({ params, searchParams }: {
       else { count++; if (e.ok) ok++; value += e.value; p.count++; if (e.ok) p.ok++; p.value += e.value; }
       m.set(e.product, p);
     }
-    return { prods: [...m.values()].sort((a, b) => (b.count + b.noDesp) - (a.count + a.noDesp)), count, ok, value, noDesp };
+    const sortItems = (x: Item, y: Item) => (ord === "monto" ? y.monto - x.monto : (x.rank - y.rank) || (y.monto - x.monto));
+    return {
+      prods: [...m.values()].map((p) => ({ ...p, items: [...p.items].sort(sortItems) }))
+        .sort((a, b) => (b.count + b.noDesp) - (a.count + a.noDesp)),
+      count, ok, value, noDesp,
+    };
   };
   const grupos: Grupo[] = [];
   for (const ck of ["urbano", "fixy"] as const) {
@@ -151,6 +169,7 @@ export default async function Dia({ params, searchParams }: {
           orden: s.orders?.order_number ?? null, cliente: s.orders?.customer_name ?? null,
           province: s.province, freight: s.freight_cost != null ? Number(s.freight_cost) : null,
           monto: Number(s.orders?.cod_amount ?? 0),
+          rank: rankDe(s.status_canonical, nd),
         },
       };
     }));
@@ -168,6 +187,7 @@ export default async function Dia({ params, searchParams }: {
         estadoText: o.financial_status === "paid" ? "pagado" : "pendiente", tracking: null, trackUrl: null,
         orden: o.order_number, cliente: o.customer_name, province: o.province, freight: null,
         monto: Number(o.cod_amount),
+        rank: o.financial_status === "paid" ? 1 : 2,
       },
     })));
     grupos.push({ name: "Correo", unit: "órdenes", okWord: "pag.", ...g });
@@ -275,10 +295,22 @@ export default async function Dia({ params, searchParams }: {
 
       {/* Despachos del día — agrupados Courier → Producto, desplegables (antes: lista interminable) */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold">
-          Despachos del día ({totalDesp})
-          {totalNoDesp > 0 && <span className="ml-1 font-normal text-destructive">· {totalNoDesp} no despachadas</span>}
-        </h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold">
+            Despachos del día ({totalDesp})
+            {totalNoDesp > 0 && <span className="ml-1 font-normal text-destructive">· {totalNoDesp} no despachadas</span>}
+          </h2>
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            Ordenar por
+            {[["estado", "Estado"], ["monto", "Monto"]].map(([val, label]) => (
+              <Link key={val} href={ordHref(val)} aria-current={ord === val ? "page" : undefined}
+                className={cn("rounded px-1.5 py-0.5 transition-colors",
+                  ord === val ? "bg-foreground font-medium text-background" : "hover:text-foreground")}>
+                {label}
+              </Link>
+            ))}
+          </span>
+        </div>
         {(totalDesp || totalNoDesp) ? (
           <>
             <p className="max-w-[70ch] text-xs text-muted-foreground">
