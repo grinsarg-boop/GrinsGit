@@ -1,18 +1,32 @@
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme-toggle";
 
+const NAV: [string, string][] = [
+  ["/", "Resumen"],
+  ["/ventas", "Ventas"],
+  ["/sync", "Sync"],
+  ["/etiquetas", "Etiquetas"],
+  ["/correo", "Correo"],
+  ["/picking", "Picking"],
+  ["/config", "Config"],
+];
+
+// Subrayado que crece desde la izquierda al pasar el mouse. Con "reducir movimiento" del SO el
+// pseudo-elemento no se anima y queda solo el cambio de color, que ya alcanza como affordance.
+const NAV_LINK =
+  "relative text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground " +
+  "after:absolute after:inset-x-0 after:-bottom-1 after:h-px after:origin-left after:scale-x-0 " +
+  "after:bg-current after:transition-transform after:duration-200 after:ease-out hover:after:scale-x-100 " +
+  "motion-reduce:after:hidden";
+
 export default function DashLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto w-full max-w-6xl p-4">
       <nav className="mb-6 flex items-center gap-6 border-b pb-3">
         <span className="font-semibold">BioLabs Finanzas</span>
-        <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">Resumen</Link>
-        <Link href="/ventas" className="text-sm text-muted-foreground hover:text-foreground">Ventas</Link>
-        <Link href="/sync" className="text-sm text-muted-foreground hover:text-foreground">Sync</Link>
-        <Link href="/etiquetas" className="text-sm text-muted-foreground hover:text-foreground">Etiquetas</Link>
-        <Link href="/correo" className="text-sm text-muted-foreground hover:text-foreground">Correo</Link>
-        <Link href="/picking" className="text-sm text-muted-foreground hover:text-foreground">Picking</Link>
-        <Link href="/config" className="text-sm text-muted-foreground hover:text-foreground">Config</Link>
+        {NAV.map(([href, label]) => (
+          <Link key={href} href={href} className={NAV_LINK}>{label}</Link>
+        ))}
         <div className="ml-auto"><ThemeToggle /></div>
       </nav>
       {children}

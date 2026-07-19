@@ -255,8 +255,8 @@ export default async function Resumen({
                 href={hrefWith({ desde: d, hasta: h })}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "rounded-md px-2.5 py-1 font-medium transition-colors",
-                  active ? "bg-foreground text-background shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
+                  active ? "bg-foreground text-background shadow-sm hover:shadow" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
                 )}
               >
                 {label}
@@ -284,10 +284,10 @@ export default async function Resumen({
               href={hrefWith({ courier: val })}
               aria-current={(courier ?? "") === val ? "page" : undefined}
               className={cn(
-                "rounded-md px-3 py-1 font-medium transition-colors",
+                "rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
                 (courier ?? "") === val
-                  ? "bg-foreground text-background shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
+                  ? "bg-foreground text-background shadow-sm hover:shadow"
+                  : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
               )}
             >
               {label}
@@ -301,10 +301,10 @@ export default async function Resumen({
               href={hrefWith({ v: val })}
               aria-current={vista === val ? "page" : undefined}
               className={cn(
-                "rounded-md px-3 py-1 font-medium transition-colors",
+                "rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
                 vista === val
-                  ? "bg-foreground text-background shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
+                  ? "bg-foreground text-background shadow-sm hover:shadow"
+                  : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
               )}
             >
               {label}
@@ -392,9 +392,9 @@ export default async function Resumen({
             </p>
           )}
 
-          <details className="text-sm" data-slot="ads-explainer">
+          <details className="group text-sm" data-slot="ads-explainer">
             <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-              <span className="underline-offset-4 hover:underline">Cómo se imputan los Ads</span> <span className="text-xs">▾</span>
+              <span className="underline-offset-4 hover:underline">Cómo se imputan los Ads</span> <span className="inline-block text-xs transition-transform duration-200 group-open:rotate-180 motion-reduce:transition-none">▾</span>
             </summary>
             <div className="mt-2 space-y-1.5 border-l-2 pl-3 text-muted-foreground">
               <p>Cada gasto de Meta se asigna a un <b className="text-foreground">producto</b> por keyword del nombre del anuncio/campaña.</p>
@@ -440,9 +440,9 @@ export default async function Resumen({
             })()}
 
             {/* El número accionable queda a la vista; el detalle mensual se despliega si hace falta. */}
-            <details className="text-sm">
+            <details className="group text-sm">
               <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-                <span className="underline-offset-4 hover:underline">Ver los {urbanoSaldo.length} meses</span> <span className="text-xs">▾</span>
+                <span className="underline-offset-4 hover:underline">Ver los {urbanoSaldo.length} meses</span> <span className="inline-block text-xs transition-transform duration-200 group-open:rotate-180 motion-reduce:transition-none">▾</span>
               </summary>
               <div className="mt-2">
             <Table>
@@ -532,9 +532,9 @@ export default async function Resumen({
             })()}
 
             {/* Igual que arriba: a primera vista solo el giro pendiente, el histórico se despliega. */}
-            <details className="text-sm">
+            <details className="group text-sm">
               <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-                <span className="underline-offset-4 hover:underline">Ver las últimas {cobranza.length} ventanas</span> <span className="text-xs">▾</span>
+                <span className="underline-offset-4 hover:underline">Ver las últimas {cobranza.length} ventanas</span> <span className="inline-block text-xs transition-transform duration-200 group-open:rotate-180 motion-reduce:transition-none">▾</span>
               </summary>
               <div className="mt-2">
             <Table>

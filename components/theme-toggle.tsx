@@ -18,7 +18,7 @@ export function ThemeToggle() {
       onClick={toggle}
       aria-label="Cambiar tema claro/oscuro"
       title="Cambiar tema"
-      className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+      className="rounded-md p-1.5 text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground motion-safe:hover:rotate-12 motion-safe:active:scale-90"
     >
       {/* luna (visible en claro) */}
       <svg className="block dark:hidden" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

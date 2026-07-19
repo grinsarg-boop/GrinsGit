@@ -57,8 +57,8 @@ export function Dropzone({
           if (e.dataTransfer.files.length) onFiles(e.dataTransfer.files);
         }}
         className={cn(
-          "flex cursor-pointer flex-col items-center gap-1 rounded-lg border border-dashed p-6 text-center text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-          over ? "border-ring bg-accent" : "hover:bg-accent/50",
+          "flex cursor-pointer flex-col items-center gap-1 rounded-lg border border-dashed p-6 text-center text-sm outline-none transition-all duration-150 ease-out motion-safe:active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          over ? "border-ring bg-accent motion-safe:scale-[1.01]" : "hover:border-ring/60 hover:bg-accent/50",
         )}
       >
         <input

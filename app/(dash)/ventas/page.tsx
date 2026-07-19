@@ -175,8 +175,8 @@ export default async function Ventas({
                 href={hrefWith({ desde: d, hasta: h })}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "rounded-md px-2.5 py-1 font-medium transition-colors",
-                  active ? "bg-foreground text-background shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
+                  active ? "bg-foreground text-background shadow-sm hover:shadow" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
                 )}
               >
                 {label}
@@ -204,8 +204,8 @@ export default async function Ventas({
               href={hrefWith({ courier: val })}
               aria-current={(courier ?? "") === val ? "page" : undefined}
               className={cn(
-                "rounded-md px-3 py-1 font-medium transition-colors",
-                (courier ?? "") === val ? "bg-foreground text-background shadow-sm" : "text-muted-foreground hover:text-foreground",
+                "rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
+                (courier ?? "") === val ? "bg-foreground text-background shadow-sm hover:shadow" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
               )}
             >
               {label}
@@ -219,8 +219,8 @@ export default async function Ventas({
               href={hrefWith({ v: val })}
               aria-current={vista === val ? "page" : undefined}
               className={cn(
-                "rounded-md px-3 py-1 font-medium transition-colors",
-                vista === val ? "bg-foreground text-background shadow-sm" : "text-muted-foreground hover:text-foreground",
+                "rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
+                vista === val ? "bg-foreground text-background shadow-sm hover:shadow" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
               )}
             >
               {label}
