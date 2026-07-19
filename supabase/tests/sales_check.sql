@@ -294,3 +294,60 @@ begin
   raise notice '033 ventana de cobranza Urbano (mar→lun): OK';
 end $t$;
 rollback;
+
+-- ===== 034: las RPCs de /analisis no discuten con el P&L =====
+-- El riesgo es que reagrupen con otro criterio y den números distintos a los paneles. Se ancla que:
+-- (a) la suma por canal×producto = daily_pnl, (b) la regla no_despachado se aplica igual en las tres.
+begin;
+do $t$
+declare
+  d5  date := current_date - 12;
+  dd5 date := current_date - 10;
+  pid int := (select id from products where name = 'Natures');
+  a_prof numeric; d_prof numeric; z_guias int; z_ent int; z_margen numeric; e_calle int; e_nodesp int;
+begin
+  delete from product_costs;
+  insert into product_costs (product_id, pack, unit_cost, is_estimated)
+  select id, 1, 5000, false from products where name = 'Natures';
+
+  -- 3 guías Córdoba: 1 entregada, 1 en tránsito, 1 PI vieja (no despachada, +7d)
+  for i in 0..2 loop
+    perform upsert_order(jsonb_build_object(
+      'id', 2400 + i, 'name', '#' || (2400 + i), 'created_at', d5::text || 'T12:00:00-03:00',
+      'financial_status', 'pending', 'tags', '', 'total_price', '30000',
+      'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000"}'::jsonb,
+      'line_items', '[{"title":"Natures","quantity":1,"price":"30000"}]'::jsonb));
+  end loop;
+  perform upsert_shipment_events(jsonb_build_array(
+    jsonb_build_object('courier','urbano','tracking','Z0','order_ref','2400','status_raw','ENTREGADO EN DOMICILIO','occurred_at', dd5::text || 'T12:00:00Z','tarifa',5000),
+    jsonb_build_object('courier','urbano','tracking','Z1','order_ref','2401','status_raw','MA','occurred_at', dd5::text || 'T12:00:00Z','tarifa',5000),
+    jsonb_build_object('courier','urbano','tracking','Z2','order_ref','2402','status_raw','PI','occurred_at', dd5::text || 'T12:00:00Z','tarifa',5000)));
+  perform recompute_daily_pnl(d5, current_date);
+
+  -- (a) analisis_pnl reagrupa daily_pnl sin cambiarlo
+  select coalesce(sum(profit), 0) into a_prof from analisis_pnl(d5, current_date, null);
+  select coalesce(sum(profit_confirmado), 0) into d_prof from daily_pnl
+   where dispatch_date between d5 and current_date;
+  assert round(a_prof, 2) = round(d_prof, 2),
+    format('034: analisis_pnl (%s) debe igualar a daily_pnl (%s)', a_prof, d_prof);
+
+  -- (b) zonas: la PI de +7d sale del denominador y no paga flete
+  select guias, entregadas, margen_bruto into z_guias, z_ent, z_margen
+    from analisis_zonas(d5, current_date, 'urbano') where province = 'Córdoba';
+  assert z_guias = 2, format('034: la guía PI +7d no cuenta como despacho → 2 (got %s)', z_guias);
+  assert z_ent = 1, format('034: 1 entregada (got %s)', z_ent);
+  -- margen = COD cobrado 30.000 − flete de las DOS despachadas (5000 × 1,29 × 2 = 12.900)
+  assert round(z_margen, 2) = 30000 - 12900,
+    format('034: margen bruto = 30000 − 12900 = 17100 (got %s)', z_margen);
+
+  -- (c) desenlaces: mismos cubos, la PI aparte
+  select coalesce(sum(guias), 0) into e_calle from analisis_desenlaces(d5, current_date, 'urbano')
+   where estado = 'en_la_calle';
+  select coalesce(sum(guias), 0) into e_nodesp from analisis_desenlaces(d5, current_date, 'urbano')
+   where estado = 'no_despachado';
+  assert e_calle = 1, format('034: 1 guía en la calle (got %s)', e_calle);
+  assert e_nodesp = 1, format('034: 1 guía no despachada, en su propio cubo (got %s)', e_nodesp);
+
+  raise notice '034 RPCs de análisis: OK';
+end $t$;
+rollback;

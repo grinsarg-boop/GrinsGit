@@ -4,6 +4,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 const NAV: [string, string][] = [
   ["/", "Resumen"],
   ["/ventas", "Ventas"],
+  ["/analisis", "Análisis"],
   ["/sync", "Sync"],
   ["/etiquetas", "Etiquetas"],
   ["/correo", "Correo"],
