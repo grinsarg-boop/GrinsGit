@@ -7,19 +7,22 @@ import Link from "next/link";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO } from "@/lib/tips";
 
 export const revalidate = 60; // R12
 
 type Day = {
   date: string; despachadas: number; entregadas: number; resueltas: number; proyectadas: number;
   revenueConf: number; revenueEst: number; profitConf: number; profitEst: number;
-  ads: number; adsSinCohorte: number;
+  ads: number; adsSinCohorte: number; flete: number; comisiones: number;
 };
 
 type MonthAgg = {
   month: string; despachadas: number; entregadas: number; proyectadas: number;
   revenueEst: number; profitConf: number; profitEst: number; ads: number;
+  flete: number; comisiones: number;
 };
+
 
 // Verde ganás / rojo perdés — el color hace el trabajo antes de leer el número.
 const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
@@ -51,7 +54,7 @@ export default async function Resumen({
   type Row = {
     dispatch_date: string; despachadas: number; entregadas: number; resueltas: number; proyectadas: number;
     revenue_confirmado: number; revenue_estimado: number; profit_confirmado: number; profit_estimado: number;
-    ads: number; ads_sin_cohorte: number;
+    flete: number; comisiones: number; ads: number; ads_sin_cohorte: number;
   };
   const mapDay = (r: Row): Day => ({
     date: r.dispatch_date, despachadas: r.despachadas, entregadas: r.entregadas, resueltas: r.resueltas,
@@ -59,6 +62,7 @@ export default async function Resumen({
     revenueConf: Number(r.revenue_confirmado), revenueEst: Number(r.revenue_estimado),
     profitConf: Number(r.profit_confirmado), profitEst: Number(r.profit_estimado),
     ads: Number(r.ads), adsSinCohorte: Number(r.ads_sin_cohorte),
+    flete: Number(r.flete), comisiones: Number(r.comisiones),
   });
 
   // Agregación server-side (dashboard_days, 009). El P&L por producto → /dia/[fecha].
@@ -78,15 +82,52 @@ export default async function Resumen({
     flexPend = [...m.entries()].map(([semana, n]) => ({ semana, n })).sort((a, b) => (a.semana < b.semana ? 1 : -1));
   }
 
+  // Saldo Urbano: lo que se le va a facturar, acumulado por MES CALENDARIO. Deliberadamente ignora el
+  // rango del panel — sirve para presupuestar la factura, y con el preset "7 días" no diría nada útil.
+  // daily_pnl.flete ya trae el costo final con el ×1,29 y ya aplica la regla no_despachado (018: los PI
+  // de +7d no se facturan). flete_estimado_pct es la fracción de ese flete que todavía NO tiene factura.
+  type SaldoMes = { mes: string; guias: number; total: number; estimado: number };
+  let urbanoSaldo: SaldoMes[] = [];
+  if (!courierParam || courierParam === "urbano") {
+    const [ty, tm] = today.slice(0, 7).split("-").map(Number);   // ojo: ey/em se definen más abajo
+    const desde3m = `${new Date(Date.UTC(ty, tm - 3, 1)).toISOString().slice(0, 7)}-01`;
+    const { data: us } = await db.from("daily_pnl")
+      .select("dispatch_date, despachadas, flete, flete_estimado_pct")
+      .eq("courier", "urbano").gte("dispatch_date", desde3m);
+    const m = new Map<string, SaldoMes>();
+    for (const r of (us ?? []) as { dispatch_date: string; despachadas: number; flete: number; flete_estimado_pct: number | null }[]) {
+      const k = r.dispatch_date.slice(0, 7);
+      const a = m.get(k) ?? { mes: k, guias: 0, total: 0, estimado: 0 };
+      const f = Number(r.flete ?? 0);
+      a.guias += r.despachadas; a.total += f; a.estimado += f * Number(r.flete_estimado_pct ?? 0);
+      m.set(k, a);
+    }
+    urbanoSaldo = [...m.values()].sort((a, b) => (a.mes < b.mes ? 1 : -1));
+  }
+
+  // A cobrar de Urbano: el COD que cobró en la puerta y todavía no giró. Ventana martes→lunes, giro el
+  // martes siguiente, ya neto de la comisión de contrareembolso con impuestos (033, conciliado al centavo
+  // contra la liquidación del 14/07). La agregación vive en SQL — son >1000 filas y PostgREST trunca ahí.
+  type Cobranza = {
+    ventana_ini: string; ventana_fin: string; fecha_pago: string;
+    guias: number; cod_bruto: number; comision: number; neto: number;
+  };
+  let cobranza: Cobranza[] = [];
+  if (!courierParam || courierParam === "urbano") {
+    const { data: cb } = await db.rpc("urbano_cobranza", { p_desde: daysAgoIso(35) });
+    cobranza = ((cb ?? []) as Cobranza[]).slice(0, 5);
+  }
+
   // Vista MESES: agrupa los días DEL RANGO por mes (para todo el histórico, usá el preset "Máx").
   let meses: MonthAgg[] = [];
   if (vista === "meses") {
     const m = new Map<string, MonthAgg>();
     for (const d of list) {
       const k = d.date.slice(0, 7);
-      const a = m.get(k) ?? { month: k, despachadas: 0, entregadas: 0, proyectadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0 };
+      const a = m.get(k) ?? { month: k, despachadas: 0, entregadas: 0, proyectadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, flete: 0, comisiones: 0 };
       a.despachadas += d.despachadas; a.entregadas += d.entregadas; a.proyectadas += d.proyectadas;
       a.revenueEst += d.revenueEst; a.profitConf += d.profitConf; a.profitEst += d.profitEst; a.ads += d.ads;
+      a.flete += d.flete; a.comisiones += d.comisiones;
       m.set(k, a);
     }
     meses = [...m.values()].sort((a, b) => (a.month < b.month ? 1 : -1));
@@ -176,7 +217,7 @@ export default async function Resumen({
               ? "En Correo son cuotas 3 sin interés, prepago: lo confirmado ya está cobrado y no se anula, así que no proyectamos tasa de entrega. La métrica es la tasa de confirmación (pagados / generados) y el estimado es igual al confirmado."
               : courier === "ml"
               ? "En MercadoLibre la venta ya está cobrada y la entrega la hace ML: no proyectamos nada, el estimado es igual al confirmado. La comisión (sale_fee) y el flete son los reales de cada orden; los envíos Flex sin liquidación cargada todavía cuentan flete $0 (ver % de flete estimado)."
-              : "Es el confirmado (plata que ya cobraste) más una proyección de las guías que siguen en la calle, usando tu tasa de entrega histórica por zona y producto. Por eso el número puede moverse hasta que todas las guías cierren."
+              : "Es el confirmado (profit ya cerrado, neto de envío, comisiones, producto y Ads) más una proyección de las guías que siguen en la calle, usando tu tasa de entrega histórica por zona y producto. Por eso el número puede moverse hasta que todas las guías cierren."
           }
         />
       </div>
@@ -351,7 +392,7 @@ export default async function Resumen({
             </p>
           )}
 
-          <details className="text-sm">
+          <details className="text-sm" data-slot="ads-explainer">
             <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
               <span className="underline-offset-4 hover:underline">Cómo se imputan los Ads</span> <span className="text-xs">▾</span>
             </summary>
@@ -363,6 +404,189 @@ export default async function Resumen({
           </details>
         </CardContent>
       </Card>
+
+      {/* Saldo Urbano: lo que se le adeuda por flete, por mes calendario. Cash planning, no P&L —
+          por eso ignora el rango del panel y siempre muestra los últimos 3 meses. */}
+      {urbanoSaldo.length > 0 && (
+        <Card>
+          <CardContent className="space-y-3 pt-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                Saldo Urbano
+                <Tip tip="Flete que le debés a Urbano por las guías despachadas, con impuestos incluidos (tarifa × 1,29 = 21% IVA + 8% IIBB). Es el costo hundido: se paga por toda guía despachada, entregue o no. No incluye las guías que quedaron sin despachar (PI de +7 días), que Urbano no factura." />
+              </span>
+              <span className="text-xs text-muted-foreground">últimos 3 meses · independiente del rango de arriba</span>
+            </div>
+
+            {(() => {
+              const abierto = urbanoSaldo.find((m) => m.estimado > 0.005 * m.total);
+              return abierto ? (
+                <div className="rounded-md border bg-muted/40 px-3 py-2.5">
+                  <div className="text-[0.7rem] uppercase tracking-wide text-amber-700 dark:text-amber-500">
+                    A facturar · {monthLabel(abierto.mes)}
+                  </div>
+                  <div className="text-2xl font-bold tabular-nums tracking-tight text-amber-700 dark:text-amber-400">
+                    {fmtMoney(abierto.total)}
+                  </div>
+                  <div className="pt-0.5 text-xs text-muted-foreground">
+                    {fmtMoney(abierto.total / 1.29)} de tarifa + {fmtMoney(abierto.total - abierto.total / 1.29)} de impuestos ·{" "}
+                    {abierto.guias.toLocaleString("es-AR")} guías
+                    {abierto.estimado >= 0.995 * abierto.total
+                      ? " · estimado por promedio de zona, todavía sin factura"
+                      : ` · ${fmtPct(abierto.estimado / abierto.total)} todavía sin factura`}
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            {/* El número accionable queda a la vista; el detalle mensual se despliega si hace falta. */}
+            <details className="text-sm">
+              <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <span className="underline-offset-4 hover:underline">Ver los {urbanoSaldo.length} meses</span> <span className="text-xs">▾</span>
+              </summary>
+              <div className="mt-2">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Mes</TableHead>
+                  <TableHead className="text-right">Guías</TableHead>
+                  <TableHead className="text-right">Tarifa neta</TableHead>
+                  <TableHead className="text-right">Imp. 29%</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-right">Estado</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {urbanoSaldo.map((m) => {
+                  const base = m.total / 1.29;
+                  const pctEst = m.total ? m.estimado / m.total : 0;
+                  return (
+                    <TableRow key={m.mes}>
+                      <TableCell className="font-medium capitalize">{monthLabel(m.mes)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{m.guias.toLocaleString("es-AR")}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(base)}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(m.total - base)}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(m.total)}</TableCell>
+                      <TableCell className="text-right">
+                        {pctEst < 0.005 ? (
+                          <span className="rounded bg-muted px-1.5 py-px text-[0.6rem] uppercase tracking-wide text-muted-foreground">facturado</span>
+                        ) : pctEst > 0.995 ? (
+                          <Tip tip="Ninguna guía de este mes tiene factura todavía. El monto sale del promedio de tarifa por provincia de los últimos 60 días, así que puede moverse cuando llegue la facturación real.">
+                            <span className="rounded bg-amber-500/10 px-1.5 py-px text-[0.6rem] uppercase tracking-wide text-amber-700 dark:text-amber-500">estimado</span>
+                          </Tip>
+                        ) : (
+                          <Tip tip={`${fmtPct(pctEst)} del flete de este mes todavía no tiene factura y está estimado por promedio de zona.`}>
+                            <span className="rounded bg-amber-500/10 px-1.5 py-px text-[0.6rem] uppercase tracking-wide text-amber-700 dark:text-amber-500">
+                              parcial {fmtPct(pctEst)}
+                            </span>
+                          </Tip>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+
+            <p className="mt-3 text-xs text-muted-foreground">
+              La facturación de Urbano llega con ~2 semanas de lag. Mientras no esté, el flete se estima con el promedio
+              de tarifa por provincia; al importarla desde <Link href="/sync" className="underline underline-offset-2">Sync</Link> el
+              monto se reemplaza por el real y el P&amp;L se recalcula.
+            </p>
+              </div>
+            </details>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* A cobrar de Urbano — espejo del anterior: lo que Urbano nos debe por el COD que cobró. */}
+      {cobranza.length > 0 && (
+        <Card>
+          <CardContent className="space-y-3 pt-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                A cobrar de Urbano
+                <Tip tip="COD que Urbano cobró en la puerta y todavía no giró. El ciclo es: ventana de entregas de martes a lunes, giro el martes siguiente, ya neto de la comisión de contrareembolso con impuestos (4,3% × 1,29). Verificado al centavo contra la liquidación del 14/07." />
+              </span>
+              <span className="text-xs text-muted-foreground">ventana martes → lunes · independiente del rango de arriba</span>
+            </div>
+
+            {(() => {
+              const abierta = cobranza.find((c) => c.fecha_pago >= today);
+              return abierta ? (
+                <div className="rounded-md border bg-muted/40 px-3 py-2.5">
+                  <div className="text-[0.7rem] uppercase tracking-wide text-emerald-700 dark:text-emerald-500">
+                    A cobrar el {fmtDate(abierta.fecha_pago)}
+                  </div>
+                  <div className="text-2xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400">
+                    {fmtMoney(Number(abierta.neto))}
+                  </div>
+                  <div className="pt-0.5 text-xs text-muted-foreground">
+                    {fmtMoney(Number(abierta.cod_bruto))} cobrados − {fmtMoney(Number(abierta.comision))} de comisión ·{" "}
+                    {abierta.guias.toLocaleString("es-AR")} entregas ·{" "}
+                    {abierta.ventana_fin >= today ? "la ventana todavía está abierta, cierra el " : "cerrada el "}
+                    {fmtDate(abierta.ventana_fin)}
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            {/* Igual que arriba: a primera vista solo el giro pendiente, el histórico se despliega. */}
+            <details className="text-sm">
+              <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <span className="underline-offset-4 hover:underline">Ver las últimas {cobranza.length} ventanas</span> <span className="text-xs">▾</span>
+              </summary>
+              <div className="mt-2">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Ventana</TableHead>
+                  <TableHead className="text-right">Entregas</TableHead>
+                  <TableHead className="text-right">COD cobrado</TableHead>
+                  <TableHead className="text-right">Comisión</TableHead>
+                  <TableHead className="text-right">Giro neto</TableHead>
+                  <TableHead className="text-right">Estado</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {cobranza.map((c) => {
+                  const pendiente = c.fecha_pago >= today;
+                  return (
+                    <TableRow key={c.ventana_ini}>
+                      <TableCell className="font-medium tabular-nums">
+                        {fmtDate(c.ventana_ini)} <span className="text-muted-foreground">→</span> {fmtDate(c.ventana_fin)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{c.guias.toLocaleString("es-AR")}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(Number(c.cod_bruto))}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">−{fmtMoney(Number(c.comision))}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(Number(c.neto))}</TableCell>
+                      <TableCell className="text-right">
+                        {pendiente ? (
+                          <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[0.6rem] uppercase tracking-wide text-emerald-700 dark:text-emerald-500">
+                            a cobrar {fmtDate(c.fecha_pago)}
+                          </span>
+                        ) : (
+                          <span className="rounded bg-muted px-1.5 py-px text-[0.6rem] uppercase tracking-wide text-muted-foreground">
+                            cobrado {fmtDate(c.fecha_pago)}
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+
+            <p className="mt-3 text-xs text-muted-foreground">
+              Estimación <b className="text-foreground">conservadora</b>: contra el giro real del 14/07 este cálculo quedó
+              1,2% por debajo, porque nuestra base todavía no tiene todas las entregas de la ventana. Urbano manda los
+              resúmenes de transferencia incompletos y a veces paga en varios giros por la misma semana.
+            </p>
+              </div>
+            </details>
+          </CardContent>
+        </Card>
+      )}
 
       {vista === "dias" ? (
       <Table>
@@ -387,14 +611,16 @@ export default async function Resumen({
             </TableHead>
             <TableHead className="text-right text-amber-600 dark:text-amber-500">
               <span className="inline-flex items-center gap-1">Profit estimado
-                <Tip tip="Confirmado más la proyección de lo que sigue en camino, menos Ads." />
+                <Tip tip={TIP_ESTIMADO} />
               </span>
             </TableHead>
             <TableHead className="text-right">
               <span className="inline-flex items-center gap-1">confirmado
-                <Tip tip="Plata que ya cobraste, neta del gasto de Ads del período. Puede dar negativo de forma temporal: significa que todavía gastaste más en Ads de lo que maduró en ventas, y se corrige a medida que las guías se entregan." />
+                <Tip tip={TIP_CONFIRMADO} />
               </span>
             </TableHead>
+            <TableHead className="text-right">Envío <Tip tip={TIP_FLETE} /></TableHead>
+            <TableHead className="text-right">Comis. <Tip tip={TIP_COMIS} /></TableHead>
             <TableHead className="text-right">Ads</TableHead>
             <TableHead className="text-right">
               <span className="inline-flex items-center gap-1">ROAS est.
@@ -453,6 +679,8 @@ export default async function Resumen({
                     </Tip>
                   ) : fmtMoney(d.profitConf)}
                 </TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{d.flete ? fmtMoney(d.flete) : "—"}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{d.comisiones ? fmtMoney(d.comisiones) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads ? fmtMoney(d.ads) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums">{d.ads > 0 ? fmtRatio(d.revenueEst / d.ads) : "—"}</TableCell>
               </TableRow>
@@ -460,7 +688,7 @@ export default async function Resumen({
           })}
           {!list.length && (
             <TableRow>
-              <TableCell colSpan={8} className="text-center text-muted-foreground">
+              <TableCell colSpan={10} className="text-center text-muted-foreground">
                 Sin despachos en el rango elegido
               </TableCell>
             </TableRow>
@@ -477,6 +705,8 @@ export default async function Resumen({
             <TableHead className="text-right">Tasa proy.</TableHead>
             <TableHead className="text-right text-amber-600 dark:text-amber-500">Profit estimado</TableHead>
             <TableHead className="text-right">confirmado</TableHead>
+            <TableHead className="text-right">Envío <Tip tip={TIP_FLETE} /></TableHead>
+            <TableHead className="text-right">Comis. <Tip tip={TIP_COMIS} /></TableHead>
             <TableHead className="text-right">Ads</TableHead>
             <TableHead className="text-right">ROAS est.</TableHead>
           </TableRow>
@@ -492,6 +722,8 @@ export default async function Resumen({
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.despachadas ? fmtPct(tasaProy) : "—"}</TableCell>
                 <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(m.profitEst))}>{fmtMoney(m.profitEst)}</TableCell>
                 <TableCell className={cn("text-right tabular-nums", m.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(m.profitConf)}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{m.flete ? fmtMoney(m.flete) : "—"}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{m.comisiones ? fmtMoney(m.comisiones) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads ? fmtMoney(m.ads) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums">{m.ads > 0 ? fmtRatio(m.revenueEst / m.ads) : "—"}</TableCell>
               </TableRow>
@@ -499,7 +731,7 @@ export default async function Resumen({
           })}
           {!meses.length && (
             <TableRow>
-              <TableCell colSpan={8} className="text-center text-muted-foreground">
+              <TableCell colSpan={10} className="text-center text-muted-foreground">
                 Sin datos históricos
               </TableCell>
             </TableRow>

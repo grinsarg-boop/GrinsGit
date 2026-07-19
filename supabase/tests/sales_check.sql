@@ -172,3 +172,125 @@ begin
   raise notice '031 sales_by_product (consistencia con sales_days): OK';
 end $t$;
 rollback;
+
+-- ===== 032: el desglose de costos (flete + comisiones) es correcto y no se corrió de columna =====
+-- El riesgo real de la 032 es un swap posicional en el `union all` de sales_rows: flete quedando en la
+-- columna de comisiones o viceversa. Por eso se asertan VALORES exactos, no solo consistencia.
+begin;
+
+delete from product_costs;
+insert into product_costs (product_id, pack, unit_cost, is_estimated)
+select id, 1, 5000, false from products where name = 'Natures';
+
+do $t$
+declare
+  d4  date := current_date - 5;          -- día de VENTA
+  dd4 date := current_date - 3;          -- día de DESPACHO
+  pid int := (select id from products where name = 'Natures');
+  v_flete numeric; v_com numeric; v_rev numeric; v_pe numeric; v_ads numeric;
+  f_prod numeric; f_dias numeric; c_prod numeric; c_dias numeric;
+  n_neg int;
+begin
+  delete from delivery_priors;
+  insert into delivery_priors (courier, province, product_id, p_delivery, level)
+    values ('urbano', 'Córdoba', pid, 0.5, 9), ('urbano', null, null, 0.5, 9);
+
+  -- dos ventas del mismo día, misma tarifa real (10.000) y mismo COD (40.000):
+  --   O1 ENTREGADA  → cobra COD, paga comisión
+  --   O2 EN TRÁNSITO → ya pagó el flete (hundido), todavía NO generó comisión
+  perform upsert_order(jsonb_build_object('id', 2241, 'name', '#2241', 'created_at', d4::text || 'T12:00:00-03:00',
+    'financial_status', 'pending', 'tags', '', 'total_price', '40000',
+    'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000"}'::jsonb,
+    'line_items', '[{"title":"Natures","quantity":1,"price":"40000"}]'::jsonb));
+  perform upsert_order(jsonb_build_object('id', 2242, 'name', '#2242', 'created_at', d4::text || 'T13:00:00-03:00',
+    'financial_status', 'pending', 'tags', '', 'total_price', '40000',
+    'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000"}'::jsonb,
+    'line_items', '[{"title":"Natures","quantity":1,"price":"40000"}]'::jsonb));
+  perform upsert_shipment_events(jsonb_build_array(
+    jsonb_build_object('courier','urbano','tracking','SF','order_ref','2241','status_raw','MA','occurred_at', dd4::text || 'T08:00:00Z'),
+    jsonb_build_object('courier','urbano','tracking','SF','order_ref','2241','status_raw','ENTREGADO EN DOMICILIO','occurred_at',(dd4+1)::text || 'T14:00:00Z','tarifa',10000),
+    jsonb_build_object('courier','urbano','tracking','SG','order_ref','2242','status_raw','MA','occurred_at', dd4::text || 'T08:00:00Z','tarifa',10000)));
+  perform recompute_daily_pnl(d4, current_date);
+
+  select flete, comisiones, revenue_estimado, profit_estimado, ads
+    into v_flete, v_com, v_rev, v_pe, v_ads
+    from sales_days(d4, 'urbano') where sale_date = d4;
+
+  -- flete = tarifa × urbano_freight_mult (1.29) × LAS DOS guías — hundido, la en tránsito ya lo pagó
+  assert round(v_flete, 2) = 25800,
+    format('032: flete = 2 × (10000 × 1.29) = 25800 (got %s)', v_flete);
+  -- comisiones = commission_pct.urbano (5,2%) × COD cobrado en puerta, SOLO de la entregada.
+  -- Si algún día se alineara con el estimado daría 0.052 × (40000 + 20000) = 3120 → este assert lo frena.
+  assert round(v_com, 2) = 2080,
+    format('032: comisiones = 0.052 × 40000 (solo lo entregado) = 2080 (got %s)', v_com);
+
+  -- Invariante del desglose. revenue_est − flete − comisiones − ads − profit_est deja como residuo
+  -- exactamente lo que NO se expone: costo de producto (5000) + costo proyectado (0,5 × 5000 = 2500)
+  -- + la comisión de lo que sigue en la calle (0,052 × 0,5 × 40000 = 1040) = 8540.
+  -- Si flete y comisiones estuvieran cruzados o contados de más, el residuo se corre.
+  assert round(v_rev - v_flete - v_com - v_ads - v_pe, 2) = 8540,
+    format('032: el residuo del desglose debe ser 8540 (costo 5000 + costo est. 2500 + comisión est. 1040), got %s',
+           round(v_rev - v_flete - v_com - v_ads - v_pe, 2));
+
+  -- el desglose suma igual por producto que por día
+  select coalesce(sum(flete), 0), coalesce(sum(comisiones), 0) into f_prod, c_prod
+    from sales_by_product(d4, current_date, null);
+  select coalesce(sum(flete), 0), coalesce(sum(comisiones), 0) into f_dias, c_dias
+    from sales_days(d4, null);
+  assert round(f_prod, 2) = round(f_dias, 2),
+    format('032: flete por producto (%s) = por día (%s)', f_prod, f_dias);
+  assert round(c_prod, 2) = round(c_dias, 2),
+    format('032: comisiones por producto (%s) = por día (%s)', c_prod, c_dias);
+
+  -- ningún costo negativo en ninguna rama (COD / correo / ml)
+  select count(*) into n_neg from sales_rows(d4) where flete < 0 or comisiones < 0;
+  assert n_neg = 0, format('032: %s filas con flete o comisiones negativos', n_neg);
+
+  raise notice '032 desglose flete/comisiones: OK';
+end $t$;
+rollback;
+
+-- ===== 033: la ventana de cobranza de Urbano es martes→lunes =====
+-- El riesgo es el cálculo del "martes de la ventana": un off-by-one manda las entregas del lunes a la
+-- ventana siguiente y el saldo a cobrar queda partido en dos semanas.
+begin;
+do $t$
+declare
+  n_vent int; v_ini date; v_fin date; v_pago date; v_bruto numeric; v_com numeric; v_neto numeric;
+  base date := date '2026-07-07';   -- un martes
+begin
+  delete from product_costs;
+  insert into product_costs (product_id, pack, unit_cost, is_estimated)
+  select id, 1, 5000, false from products where name = 'Natures';
+
+  -- 3 entregas: el martes que abre, el lunes que cierra, y el martes siguiente (otra ventana)
+  for i in 0..2 loop
+    perform upsert_order(jsonb_build_object(
+      'id', 2300 + i, 'name', '#' || (2300 + i), 'created_at', (base - 3)::text || 'T12:00:00-03:00',
+      'financial_status', 'pending', 'tags', '', 'total_price', '10000',
+      'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000"}'::jsonb,
+      'line_items', '[{"title":"Natures","quantity":1,"price":"10000"}]'::jsonb));
+  end loop;
+  perform upsert_shipment_events(jsonb_build_array(
+    jsonb_build_object('courier','urbano','tracking','C0','order_ref','2300','status_raw','ENTREGADO EN DOMICILIO','occurred_at', base::text          || 'T12:00:00Z','tarifa',1000),
+    jsonb_build_object('courier','urbano','tracking','C1','order_ref','2301','status_raw','ENTREGADO EN DOMICILIO','occurred_at',(base+6)::text      || 'T12:00:00Z','tarifa',1000),
+    jsonb_build_object('courier','urbano','tracking','C2','order_ref','2302','status_raw','ENTREGADO EN DOMICILIO','occurred_at',(base+7)::text      || 'T12:00:00Z','tarifa',1000)));
+
+  select count(*) into n_vent from urbano_cobranza(base);
+  assert n_vent = 2, format('033: martes y lunes van juntos, el martes siguiente aparte → 2 ventanas (got %s)', n_vent);
+
+  select ventana_ini, ventana_fin, fecha_pago, cod_bruto, comision, neto
+    into v_ini, v_fin, v_pago, v_bruto, v_com, v_neto
+    from urbano_cobranza(base) where ventana_ini = base;
+
+  assert v_fin = base + 6, format('033: la ventana cierra el lunes (got %s)', v_fin);
+  assert v_pago = base + 7, format('033: se cobra el martes siguiente (got %s)', v_pago);
+  -- el martes que abre + el lunes que cierra = 2 guías × 10.000
+  assert v_bruto = 20000, format('033: martes y lunes suman en la MISMA ventana → 20000 (got %s)', v_bruto);
+  -- comisión = commission_pct.urbano sobre el bruto; neto = bruto − comisión
+  assert round(v_com + v_neto, 2) = 20000, format('033: comisión + neto = bruto (got %s)', v_com + v_neto);
+  assert v_com > 0, '033: la comisión sale de settings.commission_pct y no puede ser 0';
+
+  raise notice '033 ventana de cobranza Urbano (mar→lun): OK';
+end $t$;
+rollback;

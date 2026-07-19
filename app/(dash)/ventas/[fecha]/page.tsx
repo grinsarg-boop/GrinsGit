@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { TIP_CONFIRMADO, TIP_ESTIMADO } from "@/lib/tips";
 
 export const revalidate = 60;
 
@@ -89,7 +90,8 @@ export default async function VentaDia({ params, searchParams }: {
   // P&L del día segmentado por producto × courier (misma base que el panel: sales_rows).
   type BpRow = {
     courier: string; product: string; generadas: number; despachadas: number; resueltas: number; trabadas: number;
-    revenue_estimado: number; profit_confirmado: number; profit_estimado: number; ads: number;
+    revenue_estimado: number; profit_confirmado: number; profit_estimado: number;
+    flete: number; comisiones: number; ads: number;
   };
   const porProdCourier = ((bpRes.data ?? []) as BpRow[]).slice()
     .sort((a, b) => Number(a.profit_estimado) - Number(b.profit_estimado));
@@ -225,8 +227,8 @@ export default async function VentaDia({ params, searchParams }: {
         {[
           { label: "Generadas", value: String(generadas), color: "text-foreground", tip: "Ventas generadas ese día en el canal filtrado (idéntico al panel). En Correo/ML son las ventas del día." },
           { label: "Despachadas", value: `${despachadas} · ${fmtPct(pctDesp)}`, color: "text-foreground", tip: "Cuántas de esas ventas ya salieron a la calle. En Correo es la confirmación; en ML, entregadas por ML." },
-          { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst), tip: "Confirmado más la proyección de lo que sigue en camino, menos Ads." },
-          { label: "Cerrado", value: fmtMoney(profitConf), color: profitConf < 0 ? "text-destructive/80" : "text-foreground", tip: "Profit ya cobrado de las ventas de ese día, neto de Ads." },
+          { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst), tip: TIP_ESTIMADO },
+          { label: "Cerrado", value: fmtMoney(profitConf), color: profitConf < 0 ? "text-destructive/80" : "text-foreground", tip: TIP_CONFIRMADO },
         ].map((k) => (
           <Card key={k.label}>
             <CardContent className="pt-5">
@@ -249,6 +251,8 @@ export default async function VentaDia({ params, searchParams }: {
               <span className="w-16 text-right">Canal</span>
               <span className="w-16 text-right">Ventas</span>
               <span className="hidden w-20 text-right sm:inline">Resol.</span>
+              <span className="hidden w-24 text-right lg:inline">Envío</span>
+              <span className="hidden w-24 text-right lg:inline">Comis.</span>
               <span className="hidden w-24 text-right md:inline">Ads</span>
               <span className="w-28 text-right">Profit est.</span>
               <span className="hidden w-28 text-right lg:inline">cerrado</span>
@@ -268,6 +272,8 @@ export default async function VentaDia({ params, searchParams }: {
                   <span className="w-16 text-right text-muted-foreground">{COURIER[r.courier] ?? r.courier}</span>
                   <span className="w-16 text-right tabular-nums">{gen}</span>
                   <span className="hidden w-20 text-right tabular-nums text-muted-foreground sm:inline">{fmtPct(res)}</span>
+                  <span className="hidden w-24 text-right tabular-nums text-muted-foreground lg:inline">{Number(r.flete) ? fmtMoney(Number(r.flete)) : "—"}</span>
+                  <span className="hidden w-24 text-right tabular-nums text-muted-foreground lg:inline">{Number(r.comisiones) ? fmtMoney(Number(r.comisiones)) : "—"}</span>
                   <span className="hidden w-24 text-right tabular-nums text-muted-foreground md:inline">{Number(r.ads) ? fmtMoney(Number(r.ads)) : "—"}</span>
                   <span className={cn("w-28 text-right font-semibold tabular-nums", pnlColor(pe))}>{fmtMoney(pe)}</span>
                   <span className={cn("hidden w-28 text-right tabular-nums lg:inline", pc < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(pc)}</span>

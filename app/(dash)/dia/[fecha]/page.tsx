@@ -8,6 +8,7 @@ import { notFound } from "next/navigation";
 import { fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { TIP_CONFIRMADO, TIP_ESTIMADO } from "@/lib/tips";
 
 export const revalidate = 60;
 
@@ -25,7 +26,7 @@ const estadoColor = (s: string) =>
 type Pnl = {
   courier: string; product_id: number; despachadas: number; entregadas: number; en_transito: number;
   revenue_estimado: number; profit_estimado: number; profit_confirmado: number; ads: number;
-  flete: number; tasa_proyectada: number | null;
+  flete: number; comisiones: number; tasa_proyectada: number | null;
 };
 type Guia = {
   tracking: string; courier: string; status_canonical: string; status_raw: string | null; freight_cost: number | null;
@@ -65,7 +66,7 @@ export default async function Dia({ params, searchParams }: {
   const artTo = `${nd.toISOString().slice(0, 10)}T03:00:00Z`;
 
   // El filtro de courier del panel se aplica a cada sección: P&L, guías y (según corresponda) Correo.
-  let pnlQ = db.from("daily_pnl").select("courier, product_id, despachadas, entregadas, en_transito, revenue_estimado, profit_estimado, profit_confirmado, ads, flete, tasa_proyectada").eq("dispatch_date", fecha);
+  let pnlQ = db.from("daily_pnl").select("courier, product_id, despachadas, entregadas, en_transito, revenue_estimado, profit_estimado, profit_confirmado, ads, flete, comisiones, tasa_proyectada").eq("dispatch_date", fecha);
   let guiasQ = db.from("shipments").select("tracking, courier, status_canonical, status_raw, freight_cost, province, orders(order_number, cod_amount, customer_name, order_items(product_id, qty, unit_price))").eq("dispatched_at", fecha).order("courier");
   if (courierParam) { pnlQ = pnlQ.eq("courier", courierParam); guiasQ = guiasQ.eq("courier", courierParam); }
   // Correo (cuotas) no está en shipments; solo se consulta si el filtro es Correo o Todos.
@@ -223,8 +224,8 @@ export default async function Dia({ params, searchParams }: {
       {/* Totales del día */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          { label: "Profit estimado", value: fmtMoney(tot.profitEst), color: pnlColor(tot.profitEst), tip: "Confirmado más la proyección de lo que sigue en camino, menos Ads." },
-          { label: "Confirmado", value: fmtMoney(tot.profitConf), color: tot.profitConf < 0 ? "text-destructive/80" : "text-foreground", tip: "Plata que ya cobraste, neta del gasto de Ads del período. Puede dar negativo de forma temporal: significa que todavía gastaste más en Ads de lo que maduró en ventas, y se corrige a medida que las guías se entregan." },
+          { label: "Profit estimado", value: fmtMoney(tot.profitEst), color: pnlColor(tot.profitEst), tip: TIP_ESTIMADO },
+          { label: "Confirmado", value: fmtMoney(tot.profitConf), color: tot.profitConf < 0 ? "text-destructive/80" : "text-foreground", tip: TIP_CONFIRMADO },
           { label: "Revenue estimado", value: fmtMoney(tot.revenueEst), color: "text-foreground", tip: null },
           { label: "Gasto en Ads", value: fmtMoney(tot.ads), color: "text-foreground", tip: courierParam
               ? `Pauta atribuida a los despachos de ${COURIER[courierParam]} (repartida por el P&L). El gasto crudo total de Meta del día está en la sección de abajo.`
@@ -254,7 +255,8 @@ export default async function Dia({ params, searchParams }: {
               <TableHead className="w-32">Madurez <Tip tip="Qué % de las guías de este producto ya se resolvieron (entregadas, devueltas, etc.). A más madurez, más firme el estimado. En Correo: qué % de las órdenes ya maduraron." /></TableHead>
               <TableHead className="text-right">Entregadas <Tip tip="COD: guías entregadas. Correo (prepago): pagadas/confirmadas — no hay entrega, la plata ya entró." /></TableHead>
               <TableHead className="text-right">Tasa proy. <Tip tip="COD: tasa de entrega proyectada. Correo (prepago): tasa de confirmación (pagados/generados), sin proyección de entrega." /></TableHead>
-              <TableHead className="text-right">Flete</TableHead>
+              <TableHead className="text-right">Flete <Tip tip="Gasto de envío final. Es hundido: se paga por TODA guía despachada, se entregue o no. Correo: flete plano por orden pagada." /></TableHead>
+              <TableHead className="text-right">Comis. <Tip tip="Comisión final del courier por cobrar en puerta (Urbano 5,2%, Fixy 1%), solo sobre lo efectivamente entregado. Correo: 18% de MercadoPago en 3 cuotas. Ojo: Flete + Comisiones no es todo el costo — falta el costo de producto." /></TableHead>
               <TableHead className="text-right">Ads</TableHead>
               <TableHead className="text-right">Revenue est.</TableHead>
               <TableHead className="text-right">Profit est.</TableHead>
@@ -280,6 +282,7 @@ export default async function Dia({ params, searchParams }: {
                 <TableCell className="text-right tabular-nums">{r.entregadas}{isCorreo && <span className="ml-1 text-[0.6rem] uppercase tracking-wide text-muted-foreground">pag</span>}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{r.despachadas ? fmtPct(Number(r.tasa_proyectada ?? 0)) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(Number(r.flete))}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(Number(r.comisiones))}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(Number(r.ads))}</TableCell>
                 <TableCell className="text-right tabular-nums">{fmtMoney(Number(r.revenue_estimado))}</TableCell>
                 <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(Number(r.profit_estimado)))}>{fmtMoney(Number(r.profit_estimado))}</TableCell>
@@ -287,7 +290,7 @@ export default async function Dia({ params, searchParams }: {
               );
             })}
             {!pnl.length && (
-              <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground">Sin P&amp;L para esta fecha</TableCell></TableRow>
+              <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground">Sin P&amp;L para esta fecha</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
