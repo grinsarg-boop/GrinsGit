@@ -1,4 +1,4 @@
--- 038 — Mapear los 8 códigos Urbano que faltaban (los 6 diferidos en 010 + XY/XX nuevos).
+-- 039 — Mapear los 8 códigos Urbano que faltaban (los 6 diferidos en 010 + XY/XX nuevos).
 -- Evidencia de prod (20/07/2026, raw.descripcion del WS + historiales completos de las guías):
 --   RD "Redespacho"                                → en_transito   (tras RD siguen CO/MA: vuelve al circuito; 20 eventos)
 --   XX "La devolución fue anulada"                 → en_transito   (tras XX vuelve LD salida a ruta; 3 eventos)
