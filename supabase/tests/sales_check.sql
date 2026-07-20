@@ -424,3 +424,34 @@ begin
     format('035: el objetivo de Natures es 5200 (got %s)', v->'Natures'->>'objetivo');
   raise notice '035 seed cpa_referencia: OK';
 end $t$;
+
+-- ===== 037: el sin cohorte NO se contamina con los Product Ads de ML =====
+begin;
+do $t$
+declare
+  d4 date := current_date - 8;
+  s_ads numeric; s_sin numeric;
+begin
+  -- venta COD del día + spend Meta: $20.000 con producto (ancla) y $5.000 sin producto (sin cohorte real)
+  perform upsert_order(jsonb_build_object('id', 2231, 'name', '#2231', 'created_at', d4::text || 'T12:00:00-03:00',
+    'financial_status', 'pending', 'tags', '', 'total_price', '40000',
+    'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000"}'::jsonb,
+    'line_items', '[{"title":"Natures","quantity":1,"price":"40000"}]'::jsonb));
+  perform upsert_ad_spend(jsonb_build_array(
+    jsonb_build_object('date', d4, 'ad_id','sa3','ad_name','Natures - hook','campaign_name','NATURES','spend',20000,'purchases',1),
+    jsonb_build_object('date', d4, 'ad_id','sa4','ad_name','remarketing broad','campaign_name','RMKT','spend',5000,'purchases',0)
+  ));
+  -- venta ML el mismo día con Product Ads: NO es plata de Meta, no puede pisar el sin cohorte
+  insert into ml_orders (ml_id, created_at, product, units, pack, total_amount, sale_fee, ship_cost, shipment_id, status, raw)
+    values (95003, (d4::text||'T12:00:00-03:00')::timestamptz, 'Pureza', 1, 1, 60000, 0, 0, 3, 'paid', '{}');
+  insert into ml_ad_spend (date, cost) values (d4, 3000);
+  perform recompute_daily_pnl(d4, current_date);
+
+  select ads, ads_sin_cohorte into s_ads, s_sin from sales_days(d4, null) where sale_date = d4;
+  -- la columna ads del día sí suma todo lo asignado: Meta (20.000) + ML (3.000)
+  assert round(s_ads, 2) = 23000, format('037: ads del día = Meta asignada + ML (got %s)', s_ads);
+  -- ANTES del fix: 25.000 − 23.000 = 2.000 (los ads ML, que no son Meta, se comían el sin cohorte)
+  assert round(s_sin, 2) = 5000, format('037: sin cohorte = solo spend Meta sin anclar, sin restar ML (got %s)', s_sin);
+  raise notice '037 sin-cohorte sin ML: OK';
+end $t$;
+rollback;

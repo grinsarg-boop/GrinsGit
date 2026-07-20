@@ -115,8 +115,8 @@ export default async function Tendencias({
   const sProfit: PuntoT[] = rango.map((d) => ({ x: d.date, v: d.neto }));
   const sVentas: PuntoT[] = rango.map((d) => ({ x: d.date, v: d.generadas }));
   // CPA/ROAS sobre la pauta ASIGNADA del día (misma fórmula que la tabla diaria de /ventas). No se le
-  // suma ads_sin_cohorte: por día puede ser NEGATIVO (la asignación por período + ads de ML supera el
-  // ad_spend de Meta del día natural) y rompería la serie — auditoría 20/07, verificado contra prod.
+  // suma ads_sin_cohorte: es una corrección whole-business que se reparte por período, no pertenece a
+  // un día puntual (y hasta la 037 venía contaminada con los ads de ML).
   const sCpa: PuntoT[] = rango.filter((d) => d.generadas > 0 && d.ads > 0).map((d) => ({ x: d.date, v: d.ads / d.generadas }));
   const sRoas: PuntoT[] = rango.filter((d) => d.ads > 0).map((d) => ({ x: d.date, v: d.revenueEst / d.ads }));
   // Tasa por día de VENTA, no de despacho: un día de despacho flaco (domingo con 2 guías) daba 0% o
@@ -178,7 +178,7 @@ export default async function Tendencias({
     {
       titulo: "CPA de adquisición", kind: "money", pts: sCpa, sombra: sombraDe(sCpa, 2), bueno: "baja",
       trazo: "stroke-amber-500", punto: "bg-amber-500", deltaTipo: "money",
-      tip: "Ads asignada del día ÷ ventas generadas ese día (misma fórmula que la tabla diaria de /ventas). El último día queda sombreado: la pauta de Meta termina de sincronizar unas horas después del cierre, y ese hueco se leería como un CPA buenísimo que no es. La pauta sin cohorte no entra (por día puede dar negativa). Ojo en 'Todos': si cambia la mezcla de productos, el CPA global se mueve sin que ninguna campaña haya cambiado — la referencia por producto vive en /analisis.",
+      tip: "Ads asignada del día ÷ ventas generadas ese día (misma fórmula que la tabla diaria de /ventas). El último día queda sombreado: la pauta de Meta termina de sincronizar unas horas después del cierre, y ese hueco se leería como un CPA buenísimo que no es. La pauta sin cohorte no entra: es una corrección whole-business por período, no de un día puntual. Ojo en 'Todos': si cambia la mezcla de productos, el CPA global se mueve sin que ninguna campaña haya cambiado — la referencia por producto vive en /analisis.",
     },
     {
       titulo: "Tasa de entrega por día de venta", kind: "pct", pts: sTasa, sombra: sombraDe(sTasa, 23), bueno: "sube",
