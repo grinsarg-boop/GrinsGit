@@ -3,10 +3,9 @@ import { Tip } from "@/components/ui/tooltip";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { fmtMoney } from "@/lib/format";
-import { daysAgoIso } from "@/lib/format";
+import { daysAgoIso, fmtDate, fmtMoney } from "@/lib/format";
 import {
-  ESTRUCTURA, YA_MODELADO, balance5050, fetchCashflow, porMes, saldos, type MesCaja,
+  DESDE, ESTRUCTURA, YA_MODELADO, balance5050, fetchCashflow, porMes, saldos, type MesCaja,
 } from "@/lib/cashflow";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -63,9 +62,9 @@ export default async function Caja() {
   for (const r of cf.movs)
     if (r.es_retiro && r.fecha.slice(0, 7) === mesActual)
       retirosMes.set(r.autor ?? "?", (retirosMes.get(r.autor ?? "?") ?? 0) + Number(r.monto));
-  const sinCatMovs = cf.movs.filter(
-    (m) => m.tipo === "egreso" && !m.es_retiro && m.categoria_id == null && m.fecha.slice(0, 7) >= "2026-06",
-  ).length;
+  const pendientes = cf.movs
+    .filter((m) => m.tipo === "egreso" && !m.es_retiro && m.categoria_id == null && m.fecha.slice(0, 7) >= DESDE)
+    .sort((a, b) => b.fecha.localeCompare(a.fecha));
 
   // Filas de la tabla por categoría: las fijas + cualquier categoría nueva que aparezca en la caja
   // (porMes ya la cuenta como estructura; acá solo hay que listarla).
@@ -139,11 +138,26 @@ export default async function Caja() {
         })}
       </div>
 
-      {sinCatMovs > 0 && (
-        <p className="text-sm text-amber-600 dark:text-amber-400">
-          {sinCatMovs} egresos siguen sin categoría en la app Cashflow y se restan como estructura
-          (conservador). Categorizalos allá para afinar el neto real.
-        </p>
+      {/* Egresos sin categoría: visibles hasta que se resuelvan en la app Cashflow */}
+      {pendientes.length > 0 && (
+        <Card>
+          <CardContent className="pt-6">
+            <h2 className="mb-3 text-sm font-medium text-amber-600 dark:text-amber-400">
+              Registros pendientes ({pendientes.length}){" "}
+              <Tip tip="Egresos sin categoría en la app Cashflow. Se restan como estructura (conservador): el neto real solo puede mejorar cuando los categorices allá. Este panel desaparece solo cuando no queda ninguno." />
+            </h2>
+            <div className="space-y-1.5 text-sm tabular-nums">
+              {pendientes.map((m) => (
+                <div key={`${m.fecha}-${m.monto}-${m.descripcion}`} className="flex justify-between gap-4">
+                  <span className="truncate text-muted-foreground">
+                    {fmtDate(m.fecha)} · «{m.descripcion || "sin descripción"}» ({m.autor ?? "?"})
+                  </span>
+                  <span>{fmtMoney(m.monto)}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Egresos por categoría × mes */}

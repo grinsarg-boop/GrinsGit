@@ -9,8 +9,8 @@ const CATS: Cat[] = [
 ];
 
 const mov = (o: Partial<Mov>): Mov => ({
-  tipo: "egreso", monto: 0, caja_id: 1, caja_destino_id: null,
-  categoria_id: null, fecha: "2026-07-10", autor: null, es_retiro: false, ...o,
+  tipo: "egreso", monto: 0, caja_id: 1, caja_destino_id: null, categoria_id: null,
+  descripcion: null, fecha: "2026-07-10", autor: null, es_retiro: false, ...o,
 });
 
 describe("porMes", () => {

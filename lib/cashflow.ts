@@ -13,6 +13,7 @@ export type Mov = {
   caja_id: number;
   caja_destino_id: number | null;
   categoria_id: number | null;
+  descripcion: string | null;
   fecha: string;
   autor: string | null;
   es_retiro: boolean;
@@ -38,7 +39,7 @@ export async function fetchCashflow() {
     });
   // ponytail: trae todo (~360 filas hoy); paginar con Range cuando pase de 1000 (límite PostgREST)
   const [movs, cajas, cats, cobrar] = await Promise.all([
-    j("movimientos?select=tipo,monto,caja_id,caja_destino_id,categoria_id,fecha,autor,es_retiro"),
+    j("movimientos?select=tipo,monto,caja_id,caja_destino_id,categoria_id,descripcion,fecha,autor,es_retiro"),
     j("cajas?select=id,nombre,moneda&order=orden.asc"),
     j("categorias?select=id,nombre"),
     j("cobrar?select=quien,monto&cobrado=eq.false"),
