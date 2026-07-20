@@ -1,9 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Tip } from "@/components/ui/tooltip";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import { fmtDate, fmtMoney } from "@/lib/format";
+import { TrabadosTabla, type TrabadoRow } from "@/components/trabados-tabla";
+import { fmtMoney } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const revalidate = 60;
@@ -56,53 +54,12 @@ export default async function Trabados() {
       {rows.length > 0 && (
         <Card>
           <CardContent className="pt-6">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Guía</TableHead>
-                  <TableHead>Pedido</TableHead>
-                  <TableHead>Producto</TableHead>
-                  <TableHead>Provincia</TableHead>
-                  <TableHead className="text-right">COD</TableHead>
-                  <TableHead className="text-right">Despachada</TableHead>
-                  <TableHead>Último movimiento</TableHead>
-                  <TableHead className="text-right">Días quieta</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={`${r.courier}-${r.tracking}`}>
-                    <TableCell>
-                      {r.courier === "urbano" ? (
-                        <a href={seguimientoUrbano(r.tracking)} target="_blank" rel="noreferrer"
-                           title="Ver seguimiento en Urbano (para reclamar)"
-                           className="underline decoration-dotted underline-offset-2 hover:text-foreground">
-                          {COURIER[r.courier]} {r.tracking}
-                        </a>
-                      ) : (
-                        <span>{COURIER[r.courier] ?? r.courier} {r.tracking}</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      #{r.order_number ?? "?"}{r.customer_name ? ` · ${r.customer_name}` : ""}
-                    </TableCell>
-                    <TableCell>{r.product ?? "—"}</TableCell>
-                    <TableCell className="text-muted-foreground">{r.province ?? "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmtMoney(r.cod_amount)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtDate(r.dispatched_at)}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {fmtDate(r.last_move.slice(0, 10))} · {r.status_canonical}
-                      {r.status_raw ? ` (${r.status_raw})` : ""}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className="rounded bg-orange-500/15 px-1.5 py-0.5 font-semibold tabular-nums text-orange-600 dark:text-orange-500">
-                        {r.dias}
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <TrabadosTabla
+              rows={rows.map((r): TrabadoRow => ({
+                ...r,
+                href: r.courier === "urbano" ? seguimientoUrbano(r.tracking) : null,
+              }))}
+            />
           </CardContent>
         </Card>
       )}
