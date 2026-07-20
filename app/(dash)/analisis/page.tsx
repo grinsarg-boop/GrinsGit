@@ -5,6 +5,8 @@ import {
 } from "@/components/ui/table";
 import Link from "next/link";
 import { Donut, PALETA, type Slice } from "@/components/donut";
+import { Curva, type Punto } from "@/components/curva";
+import { Delta } from "@/components/delta";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -12,38 +14,47 @@ import { cn } from "@/lib/utils";
 export const revalidate = 60;
 
 // Página de cortes transversales. No calcula plata nueva: reagrupa lo que ya cierra en / y /ventas por
-// ejes que esos paneles no tienen (zona, desenlace, producto × courier). Las RPCs son de la 034.
+// ejes que esos paneles no tienen (zona, desenlace, producto × canal, pack, maduración). Además compara
+// contra el período anterior de igual largo (segunda llamada a las mismas RPCs). RPCs de la 034/035.
 type PnlRow = {
   courier: string; product_id: number | null; product: string;
   despachadas: number; entregadas: number;
-  revenue: number; flete: number; comisiones: number; costo_producto: number; ads: number; profit: number;
+  revenue: number; flete: number; comisiones: number; costo_producto: number; ads: number;
+  profit_conf: number; profit_est: number;
 };
 type ZonaRow = {
   province: string; guias: number; entregadas: number; devueltas: number;
-  cod_cobrado: number; flete: number; margen_bruto: number;
+  cod_cobrado: number; flete: number; flete_perdido: number; margen_bruto: number;
 };
 type DesenlaceRow = { estado: string; guias: number; cod: number };
+type PackRow = {
+  pack: number; guias: number; entregadas: number; devueltas: number;
+  cod_cobrado: number; flete: number; margen_bruto: number;
+};
 
 const COURIER: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML" };
 const ESTADO: Record<string, string> = {
   entregado: "Entregado", en_la_calle: "En la calle", devuelto: "Devuelto", rehusado: "Rehusado",
   en_devolucion: "En devolución", no_despachado: "No despachado", siniestro: "Siniestro",
 };
-// El orden fija el color: verde lo bueno, gris lo que sigue abierto, rojos las pérdidas.
-const ESTADO_COLOR: Record<string, string> = {
-  entregado: "stroke-emerald-500", en_la_calle: "stroke-sky-500", devuelto: "stroke-rose-500",
-  rehusado: "stroke-rose-400", en_devolucion: "stroke-amber-500", no_despachado: "stroke-slate-400",
-  siniestro: "stroke-violet-500",
+const ESTADO_COLOR: Record<string, { s: string; b: string }> = {
+  entregado: { s: "stroke-emerald-500", b: "bg-emerald-500" },
+  en_la_calle: { s: "stroke-sky-500", b: "bg-sky-500" },
+  devuelto: { s: "stroke-rose-500", b: "bg-rose-500" },
+  rehusado: { s: "stroke-rose-400", b: "bg-rose-400" },
+  en_devolucion: { s: "stroke-amber-500", b: "bg-amber-500" },
+  no_despachado: { s: "stroke-slate-400", b: "bg-slate-400" },
+  siniestro: { s: "stroke-violet-500", b: "bg-violet-500" },
 };
-
 const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
+const N = (v: number | null | undefined) => Number(v ?? 0);
 
 export default async function Analisis({
   searchParams,
 }: {
-  searchParams: Promise<{ courier?: string; desde?: string; hasta?: string }>;
+  searchParams: Promise<{ courier?: string; desde?: string; hasta?: string; producto?: string }>;
 }) {
-  const { courier, desde, hasta } = await searchParams;
+  const { courier, desde, hasta, producto } = await searchParams;
   const db = supabaseAdmin();
   const today = daysAgoIso(0);
   const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -52,57 +63,89 @@ export default async function Analisis({
   if (from > to) from = to;
   const rangeLabel = `${fmtDate(from)} → ${fmtDate(to)}`;
   const courierParam = courier === "urbano" || courier === "fixy" || courier === "correo" || courier === "ml" ? courier : null;
+  const prodParam = producto && /^\d+$/.test(producto) ? Number(producto) : null;
 
-  const [{ data: pnlRaw }, { data: zonasRaw }, { data: desRaw }] = await Promise.all([
+  // Período anterior de IGUAL largo, contiguo hacia atrás. La comparativa se apoya en esto.
+  const largoDias = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1;
+  const prevTo = new Date(Date.parse(from) - 86400000).toISOString().slice(0, 10);
+  const prevFrom = new Date(Date.parse(prevTo) - (largoDias - 1) * 86400000).toISOString().slice(0, 10);
+
+  const [
+    { data: pnlRaw }, { data: zonasRaw }, { data: desRaw }, { data: packRaw }, { data: madRaw },
+    { data: pnlPrevRaw }, { data: cpaRef }, { data: prodsRaw },
+  ] = await Promise.all([
     db.rpc("analisis_pnl", { p_from: from, p_to: to, p_courier: courierParam }),
-    db.rpc("analisis_zonas", { p_from: from, p_to: to, p_courier: courierParam }),
-    db.rpc("analisis_desenlaces", { p_from: from, p_to: to, p_courier: courierParam }),
+    db.rpc("analisis_zonas", { p_from: from, p_to: to, p_courier: courierParam, p_producto: prodParam }),
+    db.rpc("analisis_desenlaces", { p_from: from, p_to: to, p_courier: courierParam, p_producto: prodParam }),
+    db.rpc("analisis_packs", { p_from: from, p_to: to, p_courier: courierParam, p_producto: prodParam }),
+    db.rpc("analisis_maduracion", { p_desde: daysAgoIso(45), p_courier: courierParam, p_producto: prodParam }),
+    db.rpc("analisis_pnl", { p_from: prevFrom, p_to: prevTo, p_courier: courierParam }),
+    db.from("settings").select("value").eq("key", "cpa_referencia").maybeSingle(),
+    db.from("products").select("id, name").order("id"),
   ]);
-  const pnl = (pnlRaw ?? []) as PnlRow[];
+  // analisis_pnl ya viene por producto → el filtro es un where en el cliente, sin RPC extra
+  const pnl = ((pnlRaw ?? []) as PnlRow[]).filter((r) => !prodParam || r.product_id === prodParam);
+  const pnlPrev = ((pnlPrevRaw ?? []) as PnlRow[]).filter((r) => !prodParam || r.product_id === prodParam);
+  const prods = (prodsRaw ?? []) as { id: number; name: string }[];
   const zonas = (zonasRaw ?? []) as ZonaRow[];
   const desenlaces = (desRaw ?? []) as DesenlaceRow[];
+  const packs = (packRaw ?? []) as PackRow[];
+  const maduracion = ((madRaw ?? []) as Punto[]).filter((p) => p.dias >= 0);
+  const cpaObj = (cpaRef?.value ?? {}) as Record<string, { objetivo: number; maximo: number }>;
 
-  const N = (v: number | null | undefined) => Number(v ?? 0);
-  const sum = (k: keyof PnlRow) => pnl.reduce((s, r) => s + N(r[k] as number), 0);
-  const revenue = sum("revenue"), flete = sum("flete"), comis = sum("comisiones");
-  const costo = sum("costo_producto"), ads = sum("ads"), profit = sum("profit");
+  const sumOf = (rows: PnlRow[], k: keyof PnlRow) => rows.reduce((s, r) => s + N(r[k] as number), 0);
+  const revenue = sumOf(pnl, "revenue"), flete = sumOf(pnl, "flete"), comis = sumOf(pnl, "comisiones");
+  const costo = sumOf(pnl, "costo_producto"), ads = sumOf(pnl, "ads");
+  const profitConf = sumOf(pnl, "profit_conf"), profitEst = sumOf(pnl, "profit_est");
+  const despachos = sumOf(pnl, "despachadas"), entregas = sumOf(pnl, "entregadas");
+  // mismos totales del período anterior, para los Δ
+  const pRev = sumOf(pnlPrev, "revenue"), pProfitEst = sumOf(pnlPrev, "profit_est");
+  const pDesp = sumOf(pnlPrev, "despachadas"), pEnt = sumOf(pnlPrev, "entregadas");
+  const tasa = despachos ? entregas / despachos : 0;
+  const pTasa = pDesp ? pEnt / pDesp : 0;
 
-  // 1 · composición del peso cobrado
+  // 1 · composición del peso
   const composicion: Slice[] = [
-    { label: "Flete", value: flete, className: "stroke-rose-500" },
-    { label: "Ads", value: ads, className: "stroke-amber-500" },
-    { label: "Comisiones", value: comis, className: "stroke-slate-400" },
-    { label: "Costo de producto", value: costo, className: "stroke-violet-400" },
-    { label: "Profit", value: Math.max(profit, 0), className: "stroke-emerald-500" },
+    { label: "Flete", value: flete, className: "stroke-rose-500", dot: "bg-rose-500" },
+    { label: "Ads", value: ads, className: "stroke-amber-500", dot: "bg-amber-500" },
+    { label: "Comisiones", value: comis, className: "stroke-slate-400", dot: "bg-slate-400" },
+    { label: "Costo de producto", value: costo, className: "stroke-violet-400", dot: "bg-violet-400" },
+    { label: "Profit confirmado", value: Math.max(profitConf, 0), className: "stroke-emerald-500", dot: "bg-emerald-500" },
   ].filter((s) => s.value > 0);
 
-  // 2 · por canal
-  const porCanal = [...pnl.reduce((m, r) => {
-    const g = m.get(r.courier) ?? { courier: r.courier, despachadas: 0, entregadas: 0, profit: 0 };
-    g.despachadas += r.despachadas; g.entregadas += r.entregadas; g.profit += N(r.profit);
-    return m.set(r.courier, g);
-  }, new Map<string, { courier: string; despachadas: number; entregadas: number; profit: number }>()).values()]
-    .sort((a, b) => b.profit - a.profit);
+  const agrupar = <K extends string>(rows: PnlRow[], key: (r: PnlRow) => K) =>
+    [...rows.reduce((m, r) => {
+      const k = key(r);
+      const g = m.get(k) ?? { k, despachadas: 0, entregadas: 0, profitConf: 0, profitEst: 0 };
+      g.despachadas += r.despachadas; g.entregadas += r.entregadas;
+      g.profitConf += N(r.profit_conf); g.profitEst += N(r.profit_est);
+      return m.set(k, g);
+    }, new Map<K, { k: K; despachadas: number; entregadas: number; profitConf: number; profitEst: number }>()).values()]
+      .sort((a, b) => b.profitEst - a.profitEst);
 
-  // 3 · por producto
-  const porProducto = [...pnl.reduce((m, r) => {
-    const g = m.get(r.product) ?? { product: r.product, despachadas: 0, entregadas: 0, profit: 0 };
-    g.despachadas += r.despachadas; g.entregadas += r.entregadas; g.profit += N(r.profit);
-    return m.set(r.product, g);
-  }, new Map<string, { product: string; despachadas: number; entregadas: number; profit: number }>()).values()]
-    .sort((a, b) => b.profit - a.profit);
+  const porCanal = agrupar(pnl, (r) => r.courier);
+  const porProducto = agrupar(pnl, (r) => r.product);
+  const profitProdPrev = new Map(agrupar(pnlPrev, (r) => r.product).map((g) => [g.k, g.profitEst]));
+  // CPA actual por producto (ads / despachos) para contrastar con la referencia
+  const cpaProd = new Map(porProducto.map((g) => [g.k, {
+    cpa: g.despachadas ? pnl.filter((r) => r.product === g.k).reduce((s, r) => s + N(r.ads), 0) / g.despachadas : 0,
+  }]));
 
-  // 5 · concentración de volumen: top 6 provincias + el resto agrupado
+  // 5 · concentración
   const porVolumen = [...zonas].sort((a, b) => b.guias - a.guias);
   const top6 = porVolumen.slice(0, 6);
   const resto = porVolumen.slice(6).reduce((s, z) => s + z.guias, 0);
   const concentracion: Slice[] = [
-    ...top6.map((z, i) => ({ label: z.province, value: z.guias, className: PALETA[i] })),
-    ...(resto > 0 ? [{ label: `Otras ${porVolumen.length - 6}`, value: resto, className: "stroke-slate-300" }] : []),
+    ...top6.map((z, i) => ({ label: z.province, value: z.guias, className: PALETA[i].s, dot: PALETA[i].b })),
+    ...(resto > 0 ? [{ label: `Otras ${porVolumen.length - 6}`, value: resto, className: "stroke-slate-300", dot: "bg-slate-300" }] : []),
   ];
   const totalGuias = porVolumen.reduce((s, z) => s + z.guias, 0);
 
-  // 7 · matriz entrega producto × courier (solo celdas con volumen suficiente para no leer ruido)
+  // 8 · flete perdido (Pareto): provincias ordenadas por flete quemado en devoluciones
+  const pareto = [...zonas].filter((z) => N(z.flete_perdido) > 0).sort((a, b) => N(b.flete_perdido) - N(a.flete_perdido));
+  const totalPerdido = pareto.reduce((s, z) => s + N(z.flete_perdido), 0);
+
+  // matriz producto × canal
   const canales = [...new Set(pnl.map((r) => r.courier))].sort();
   const productos = [...new Set(pnl.map((r) => r.product))].sort();
   const celda = (p: string, c: string) => {
@@ -111,14 +154,16 @@ export default async function Analisis({
     return { tasa: r.entregadas / r.despachadas, n: r.despachadas };
   };
 
-  const hrefWith = (o: { courier?: string; desde?: string; hasta?: string }) => {
+  const hrefWith = (o: { courier?: string; desde?: string; hasta?: string; producto?: string }) => {
     const c = o.courier !== undefined ? o.courier : (courier ?? "");
     const dd = o.desde !== undefined ? o.desde : (desde ?? "");
     const hh = o.hasta !== undefined ? o.hasta : (hasta ?? "");
+    const pp = o.producto !== undefined ? o.producto : (producto ?? "");
     const q = new URLSearchParams();
     if (c) q.set("courier", c);
     if (dd) q.set("desde", dd);
     if (hh) q.set("hasta", hh);
+    if (pp) q.set("producto", pp);
     const s = q.toString();
     return s ? `/analisis?${s}` : "/analisis";
   };
@@ -138,6 +183,13 @@ export default async function Analisis({
   ];
 
   const maxMargen = Math.max(...zonas.map((z) => Math.abs(N(z.margen_bruto))), 1);
+  const maxPackM = Math.max(...packs.map((p) => Math.abs(N(p.margen_bruto))), 1);
+
+  const chip = (active: boolean) => cn(
+    "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
+    active ? "bg-foreground text-background shadow-sm hover:shadow"
+           : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+  );
 
   return (
     <main className="space-y-6">
@@ -146,31 +198,31 @@ export default async function Analisis({
         <span className="text-sm tabular-nums text-muted-foreground">{rangeLabel}</span>
       </div>
 
-      {/* mismos controles que el resto del panel: todo el estado va en la URL */}
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <div className="flex flex-wrap items-center gap-1">
-          {presets.map(([label, d, h]) => {
-            const active = from === d && to === h;
-            return (
-              <Link key={label} href={hrefWith({ desde: d, hasta: h })}
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-                      active ? "bg-foreground text-background shadow-sm hover:shadow"
-                             : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
-                    )}>{label}</Link>
-            );
-          })}
+          {presets.map(([label, d, h]) => (
+            <Link key={label} href={hrefWith({ desde: d, hasta: h })}
+                  aria-current={from === d && to === h ? "page" : undefined} className={chip(from === d && to === h)}>{label}</Link>
+          ))}
         </div>
         <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
           {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
             <Link key={val} href={hrefWith({ courier: val })}
                   aria-current={(courier ?? "") === val ? "page" : undefined}
-                  className={cn(
-                    "rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
+                  className={cn("rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
                     (courier ?? "") === val ? "bg-foreground text-background shadow-sm hover:shadow"
-                                            : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
-                  )}>{label}</Link>
+                                            : "text-muted-foreground hover:bg-background/70 hover:text-foreground")}>{label}</Link>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          <Link href={hrefWith({ producto: "" })} aria-current={!prodParam ? "page" : undefined} className={chip(!prodParam)}>
+            Todos los productos
+          </Link>
+          {prods.map((pr) => (
+            <Link key={pr.id} href={hrefWith({ producto: String(pr.id) })}
+                  aria-current={prodParam === pr.id ? "page" : undefined} className={chip(prodParam === pr.id)}>
+              {pr.name}
+            </Link>
           ))}
         </div>
       </div>
@@ -179,22 +231,48 @@ export default async function Analisis({
         <Card><CardContent className="pt-5 text-sm text-muted-foreground">Sin datos en el rango elegido.</CardContent></Card>
       ) : (
       <>
+      {/* 0 · comparativa contra el período anterior */}
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+              Contra el período anterior
+              <Tip tip="Cada número comparado con los mismos días inmediatamente anteriores (igual largo). Verde = mejoró, rojo = empeoró — el sentido depende de la métrica: en flete y devoluciones, subir es malo." />
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">vs {fmtDate(prevFrom)} → {fmtDate(prevTo)}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {[
+              { label: "Profit estimado", value: fmtMoney(profitEst), node: <Delta actual={profitEst} previo={pProfitEst} /> },
+              { label: "Cobrado", value: fmtMoney(revenue), node: <Delta actual={revenue} previo={pRev} /> },
+              { label: "Despachos", value: despachos.toLocaleString("es-AR"), node: <Delta actual={despachos} previo={pDesp} tipo="num" /> },
+              { label: "Tasa de entrega", value: fmtPct(tasa), node: <Delta actual={tasa} previo={pTasa} tipo="pct" /> },
+            ].map((k) => (
+              <div key={k.label} className="sube rounded-lg bg-muted/40 p-3">
+                <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{k.label}</div>
+                <div className={cn("text-lg font-semibold tabular-nums", k.label === "Profit estimado" ? pnlColor(profitEst) : "text-foreground")}>{k.value}</div>
+                <div className="pt-0.5">{k.node}</div>
+                {k.label === "Profit estimado" && (
+                  <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">confirmado {fmtMoney(profitConf)}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* 1 · a dónde va cada peso */}
       <Card>
         <CardContent className="space-y-3 pt-5">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               A dónde va cada peso que cobrás
-              <Tip tip="Sobre el COD efectivamente cobrado del período. El flete es hundido: se paga por toda guía despachada, entregue o no, y por eso pesa más de lo que uno espera." />
+              <Tip tip="Sobre el COD efectivamente cobrado del período. El flete es hundido: se paga por toda guía despachada, entregue o no, por eso pesa más de lo que uno espera." />
             </span>
             <span className="text-xs tabular-nums text-muted-foreground">cobrado {fmtMoney(revenue)}</span>
           </div>
-          <Donut slices={composicion} centro={fmtPct(profit / (revenue || 1))} subcentro="queda" />
-          {profit < 0 && (
-            <p className="text-xs text-destructive">
-              El profit del período es negativo, así que la tajada verde no se dibuja: los costos se comieron todo lo cobrado.
-            </p>
-          )}
+          <Donut slices={composicion} centro={fmtPct(profitConf / (revenue || 1))} subcentro="queda" />
+          {profitConf < 0 && <p className="text-xs text-destructive">Profit confirmado negativo en el período: los costos ya pagados superan lo cobrado hasta ahora. Con cohortes recientes es esperable — mirá el estimado.</p>}
         </CardContent>
       </Card>
 
@@ -203,35 +281,32 @@ export default async function Analisis({
         <CardContent className="space-y-3 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
             Profit por canal
-            <Tip tip="Ojo con leer el volumen como resultado: el canal que más despacha no es necesariamente el que más deja." />
+            <Tip tip="La dona y la columna grande usan el profit ESTIMADO (confirmado + proyección de lo que sigue en la calle): en rangos recientes el confirmado solo da muy negativo porque el flete y los ads ya se pagaron pero el COD todavía no maduró — no es pérdida, es cohorte inmadura. El confirmado queda al lado para ver cuánto ya es plata firme." />
           </span>
-          <Donut
-            slices={porCanal.filter((c) => c.profit > 0).map((c, i) => ({
-              label: COURIER[c.courier] ?? c.courier, value: c.profit, className: PALETA[i],
-            }))}
-          />
+          <Donut slices={porCanal.filter((c) => c.profitEst > 0).map((c, i) => ({ label: COURIER[c.k] ?? c.k, value: c.profitEst, className: PALETA[i].s, dot: PALETA[i].b }))} />
+          {porCanal.some((c) => c.profitEst <= 0) && (
+            <p className="text-xs text-muted-foreground">
+              Fuera de la dona (estimado ≤ 0):{" "}
+              {porCanal.filter((c) => c.profitEst <= 0).map((c) => `${COURIER[c.k] ?? c.k} (${fmtMoney(c.profitEst)})`).join(" · ")}
+            </p>
+          )}
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Canal</TableHead>
-                <TableHead className="text-right">Despachos</TableHead>
-                <TableHead className="text-right">Entrega</TableHead>
-                <TableHead className="text-right">Profit</TableHead>
-                <TableHead className="text-right">Profit por despacho</TableHead>
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow>
+              <TableHead>Canal</TableHead><TableHead className="text-right">Despachos</TableHead>
+              <TableHead className="text-right">Entrega</TableHead>
+              <TableHead className="text-right text-amber-600 dark:text-amber-500">Profit estimado</TableHead>
+              <TableHead className="text-right">confirmado</TableHead>
+              <TableHead className="text-right">Est. por despacho</TableHead>
+            </TableRow></TableHeader>
             <TableBody>
               {porCanal.map((c) => (
-                <TableRow key={c.courier}>
-                  <TableCell className="font-medium">{COURIER[c.courier] ?? c.courier}</TableCell>
+                <TableRow key={c.k}>
+                  <TableCell className="font-medium">{COURIER[c.k] ?? c.k}</TableCell>
                   <TableCell className="text-right tabular-nums">{c.despachadas.toLocaleString("es-AR")}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {c.despachadas ? fmtPct(c.entregadas / c.despachadas) : "—"}
-                  </TableCell>
-                  <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(c.profit))}>{fmtMoney(c.profit)}</TableCell>
-                  <TableCell className={cn("text-right tabular-nums", pnlColor(c.profit))}>
-                    {c.despachadas ? fmtMoney(c.profit / c.despachadas) : "—"}
-                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{c.despachadas ? fmtPct(c.entregadas / c.despachadas) : "—"}</TableCell>
+                  <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(c.profitEst))}>{fmtMoney(c.profitEst)}</TableCell>
+                  <TableCell className={cn("text-right tabular-nums", c.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(c.profitConf)}</TableCell>
+                  <TableCell className={cn("text-right tabular-nums", pnlColor(c.profitEst))}>{c.despachadas ? fmtMoney(c.profitEst / c.despachadas) : "—"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -239,66 +314,43 @@ export default async function Analisis({
         </CardContent>
       </Card>
 
-      {/* 3 · productos */}
+      {/* 3 · productos, con Δ y CPA vs referencia */}
       <Card>
         <CardContent className="space-y-3 pt-5">
-          <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">Profit por producto</span>
-          <Donut
-            slices={porProducto.filter((p) => p.profit > 0).map((p, i) => ({
-              label: p.product, value: p.profit, className: PALETA[i % PALETA.length],
-            }))}
-          />
-          {porProducto.some((p) => p.profit < 0) && (
-            <p className="text-xs text-muted-foreground">
-              A pérdida en el período:{" "}
-              {porProducto.filter((p) => p.profit < 0).map((p) => `${p.product} (${fmtMoney(p.profit)})`).join(" · ")}
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* 4 · zonas */}
-      <Card>
-        <CardContent className="space-y-3 pt-5">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-              Zonas
-              <Tip tip="Margen bruto = COD cobrado − flete de TODAS las guías de esa provincia. No baja a profit porque ni el costo de producto ni los Ads se pueden imputar por zona sin inventar un reparto. Ordenado de peor a mejor: lo de arriba es donde se está yendo la plata." />
-            </span>
-            <span className="text-xs text-muted-foreground">{zonas.length} provincias · de peor a mejor margen</span>
-          </div>
+          <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+            Productos
+            <Tip tip="Profit ESTIMADO de cada producto (el confirmado al lado — en rangos recientes es bajo porque las cohortes no maduraron, no porque se pierda plata), la variación contra el período anterior, y el CPA actual (ads ÷ despachos) contra la referencia del vault. Verde ≤ objetivo, ámbar entre objetivo y máximo, rojo > máximo. La referencia es guía, no regla: manda producto × zona." />
+          </span>
+          <Donut slices={porProducto.filter((p) => p.profitEst > 0).map((p, i) => ({ label: p.k, value: p.profitEst, className: PALETA[i % PALETA.length].s, dot: PALETA[i % PALETA.length].b }))} />
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Provincia</TableHead>
-                <TableHead className="text-right">Guías</TableHead>
-                <TableHead className="text-right">Entrega</TableHead>
-                <TableHead className="text-right">COD cobrado</TableHead>
-                <TableHead className="text-right">Flete</TableHead>
-                <TableHead className="text-right">Margen bruto</TableHead>
-                <TableHead className="w-28" />
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow>
+              <TableHead>Producto</TableHead><TableHead className="text-right">Despachos</TableHead>
+              <TableHead className="text-right">Entrega</TableHead>
+              <TableHead className="text-right text-amber-600 dark:text-amber-500">Profit estimado</TableHead>
+              <TableHead className="text-right">confirmado</TableHead>
+              <TableHead className="text-right">vs anterior</TableHead><TableHead className="text-right">CPA vs objetivo</TableHead>
+            </TableRow></TableHeader>
             <TableBody>
-              {zonas.map((z) => {
-                const tasa = z.guias ? z.entregadas / z.guias : 0;
-                const m = N(z.margen_bruto);
+              {porProducto.map((p) => {
+                const ref = cpaObj[p.k];
+                const cpa = cpaProd.get(p.k)?.cpa ?? 0;
+                const estado = !ref || !cpa ? null : cpa <= ref.objetivo ? "ok" : cpa <= ref.maximo ? "vig" : "mal";
                 return (
-                  <TableRow key={z.province}>
-                    <TableCell className="font-medium">{z.province}</TableCell>
-                    <TableCell className="text-right tabular-nums">{z.guias.toLocaleString("es-AR")}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums",
-                      tasa < 0.35 ? "text-destructive" : tasa < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-muted-foreground")}>
-                      {fmtPct(tasa)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.cod_cobrado))}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.flete))}</TableCell>
-                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
-                    <TableCell>
-                      <div className="h-1.5 w-full rounded bg-muted">
-                        <div className={cn("h-1.5 rounded", m >= 0 ? "bg-emerald-500" : "bg-destructive")}
-                             style={{ width: `${Math.abs(m) / maxMargen * 100}%` }} />
-                      </div>
+                  <TableRow key={p.k}>
+                    <TableCell className="font-medium">{p.k}</TableCell>
+                    <TableCell className="text-right tabular-nums">{p.despachadas.toLocaleString("es-AR")}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{p.despachadas ? fmtPct(p.entregadas / p.despachadas) : "—"}</TableCell>
+                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(p.profitEst))}>{fmtMoney(p.profitEst)}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", p.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(p.profitConf)}</TableCell>
+                    <TableCell className="text-right"><Delta actual={p.profitEst} previo={profitProdPrev.get(p.k) ?? NaN} /></TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {estado ? (
+                        <Tip tip={`Objetivo ${fmtMoney(ref.objetivo)} · máximo ${fmtMoney(ref.maximo)}`}>
+                          <span className={cn(estado === "ok" ? "text-emerald-600 dark:text-emerald-400" : estado === "vig" ? "text-amber-600 dark:text-amber-500" : "text-destructive")}>
+                            {fmtMoney(cpa)}
+                          </span>
+                        </Tip>
+                      ) : <span className="text-muted-foreground/50">—</span>}
                     </TableCell>
                   </TableRow>
                 );
@@ -308,51 +360,160 @@ export default async function Analisis({
         </CardContent>
       </Card>
 
-      {/* 5 · concentración */}
+      {/* 4 · packs */}
+      {packs.length > 0 && (
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+            Por tamaño de pack
+            <Tip tip="Solo pedidos de una línea (con carrito mixto el pack no está definido). La tasa de entrega suele subir con el tamaño del pack: un pack más grande no solo es más ticket, también vuelve menos." />
+          </span>
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Pack</TableHead><TableHead className="text-right">Guías</TableHead>
+              <TableHead className="text-right">Entrega</TableHead><TableHead className="text-right">Devolución</TableHead>
+              <TableHead className="text-right">Margen bruto</TableHead><TableHead className="w-28" />
+            </TableRow></TableHeader>
+            <TableBody>
+              {packs.map((p) => {
+                const t = p.guias ? p.entregadas / p.guias : 0;
+                const dev = p.guias ? p.devueltas / p.guias : 0;
+                const m = N(p.margen_bruto);
+                return (
+                  <TableRow key={p.pack}>
+                    <TableCell className="font-medium">×{p.pack}</TableCell>
+                    <TableCell className="text-right tabular-nums">{p.guias.toLocaleString("es-AR")}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-emerald-600 dark:text-emerald-400")}>{fmtPct(t)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(dev)}</TableCell>
+                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
+                    <TableCell><div className="h-1.5 w-full rounded bg-muted"><div className={cn("barra h-1.5 rounded", m >= 0 ? "bg-emerald-500" : "bg-destructive")} style={{ width: `${Math.abs(m) / maxPackM * 100}%` }} /></div></TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+      )}
+
+      {/* 5 · zonas */}
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+              Zonas
+              <Tip tip="Margen bruto = COD cobrado − flete de TODAS las guías de la provincia. No baja a profit porque el costo de producto y los Ads no se pueden imputar por zona sin inventar un reparto. De peor a mejor: arriba es donde se va la plata." />
+            </span>
+            <span className="text-xs text-muted-foreground">{zonas.length} provincias · de peor a mejor</span>
+          </div>
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Provincia</TableHead><TableHead className="text-right">Guías</TableHead>
+              <TableHead className="text-right">Entrega</TableHead><TableHead className="text-right">COD cobrado</TableHead>
+              <TableHead className="text-right">Flete</TableHead><TableHead className="text-right">Margen bruto</TableHead>
+              <TableHead className="w-28" />
+            </TableRow></TableHeader>
+            <TableBody>
+              {zonas.map((z) => {
+                const t = z.guias ? z.entregadas / z.guias : 0;
+                const m = N(z.margen_bruto);
+                return (
+                  <TableRow key={z.province}>
+                    <TableCell className="font-medium">{z.province}</TableCell>
+                    <TableCell className="text-right tabular-nums">{z.guias.toLocaleString("es-AR")}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-muted-foreground")}>{fmtPct(t)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.cod_cobrado))}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.flete))}</TableCell>
+                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
+                    <TableCell><div className="h-1.5 w-full rounded bg-muted"><div className={cn("barra h-1.5 rounded", m >= 0 ? "bg-emerald-500" : "bg-destructive")} style={{ width: `${Math.abs(m) / maxMargen * 100}%` }} /></div></TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {/* 6 · Pareto del flete perdido */}
+      {pareto.length > 0 && (
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+              Dónde se quema el flete de devoluciones
+              <Tip tip="Flete de las guías que volvieron (devuelto, rehusado, en devolución), por provincia. Es el agujero del COD: plata que se paga sin cobrar nada. Ordenado por monto — arreglar las primeras es donde más rinde." />
+            </span>
+            <span className="text-xs tabular-nums text-destructive">{fmtMoney(totalPerdido)} quemados</span>
+          </div>
+          {(() => { let ac = 0; return pareto.slice(0, 8).map((z) => {
+            ac += N(z.flete_perdido);
+            return (
+              <div key={z.province} className="flex items-center gap-3 text-sm">
+                <span className="w-28 flex-none truncate font-medium">{z.province}</span>
+                <div className="h-4 flex-1 rounded bg-muted">
+                  <div className="barra h-4 rounded bg-destructive/80" style={{ width: `${N(z.flete_perdido) / N(pareto[0].flete_perdido) * 100}%` }} />
+                </div>
+                <span className="w-24 flex-none text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.flete_perdido))}</span>
+                <span className="w-12 flex-none text-right text-xs tabular-nums text-muted-foreground">{fmtPct(ac / totalPerdido)}</span>
+              </div>
+            );
+          }); })()}
+          <p className="text-xs text-muted-foreground">La última columna es el acumulado: cuánto del flete perdido total explican las provincias hasta esa fila.</p>
+        </CardContent>
+      </Card>
+      )}
+
+      {/* 7 · concentración */}
       <Card>
         <CardContent className="space-y-3 pt-5">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               Concentración de volumen
-              <Tip tip="Cuánto del despacho se juega en pocas provincias. Cuanto más concentrado, más pesa mejorar la tasa de una sola zona." />
+              <Tip tip="Cuánto del despacho se juega en pocas provincias. A más concentrado, más pesa mejorar la tasa de una sola zona." />
             </span>
             <span className="text-xs tabular-nums text-muted-foreground">{totalGuias.toLocaleString("es-AR")} guías</span>
           </div>
           <Donut slices={concentracion} money={false}
-                 centro={top6.length ? fmtPct(top6.reduce((s, z) => s + z.guias, 0) / (totalGuias || 1)) : undefined}
-                 subcentro="top 6" />
+                 centro={top6.length ? fmtPct(top6.reduce((s, z) => s + z.guias, 0) / (totalGuias || 1)) : undefined} subcentro="top 6" />
         </CardContent>
       </Card>
 
-      {/* 6 · desenlaces */}
+      {/* 8 · desenlaces */}
       <Card>
         <CardContent className="space-y-3 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
             En qué termina cada guía
-            <Tip tip="Distribución de desenlaces de las guías despachadas en el rango. 'En la calle' son las que todavía no se resolvieron, así que en rangos recientes va a pesar mucho." />
+            <Tip tip="Distribución de desenlaces de las guías despachadas en el rango. 'En la calle' son las que todavía no se resolvieron: en rangos recientes va a pesar mucho." />
           </span>
-          <Donut money={false}
-                 slices={desenlaces.map((d) => ({
-                   label: ESTADO[d.estado] ?? d.estado, value: d.guias,
-                   className: ESTADO_COLOR[d.estado] ?? "stroke-slate-400",
-                 }))} />
+          <Donut money={false} slices={desenlaces.map((d) => ({ label: ESTADO[d.estado] ?? d.estado, value: d.guias, className: (ESTADO_COLOR[d.estado] ?? { s: "stroke-slate-400", b: "bg-slate-400" }).s, dot: (ESTADO_COLOR[d.estado] ?? { s: "stroke-slate-400", b: "bg-slate-400" }).b }))} />
         </CardContent>
       </Card>
 
-      {/* 7 · matriz producto × courier */}
+      {/* 9 · maduración */}
+      {maduracion.length >= 3 && (
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+            Curva de maduración de cohortes
+            <Tip tip="Para cada edad de cohorte (días desde el despacho), qué fracción ya tiene desenlace. Dice cuándo confiar en un número. Últimos 45 días; si la curva se aplana de golpe, el sync se congeló." />
+          </span>
+          <Curva puntos={maduracion} maturity={courierParam === "fixy" ? 7 : 10} />
+        </CardContent>
+      </Card>
+      )}
+
+      {/* 10 · matriz producto × canal */}
       <Card>
         <CardContent className="space-y-3 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
             Tasa de entrega · producto × canal
-            <Tip tip="Contrasta la hipótesis de que la entrega depende más del producto que del courier. Las celdas con menos de 15 despachos quedan vacías: con ese volumen la tasa es ruido." />
+            <Tip tip="Contrasta si la entrega depende más del producto que del courier. Celdas con menos de 15 despachos quedan vacías: con ese volumen la tasa es ruido." />
           </span>
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Producto</TableHead>
-                {canales.map((c) => <TableHead key={c} className="text-right">{COURIER[c] ?? c}</TableHead>)}
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow>
+              <TableHead>Producto</TableHead>
+              {canales.map((c) => <TableHead key={c} className="text-right">{COURIER[c] ?? c}</TableHead>)}
+            </TableRow></TableHeader>
             <TableBody>
               {productos.map((p) => (
                 <TableRow key={p}>
@@ -362,10 +523,8 @@ export default async function Analisis({
                     return (
                       <TableCell key={c} className="text-right tabular-nums">
                         {v ? (
-                          <span className={cn(v.tasa < 0.35 ? "text-destructive"
-                            : v.tasa < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-foreground")}>
-                            {fmtPct(v.tasa)}
-                            <span className="ml-1 text-[0.65rem] text-muted-foreground">({v.n})</span>
+                          <span className={cn(v.tasa < 0.35 ? "text-destructive" : v.tasa < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-foreground")}>
+                            {fmtPct(v.tasa)}<span className="ml-1 text-[0.65rem] text-muted-foreground">({v.n})</span>
                           </span>
                         ) : <span className="text-muted-foreground/40">—</span>}
                       </TableCell>

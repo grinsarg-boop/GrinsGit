@@ -59,6 +59,7 @@ try {
                    'supabase/migrations/032_desglose_costos.sql',
                    'supabase/migrations/033_urbano_cobranza.sql',
                    'supabase/migrations/034_analisis.sql',
+                   'supabase/migrations/035_analisis_v2.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',

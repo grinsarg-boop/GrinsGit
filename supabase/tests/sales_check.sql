@@ -324,12 +324,17 @@ begin
     jsonb_build_object('courier','urbano','tracking','Z2','order_ref','2402','status_raw','PI','occurred_at', dd5::text || 'T12:00:00Z','tarifa',5000)));
   perform recompute_daily_pnl(d5, current_date);
 
-  -- (a) analisis_pnl reagrupa daily_pnl sin cambiarlo
-  select coalesce(sum(profit), 0) into a_prof from analisis_pnl(d5, current_date, null);
+  -- (a) analisis_pnl reagrupa daily_pnl sin cambiarlo — los DOS profits (v2, 035)
+  select coalesce(sum(profit_conf), 0) into a_prof from analisis_pnl(d5, current_date, null);
   select coalesce(sum(profit_confirmado), 0) into d_prof from daily_pnl
    where dispatch_date between d5 and current_date;
   assert round(a_prof, 2) = round(d_prof, 2),
-    format('034: analisis_pnl (%s) debe igualar a daily_pnl (%s)', a_prof, d_prof);
+    format('034: analisis_pnl conf (%s) debe igualar a daily_pnl (%s)', a_prof, d_prof);
+  select coalesce(sum(profit_est), 0) into a_prof from analisis_pnl(d5, current_date, null);
+  select coalesce(sum(profit_estimado), 0) into d_prof from daily_pnl
+   where dispatch_date between d5 and current_date;
+  assert round(a_prof, 2) = round(d_prof, 2),
+    format('035: analisis_pnl est (%s) debe igualar a daily_pnl (%s)', a_prof, d_prof);
 
   -- (b) zonas: la PI de +7d sale del denominador y no paga flete
   select guias, entregadas, margen_bruto into z_guias, z_ent, z_margen
@@ -351,3 +356,65 @@ begin
   raise notice '034 RPCs de análisis: OK';
 end $t$;
 rollback;
+
+-- ===== 035: packs, maduración y flete perdido =====
+begin;
+do $t$
+declare
+  d6  date := current_date - 12;
+  dd6 date := current_date - 10;
+  pk_g int; pk_e int; pk_m numeric; z_perd numeric; z_flete numeric; md_g int; md_r int;
+begin
+  delete from product_costs;
+  insert into product_costs (product_id, pack, unit_cost, is_estimated)
+  select id, 2, 4500, false from products where name = 'Natures';
+
+  -- 2 pedidos pack x2 (una línea, quantity=2 ⇒ pack=2 desde la 006): 1 entregado, 1 devuelto
+  for i in 0..1 loop
+    perform upsert_order(jsonb_build_object(
+      'id', 2500 + i, 'name', '#' || (2500 + i), 'created_at', d6::text || 'T12:00:00-03:00',
+      'financial_status', 'pending', 'tags', '', 'total_price', '50000',
+      'shipping_address', '{"province":"Córdoba","city":"Córdoba","zip":"5000"}'::jsonb,
+      'line_items', '[{"title":"Natures","quantity":2,"price":"50000"}]'::jsonb));
+  end loop;
+  perform upsert_shipment_events(jsonb_build_array(
+    jsonb_build_object('courier','urbano','tracking','K0','order_ref','2500','status_raw','ENTREGADO EN DOMICILIO','occurred_at', dd6::text || 'T12:00:00Z','tarifa',4000),
+    jsonb_build_object('courier','urbano','tracking','K1','order_ref','2501','status_raw','RC','occurred_at', dd6::text || 'T12:00:00Z','tarifa',4000)));
+
+  -- packs: el bucket exige >=40 guías, así que con 2 no debe aparecer (guarda contra leer ruido)
+  select count(*) into pk_g from analisis_packs(d6, current_date, 'urbano');
+  assert pk_g = 0, format('035: con 2 guías el bucket de pack NO se muestra (got %s filas)', pk_g);
+
+  -- zonas: el flete perdido es el de la devuelta (4000 × 1,29 = 5160), el total el de las dos
+  select flete, flete_perdido into z_flete, z_perd
+    from analisis_zonas(d6, current_date, 'urbano') where province = 'Córdoba';
+  assert round(z_flete, 2) = 10320, format('035: flete total = 2 × 5160 = 10320 (got %s)', z_flete);
+  assert round(z_perd, 2) = 5160, format('035: flete PERDIDO = solo la devuelta = 5160 (got %s)', z_perd);
+  assert z_perd < z_flete, '035: el flete perdido es un subconjunto del total';
+
+  -- maduración: el bucket exige >=20 guías, con 2 tampoco aparece
+  select count(*) into md_g from analisis_maduracion(d6, 'urbano');
+  assert md_g = 0, format('035: con 2 guías el bucket de maduración NO se muestra (got %s)', md_g);
+
+  -- filtro por producto: con el id correcto la zona aparece, con otro producto no
+  select count(*) into md_g from analisis_zonas(d6, current_date, 'urbano',
+    (select id from products where name = 'Natures'));
+  assert md_g = 1, format('035: zonas filtrado por Natures encuentra la provincia (got %s)', md_g);
+  select count(*) into md_g from analisis_zonas(d6, current_date, 'urbano',
+    (select id from products where name = 'Pureza'));
+  assert md_g = 0, format('035: zonas filtrado por Pureza no tiene guías (got %s)', md_g);
+
+  raise notice '035 packs/maduración/flete perdido + filtro producto: OK';
+end $t$;
+rollback;
+
+-- el seed de CPA de referencia quedó cargado y es legible
+do $t$
+declare v jsonb;
+begin
+  select value into v from settings where key = 'cpa_referencia';
+  assert v is not null, '035: falta el seed de cpa_referencia';
+  assert (v->'Natures'->>'objetivo')::numeric = 5200,
+    format('035: el objetivo de Natures es 5200 (got %s)', v->'Natures'->>'objetivo');
+  raise notice '035 seed cpa_referencia: OK';
+end $t$;

@@ -96,3 +96,15 @@
     color: var(--foreground);
   }
 }
+
+/* Entradas de /analisis. La tajada y la barra crecen desde cero hasta su valor real, que viaja como
+   custom property porque el CSS no puede conocerlo de antemano. Todo se apaga con reducir movimiento. */
+@keyframes tajada-in { from { stroke-dasharray: 0 100; } }
+@keyframes barra-in  { from { width: 0; } }
+@keyframes sube      { from { opacity: 0; transform: translateY(6px); } }
+
+@media (prefers-reduced-motion: no-preference) {
+  .tajada { animation: tajada-in .7s cubic-bezier(.22,1,.36,1) both; }
+  .barra  { animation: barra-in .6s cubic-bezier(.22,1,.36,1) both; }
+  .sube   { animation: sube .4s ease-out both; }
+}
