@@ -6,6 +6,7 @@ import {
 import Link from "next/link";
 import { ProfitBars } from "@/components/profit-bars";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
+import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO } from "@/lib/tips";
@@ -352,6 +353,9 @@ export default async function Ventas({
           </CardContent>
         </Card>
       )}
+
+      {/* correo/ml no están en la RPC (sin guía en calle) → con ese filtro la franja no aparece */}
+      <RitmoCouriers courier={courierParam} />
 
       {vista === "dias" ? (
       <Table>

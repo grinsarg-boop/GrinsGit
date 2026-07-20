@@ -66,6 +66,7 @@ try {
                    'supabase/migrations/039_urbano_codigos_faltantes.sql',
                    'supabase/migrations/040_fixy_codigos_faltantes.sql',
                    'supabase/migrations/041_fixy_cobranza.sql',
+                   'supabase/migrations/042_courier_tiempos.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',

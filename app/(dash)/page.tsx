@@ -9,6 +9,7 @@ import {
   FIXY_LAG_DIAS, conciliarGiros, fetchCobranzas, fixyCobranza,
   type GiroUrbano, type SobreFixy,
 } from "@/lib/cashflow";
+import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO } from "@/lib/tips";
@@ -684,6 +685,8 @@ export default async function Resumen({
           </CardContent>
         </Card>
       )}
+
+      <RitmoCouriers courier={courierParam} />
 
       {vista === "dias" ? (
       <Table>
