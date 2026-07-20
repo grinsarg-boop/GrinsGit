@@ -1,6 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Tip } from "@/components/ui/tooltip";
 import Link from "next/link";
+import { Chispa } from "@/components/chispa";
 import { Delta } from "@/components/delta";
 import { ProyeccionMes, type PuntoAcum } from "@/components/proyeccion-mes";
 import { Tendencia, type PuntoT } from "@/components/tendencia";
@@ -20,6 +21,7 @@ type SalesDay = {
   profit_confirmado: number; profit_estimado: number; ads: number; ads_sin_cohorte: number;
 };
 type DashDay = { dispatch_date: string; despachadas: number; entregadas: number };
+type ProdWeek = { product: string; generadas: number; profit_estimado: number; ads: number };
 
 const N = (v: number | null | undefined) => Number(v ?? 0);
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -57,9 +59,18 @@ export default async function Tendencias({
   const rangoFrom = daysAgoIso(nDias - 1);
   const pFrom = rangoFrom < prevStart ? rangoFrom : prevStart;
 
-  const [{ data: sdRaw }, { data: ddRaw }] = await Promise.all([
+  // Por producto: ventanas semanales de 7 días hasta AYER (hoy está incompleto), cada una con su propia
+  // llamada a sales_by_product — así no hay serie día×producto que pise el límite de 1000 filas de PostgREST.
+  const nSemanas = Math.min(Math.floor(nDias / 7), 26);
+  const semanas = Array.from({ length: nSemanas }, (_, k) => {
+    const i = nSemanas - 1 - k; // de la más vieja a la más nueva
+    return { from: daysAgoIso(7 * (i + 1)), to: daysAgoIso(7 * i + 1) };
+  });
+
+  const [{ data: sdRaw }, { data: ddRaw }, ...weekly] = await Promise.all([
     db.rpc("sales_days", { p_from: pFrom, p_courier: courierParam }),
     db.rpc("dashboard_days", { p_from: pFrom, p_courier: courierParam }),
+    ...semanas.map((w) => db.rpc("sales_by_product", { p_from: w.from, p_to: w.to, p_courier: courierParam })),
   ]);
 
   // neto = profit estimado − ads sin cohorte (mismo criterio que los totales de /ventas: esa pauta es
@@ -107,6 +118,35 @@ export default async function Tendencias({
     .map((r) => ({ x: r.dispatch_date, v: r.entregadas / r.despachadas }));
 
   const sombraDe = (pts: PuntoT[], horizonte: number) => pts.filter((p) => p.x > daysAgoIso(horizonte)).length;
+
+  // ---- tendencia por producto (semanal, sumando los couriers del filtro) ----
+  const prodMap = new Map<string, { profit: number; gen: number; ads: number }[]>();
+  weekly.forEach(({ data }, wi) => {
+    ((data ?? []) as ProdWeek[]).forEach((r) => {
+      const pts = prodMap.get(r.product) ?? semanas.map(() => ({ profit: 0, gen: 0, ads: 0 }));
+      pts[wi].profit += N(r.profit_estimado);
+      pts[wi].gen += r.generadas ?? 0;
+      pts[wi].ads += N(r.ads);
+      prodMap.set(r.product, pts);
+    });
+  });
+  // headline = última semana ASENTADA (n-2); la última (n-1) todavía madura y solo va en el sparkline.
+  // Ventas y CPA sí usan la última: quedan firmes el mismo día.
+  const prodTend = [...prodMap.entries()]
+    .filter(([, pts]) => pts.some((w) => w.gen > 0 || w.profit !== 0))
+    .map(([name, pts]) => {
+      const n = pts.length;
+      const ult = pts[n - 1], cerrada = pts[n - 2], anterior = pts[n - 3];
+      return {
+        name,
+        spark: pts.map((w, i) => ({ x: semanas[i].from, v: w.profit })),
+        profitCerrada: cerrada.profit, profitAnterior: anterior.profit,
+        ventas: ult.gen, ventasPrev: cerrada.gen,
+        cpa: ult.gen > 0 ? ult.ads / ult.gen : NaN,
+        cpaPrev: cerrada.gen > 0 ? cerrada.ads / cerrada.gen : NaN,
+      };
+    })
+    .sort((a, b) => a.profitCerrada - b.profitCerrada); // lo que peor viene, primero
 
   const bloques: {
     titulo: string; tip: string; pts: PuntoT[]; kind: "money" | "num" | "pct" | "ratio";
@@ -217,6 +257,41 @@ export default async function Tendencias({
                          diasMes={diasMes} mesLabel={mesLabel} prevLabel={prevLabel} />
         </CardContent>
       </Card>
+
+      {/* tendencia por producto */}
+      {prodTend.length > 0 && (
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+              Tendencia por producto
+              <Tip tip="Profit estimado por semana (ventanas de 7 días hasta ayer), sumando los canales del filtro. El número grande es la última semana ya asentada con su variación contra la anterior; el punto hueco del sparkline es la semana que todavía madura — va a subir sola, no es caída. Ventas y CPA sí son de la última semana (quedan firmes el mismo día). Ordenado de peor a mejor: lo que hay que mirar, arriba." />
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">{nSemanas} semanas · profit/semana</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {prodTend.map((p) => (
+              <div key={p.name} className="sube space-y-1.5 rounded-lg bg-muted/40 p-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate text-sm font-medium">{p.name}</span>
+                  <span className={cn("text-sm font-semibold tabular-nums", pnlColor(p.profitCerrada))}>{fmtMoney(p.profitCerrada)}</span>
+                </div>
+                <div><Delta actual={p.profitCerrada} previo={p.profitAnterior} /></div>
+                <Chispa puntos={p.spark} positivo={p.profitCerrada >= 0} />
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                  <span className="tabular-nums">ventas {p.ventas.toLocaleString("es-AR")}/sem <Delta actual={p.ventas} previo={p.ventasPrev} tipo="num" /></span>
+                  {isFinite(p.cpa) && (
+                    <span className="tabular-nums">CPA {fmtMoney(p.cpa)}{" "}
+                      {isFinite(p.cpaPrev) && <Delta actual={p.cpa} previo={p.cpaPrev} bueno="baja" />}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+      )}
 
       {/* tendencias */}
       {bloques.map((b) => {
