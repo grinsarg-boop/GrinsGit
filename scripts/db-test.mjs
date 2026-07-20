@@ -62,13 +62,15 @@ try {
                    'supabase/migrations/035_analisis_v2.sql',
                    'supabase/migrations/036_margen_neto.sql',
                    'supabase/migrations/037_sin_cohorte_sin_ml.sql',
+                   'supabase/migrations/038_trabados_list.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
                    'supabase/tests/bot_pnl_check.sql', 'supabase/tests/override_check.sql',
                    'supabase/tests/flex_estimado_check.sql', 'supabase/tests/ml_ads_check.sql',
                    'supabase/tests/sales_check.sql',
-                   'supabase/tests/urbano_discover_check.sql']) {
+                   'supabase/tests/urbano_discover_check.sql',
+                   'supabase/tests/trabados_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');
