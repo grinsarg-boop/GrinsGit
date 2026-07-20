@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { balance5050, porMes, saldos, type Caja, type Cat, type Mov } from "./cashflow";
+import { balance5050, flujoDiario, porMes, saldos, type Caja, type Cat, type Mov } from "./cashflow";
 
 const CATS: Cat[] = [
-  { id: 1, nombre: "Sueldos" },
-  { id: 2, nombre: "Proveedor" },
-  { id: 3, nombre: "Ajustes" },
-  { id: 4, nombre: "Personal socios" },
+  { id: 1, nombre: "Sueldos", tipo: "egreso" },
+  { id: 2, nombre: "Proveedor", tipo: "egreso" },
+  { id: 3, nombre: "Ajustes", tipo: "egreso" },
+  { id: 4, nombre: "Personal socios", tipo: "egreso" },
 ];
 
+let seq = 0;
 const mov = (o: Partial<Mov>): Mov => ({
-  tipo: "egreso", monto: 0, caja_id: 1, caja_destino_id: null, categoria_id: null,
+  id: ++seq, tipo: "egreso", monto: 0, caja_id: 1, caja_destino_id: null, categoria_id: null,
   descripcion: null, fecha: "2026-07-10", autor: null, es_retiro: false, ...o,
 });
 
@@ -52,6 +53,23 @@ describe("saldos", () => {
       mov({ tipo: "transferencia", monto: 200, caja_id: 1, caja_destino_id: 2 }),
     ];
     expect(saldos(movs, cajas).map((s) => s.saldo)).toEqual([500, 200]);
+  });
+});
+
+describe("flujoDiario", () => {
+  it("agrupa por día, retiros salen, transferencias no cuentan", () => {
+    const movs: Mov[] = [
+      mov({ tipo: "ingreso", monto: 1000, fecha: "2026-07-10" }),
+      mov({ monto: 300, fecha: "2026-07-10" }),
+      mov({ monto: 200, fecha: "2026-07-10", es_retiro: true }), // retiro = plata que sale
+      mov({ tipo: "transferencia", monto: 999, fecha: "2026-07-10", caja_destino_id: 2 }),
+      mov({ tipo: "ingreso", monto: 50, fecha: "2026-07-09" }),
+      mov({ monto: 1, fecha: "2026-02-01" }), // anterior a DESDE → afuera
+    ];
+    expect(flujoDiario(movs)).toEqual([
+      { fecha: "2026-07-09", ingresos: 50, egresos: 0 },
+      { fecha: "2026-07-10", ingresos: 1000, egresos: 500 },
+    ]);
   });
 });
 

@@ -2,12 +2,14 @@
 // Es OTRA instancia (la del hermano), no la de Finanzas. Solo lectura server-side con la anon key:
 // allá la RLS está abierta, así que la key jamás puede llegar al browser. Mismo patrón que el bot
 // de App-Gastos usa en producción.
-const BASE = "https://nmhxgkruaiohdpennpga.supabase.co/rest/v1";
+export const CASHFLOW_BASE = "https://nmhxgkruaiohdpennpga.supabase.co/rest/v1";
+const BASE = CASHFLOW_BASE;
 
 // La carga real de la app arrancó en junio 2026; lo anterior es un mov suelto con fecha mal tipeada.
 export const DESDE = "2026-06";
 
 export type Mov = {
+  id: number;
   tipo: "ingreso" | "egreso" | "transferencia";
   monto: number;
   caja_id: number;
@@ -19,7 +21,7 @@ export type Mov = {
   es_retiro: boolean;
 };
 export type Caja = { id: number; nombre: string; moneda: string };
-export type Cat = { id: number; nombre: string };
+export type Cat = { id: number; nombre: string; tipo: string };
 export type Cobrar = { quien: string; monto: number };
 
 // Qué se resta del margen de contribución del panel para llegar al neto real. Las demás categorías
@@ -39,9 +41,9 @@ export async function fetchCashflow() {
     });
   // ponytail: trae todo (~360 filas hoy); paginar con Range cuando pase de 1000 (límite PostgREST)
   const [movs, cajas, cats, cobrar] = await Promise.all([
-    j("movimientos?select=tipo,monto,caja_id,caja_destino_id,categoria_id,descripcion,fecha,autor,es_retiro"),
+    j("movimientos?select=id,tipo,monto,caja_id,caja_destino_id,categoria_id,descripcion,fecha,autor,es_retiro"),
     j("cajas?select=id,nombre,moneda&order=orden.asc"),
-    j("categorias?select=id,nombre"),
+    j("categorias?select=id,nombre,tipo"),
     j("cobrar?select=quien,monto&cobrado=eq.false"),
   ]);
   return { movs, cajas, cats, cobrar } as { movs: Mov[]; cajas: Caja[]; cats: Cat[]; cobrar: Cobrar[] };
@@ -89,6 +91,22 @@ export function porMes(movs: Mov[], cats: Cat[]): MesCaja[] {
     else m.estructura += n; // categoría nueva desconocida → conservador: estructura
   }
   return [...meses.values()].sort((a, b) => b.mes.localeCompare(a.mes));
+}
+
+export type DiaFlujo = { fecha: string; ingresos: number; egresos: number };
+
+// Flujo de caja por día calendario: entra vs sale (retiros incluidos — es plata que sale de la
+// empresa). Las transferencias no son flujo: mueven plata entre cajas propias.
+export function flujoDiario(movs: Mov[]): DiaFlujo[] {
+  const dias = new Map<string, DiaFlujo>();
+  for (const r of movs) {
+    if (r.fecha.slice(0, 7) < DESDE || r.tipo === "transferencia") continue;
+    let d = dias.get(r.fecha);
+    if (!d) { d = { fecha: r.fecha, ingresos: 0, egresos: 0 }; dias.set(r.fecha, d); }
+    if (r.tipo === "ingreso") d.ingresos += Number(r.monto);
+    else d.egresos += Number(r.monto);
+  }
+  return [...dias.values()].sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
 
 // Saldo por caja: ingresos suman, egresos restan, transferencias mueven entre origen y destino.
