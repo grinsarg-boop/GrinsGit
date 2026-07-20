@@ -4,6 +4,15 @@ const money = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 });
 export const fmtMoney = (n: number | null | undefined) =>
   n == null ? "—" : `$ ${money.format(Math.round(n))}`;
 
+// ARS compacto para ejes de gráficos: $3,2M · $450k · $80
+export const fmtMoneyCompact = (n: number) => {
+  const s = n < 0 ? "-" : "";
+  const a = Math.abs(n);
+  if (a >= 1e6) return `${s}$${(a / 1e6).toFixed(1).replace(".", ",")}M`;
+  if (a >= 1e3) return `${s}$${Math.round(a / 1e3)}k`;
+  return `${s}$${Math.round(a)}`;
+};
+
 export const fmtPct = (n: number | null | undefined) =>
   n == null ? "—" : `${(n * 100).toFixed(1).replace(".", ",")}%`;
 
