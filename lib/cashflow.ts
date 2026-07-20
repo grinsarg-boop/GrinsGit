@@ -121,6 +121,86 @@ export function flujoDiario(movs: Mov[], cajaId: number | null = null): DiaFlujo
   return [...dias.values()].sort((a, b) => a.fecha.localeCompare(b.fecha));
 }
 
+// ── Cobranzas: lo que la caja sabe de Urbano y Fixy (para conciliar contra el panel) ──────────
+
+// ids de las categorías de INGRESO en la app Cashflow (estables desde el alta de la app, 06/06)
+const CAT_INGRESO_URBANO = 1780752750043;
+
+export type SobreFixy = { fecha: string; monto: number; cobrado: boolean };
+export type GiroUrbano = { fecha: string; monto: number; descripcion: string | null };
+
+export async function fetchCobranzas() {
+  const key = process.env.CASHFLOW_ANON_KEY!;
+  const H = { apikey: key, Authorization: `Bearer ${key}` };
+  const j = (p: string) =>
+    fetch(`${BASE}/${p}`, { headers: H, next: { revalidate: 300 } }).then((r) => {
+      if (!r.ok) throw new Error(`cashflow ${p.split("?")[0]}: HTTP ${r.status}`);
+      return r.json();
+    });
+  const [sobres, giros] = await Promise.all([
+    j("cobrar?select=fecha,monto,cobrado&quien=ilike.*fixy*&order=fecha.asc"),
+    j(`movimientos?select=fecha,monto,descripcion&tipo=eq.ingreso&categoria_id=eq.${CAT_INGRESO_URBANO}&order=fecha.asc`),
+  ]);
+  return { sobres, giros } as { sobres: SobreFixy[]; giros: GiroUrbano[] };
+}
+
+// Cada giro de la caja se asigna a la ventana con fecha_pago más reciente <= fecha del giro
+// (Urbano a veces paga en varios giros y algún día corrido). diff = cobrado/esperado − 1;
+// null si la ventana aún no venció o si la caja no tiene registro (antes de su carga inicial).
+export type VentanaConciliada = { fecha_pago: string; cobrado: number; diff: number | null };
+export function conciliarGiros(
+  ventanas: { fecha_pago: string; neto: number }[],
+  giros: { fecha: string; monto: number }[],
+  hoy: string,
+): VentanaConciliada[] {
+  const pagos = ventanas.map((v) => v.fecha_pago).sort();
+  const cobrado = new Map<string, number>(pagos.map((p) => [p, 0]));
+  for (const g of giros) {
+    const dest = [...pagos].reverse().find((p) => p <= g.fecha);
+    if (dest) cobrado.set(dest, (cobrado.get(dest) ?? 0) + Number(g.monto));
+  }
+  const primerGiro = giros.length ? giros[0].fecha : null;
+  return ventanas.map((v) => {
+    const c = cobrado.get(v.fecha_pago) ?? 0;
+    const vencida = v.fecha_pago < hoy;
+    const anteCaja = primerGiro == null || v.fecha_pago < primerGiro;
+    return {
+      fecha_pago: v.fecha_pago,
+      cobrado: c,
+      diff: vencida && !anteCaja && v.neto > 0 ? c / v.neto - 1 : null,
+    };
+  });
+}
+
+// Fixy rinde en sobres físicos con días de demora, y una parte del COD se cobra digital (no pasa
+// por sobre). El gap se calcula contra lo entregado hasta hace LAG días (lo más nuevo todavía no
+// tiene sobre) y es un TECHO de reclamo, no deuda exacta.
+// ponytail: LAG fijo en 4 días; si Fixy cambia el ritmo de rendición, ajustar acá.
+export const FIXY_LAG_DIAS = 4;
+export type FixyCobranza = {
+  esperadoNeto: number; // entregado neto hasta hace LAG días
+  rendido: number; // todos los sobres cargados (cobrados + pendientes)
+  pendienteCobro: number; // sobres cargados aún no cobrados (plata física viajando)
+  gap: number; // esperado − rendido (≥0)
+  ultimoSobre: string | null;
+};
+export function fixyCobranza(
+  dias: { dia: string; neto: number }[],
+  sobres: SobreFixy[],
+  hoy: string,
+): FixyCobranza {
+  const corte = new Date(new Date(hoy + "T12:00:00Z").getTime() - FIXY_LAG_DIAS * 86400_000)
+    .toISOString().slice(0, 10);
+  const esperadoNeto = dias.filter((d) => d.dia <= corte).reduce((s, d) => s + Number(d.neto), 0);
+  const rendido = sobres.reduce((s, x) => s + Number(x.monto), 0);
+  const pendienteCobro = sobres.filter((x) => !x.cobrado).reduce((s, x) => s + Number(x.monto), 0);
+  return {
+    esperadoNeto, rendido, pendienteCobro,
+    gap: Math.max(0, esperadoNeto - rendido),
+    ultimoSobre: sobres.length ? sobres[sobres.length - 1].fecha : null,
+  };
+}
+
 // Saldo por caja: ingresos suman, egresos restan, transferencias mueven entre origen y destino.
 export function saldos(movs: Mov[], cajas: Caja[]): { caja: Caja; saldo: number }[] {
   const s = new Map<number, number>();

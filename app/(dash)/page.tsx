@@ -5,6 +5,10 @@ import {
 } from "@/components/ui/table";
 import Link from "next/link";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
+import {
+  FIXY_LAG_DIAS, conciliarGiros, fetchCobranzas, fixyCobranza,
+  type GiroUrbano, type SobreFixy,
+} from "@/lib/cashflow";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO } from "@/lib/tips";
@@ -116,6 +120,29 @@ export default async function Resumen({
   if (!courierParam || courierParam === "urbano") {
     const { data: cb } = await db.rpc("urbano_cobranza", { p_desde: daysAgoIso(35) });
     cobranza = ((cb ?? []) as Cobranza[]).slice(0, 5);
+  }
+
+  // Conciliación contra la caja real (app Cashflow): giros de Urbano y sobres de Fixy. Si la
+  // caja no responde, los bloques quedan sin conciliar — nunca puede tirar el home.
+  let giros: GiroUrbano[] = [];
+  let sobres: SobreFixy[] = [];
+  try {
+    if (!courierParam || courierParam === "urbano" || courierParam === "fixy") {
+      ({ giros, sobres } = await fetchCobranzas());
+    }
+  } catch { /* caja caída: se muestra el panel sin conciliar */ }
+  const conciliadas = new Map(
+    conciliarGiros(cobranza.map((c) => ({ fecha_pago: c.fecha_pago, neto: Number(c.neto) })), giros, today)
+      .map((v) => [v.fecha_pago, v]),
+  );
+
+  // A cobrar de Fixy: entregado neto (RPC 041) vs sobres cargados en la caja. Si la 041 no está
+  // aplicada todavía, el bloque no se muestra (error → null).
+  let fixyCob: ReturnType<typeof fixyCobranza> | null = null;
+  if (!courierParam || courierParam === "fixy") {
+    const { data: fc } = await db.rpc("fixy_cobranza", { p_desde: "2026-06-01" });
+    const dias = (fc ?? []) as { dia: string; neto: number }[];
+    if (dias.length) fixyCob = fixyCobranza(dias.map((d) => ({ dia: d.dia, neto: Number(d.neto) })), sobres, today);
   }
 
   // Vista MESES: agrupa los días DEL RANGO por mes (para todo el histórico, usá el preset "Máx").
@@ -545,6 +572,12 @@ export default async function Resumen({
                   <TableHead className="text-right">COD cobrado</TableHead>
                   <TableHead className="text-right">Comisión</TableHead>
                   <TableHead className="text-right">Giro neto</TableHead>
+                  <TableHead className="text-right">
+                    <span className="inline-flex items-center gap-1">
+                      Cobrado (caja)
+                      <Tip tip="Ingresos con categoría Urbano en la app Cashflow, asignados a la ventana cuyo martes de pago es el más reciente anterior al giro (Urbano a veces paga partido o corrido un día). Diferencias de ±3% son normales (el panel es conservador ~1,2% y hay redondeos); más que eso o 'sin registro' = falta cargar el giro en la caja o hay que reclamar." />
+                    </span>
+                  </TableHead>
                   <TableHead className="text-right">Estado</TableHead>
                 </TableRow>
               </TableHeader>
@@ -560,6 +593,27 @@ export default async function Resumen({
                       <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(Number(c.cod_bruto))}</TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">−{fmtMoney(Number(c.comision))}</TableCell>
                       <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(Number(c.neto))}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {(() => {
+                          const conc = conciliadas.get(c.fecha_pago);
+                          if (pendiente || !conc) return <span className="text-muted-foreground">—</span>;
+                          if (conc.diff == null)
+                            return <span className="text-xs text-muted-foreground">{conc.cobrado ? fmtMoney(conc.cobrado) : "sin registro"}</span>;
+                          const ok = Math.abs(conc.diff) <= 0.03;
+                          return (
+                            <span className="inline-flex items-center gap-1.5">
+                              {fmtMoney(conc.cobrado)}
+                              <span className={cn(
+                                "rounded px-1 py-px text-[0.6rem] tabular-nums",
+                                ok ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-500"
+                                   : "bg-amber-500/15 text-amber-700 dark:text-amber-500",
+                              )}>
+                                {conc.diff >= 0 ? "+" : ""}{(conc.diff * 100).toFixed(1)}%
+                              </span>
+                            </span>
+                          );
+                        })()}
+                      </TableCell>
                       <TableCell className="text-right">
                         {pendiente ? (
                           <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[0.6rem] uppercase tracking-wide text-emerald-700 dark:text-emerald-500">
@@ -584,6 +638,49 @@ export default async function Resumen({
             </p>
               </div>
             </details>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* A cobrar de Fixy: sobres físicos que viajan con el transportista + gap entregado-sin-sobre. */}
+      {fixyCob && (
+        <Card>
+          <CardContent className="space-y-3 pt-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                A cobrar de Fixy
+                <Tip tip={`Fixy rinde el COD en sobres físicos que viajan con el transportista y se cargan en la app Cashflow ("A cobrar"). Esperado = COD entregado neto del 1%, hasta hace ${FIXY_LAG_DIAS} días (lo más nuevo todavía no tiene sobre). El "sin sobre" es un TECHO de reclamo: incluye lo cobrado digital (QR/transferencia) que no pasa por sobre — si crece mes a mes, algo falta rendir o cargar.`} />
+              </span>
+              <span className="text-xs text-muted-foreground">contra los sobres cargados en la app Cashflow</span>
+            </div>
+
+            <div className="flex flex-wrap gap-6">
+              <div>
+                <div className="text-[0.7rem] uppercase tracking-wide text-emerald-700 dark:text-emerald-500">Sobres por cobrar</div>
+                <div className="text-2xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400">
+                  {fmtMoney(fixyCob.pendienteCobro)}
+                </div>
+                <div className="pt-0.5 text-xs text-muted-foreground">cargados en la caja, todavía sin cobrar</div>
+              </div>
+              <div>
+                <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Entregado sin sobre (techo)</div>
+                <div className={cn("text-2xl font-bold tabular-nums tracking-tight", fixyCob.gap > 0 ? "text-amber-600 dark:text-amber-500" : "")}>
+                  {fmtMoney(fixyCob.gap)}
+                </div>
+                <div className="pt-0.5 text-xs text-muted-foreground">
+                  {fmtMoney(fixyCob.esperadoNeto)} entregado neto (hasta hace {FIXY_LAG_DIAS} días, desde jun) − {fmtMoney(fixyCob.rendido)} en sobres
+                </div>
+              </div>
+              <div>
+                <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Último sobre</div>
+                <div className="text-2xl font-bold tabular-nums tracking-tight">
+                  {fixyCob.ultimoSobre ? fmtDate(fixyCob.ultimoSobre) : "—"}
+                </div>
+                {fixyCob.ultimoSobre && fixyCob.ultimoSobre < daysAgoIso(FIXY_LAG_DIAS) && (
+                  <div className="pt-0.5 text-xs text-amber-600 dark:text-amber-500">hace más de {FIXY_LAG_DIAS} días — ¿falta cargar?</div>
+                )}
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}

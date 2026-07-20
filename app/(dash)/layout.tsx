@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SyncAlert } from "@/components/sync-alert";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const NAV: [string, string][] = [
@@ -31,6 +32,7 @@ export default function DashLayout({ children }: { children: React.ReactNode }) 
         ))}
         <div className="ml-auto"><ThemeToggle /></div>
       </nav>
+      <SyncAlert />
       {children}
     </div>
   );
