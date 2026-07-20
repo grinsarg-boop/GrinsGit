@@ -22,7 +22,7 @@ export type Mov = {
 };
 export type Caja = { id: number; nombre: string; moneda: string };
 export type Cat = { id: number; nombre: string; tipo: string };
-export type Cobrar = { quien: string; monto: number };
+export type Cobrar = { quien: string; monto: number; fecha: string };
 
 // Qué se resta del margen de contribución del panel para llegar al neto real. Las demás categorías
 // NO se restan porque ya están dentro del margen (devengado, reconciliado ≤1%): Publicidad = ads,
@@ -44,7 +44,7 @@ export async function fetchCashflow() {
     j("movimientos?select=id,tipo,monto,caja_id,caja_destino_id,categoria_id,descripcion,fecha,autor,es_retiro"),
     j("cajas?select=id,nombre,moneda&order=orden.asc"),
     j("categorias?select=id,nombre,tipo"),
-    j("cobrar?select=quien,monto&cobrado=eq.false"),
+    j("cobrar?select=quien,monto,fecha&cobrado=eq.false&order=fecha.asc"),
   ]);
   return { movs, cajas, cats, cobrar } as { movs: Mov[]; cajas: Caja[]; cats: Cat[]; cobrar: Cobrar[] };
 }
@@ -96,15 +96,27 @@ export function porMes(movs: Mov[], cats: Cat[]): MesCaja[] {
 export type DiaFlujo = { fecha: string; ingresos: number; egresos: number };
 
 // Flujo de caja por día calendario: entra vs sale (retiros incluidos — es plata que sale de la
-// empresa). Las transferencias no son flujo: mueven plata entre cajas propias.
-export function flujoDiario(movs: Mov[]): DiaFlujo[] {
+// empresa). Sin filtro, las transferencias no son flujo (mueven plata entre cajas propias);
+// filtrando UNA caja sí cuentan: son plata que entra o sale de esa caja.
+export function flujoDiario(movs: Mov[], cajaId: number | null = null): DiaFlujo[] {
   const dias = new Map<string, DiaFlujo>();
+  const at = (fecha: string) => {
+    let d = dias.get(fecha);
+    if (!d) { d = { fecha, ingresos: 0, egresos: 0 }; dias.set(fecha, d); }
+    return d;
+  };
   for (const r of movs) {
-    if (r.fecha.slice(0, 7) < DESDE || r.tipo === "transferencia") continue;
-    let d = dias.get(r.fecha);
-    if (!d) { d = { fecha: r.fecha, ingresos: 0, egresos: 0 }; dias.set(r.fecha, d); }
-    if (r.tipo === "ingreso") d.ingresos += Number(r.monto);
-    else d.egresos += Number(r.monto);
+    if (r.fecha.slice(0, 7) < DESDE) continue;
+    const n = Number(r.monto);
+    if (r.tipo === "transferencia") {
+      if (cajaId == null) continue;
+      if (r.caja_id === cajaId) at(r.fecha).egresos += n;
+      if (r.caja_destino_id === cajaId) at(r.fecha).ingresos += n;
+      continue;
+    }
+    if (cajaId != null && r.caja_id !== cajaId) continue;
+    if (r.tipo === "ingreso") at(r.fecha).ingresos += n;
+    else at(r.fecha).egresos += n;
   }
   return [...dias.values()].sort((a, b) => a.fecha.localeCompare(b.fecha));
 }

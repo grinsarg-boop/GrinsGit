@@ -7,7 +7,7 @@ import { CajaFlujo } from "@/components/caja-flujo";
 import { CajaPendiente } from "@/components/caja-pendiente";
 import { daysAgoIso, fmtDate, fmtMoney } from "@/lib/format";
 import {
-  DESDE, ESTRUCTURA, YA_MODELADO, balance5050, fetchCashflow, flujoDiario, porMes, saldos,
+  DESDE, ESTRUCTURA, YA_MODELADO, balance5050, fetchCashflow, porMes, saldos,
   type MesCaja,
 } from "@/lib/cashflow";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -80,7 +80,6 @@ export default async function Caja() {
   const heroMeses = meses.slice(0, 2); // mes en curso + anterior
   const cajas = saldos(cf.movs, cf.cajas);
   const socios = balance5050(cf.movs);
-  const flujo = flujoDiario(cf.movs);
   const aCobrar = cf.cobrar.reduce((s, c) => s + Number(c.monto), 0);
   const retirosMes = new Map<string, number>();
   for (const r of cf.movs)
@@ -191,9 +190,9 @@ export default async function Caja() {
       {/* Flujo de movimientos */}
       <Panel
         titulo="Flujo de caja por día"
-        tip="Movimientos reales de la app Cashflow por día: verde hacia arriba = plata que entró (giros cobrados), rojo hacia abajo = plata que salió (gastos y retiros). Las transferencias entre cajas propias no cuentan. Pasá el mouse para ver los montos y el neto del día."
+        tip="Arriba, el flujo por día: verde = entró, rojo = salió (gastos y retiros). Abajo, la evolución del saldo: cuánta plata había en caja al cierre de cada día. Como la app no tiene saldos iniciales, la curva arranca en 0 el 06/06 — mirá la forma (cuándo hubo más o menos caja) más que el nivel absoluto. En 'Todas' las transferencias entre cajas propias no cuentan; filtrando una caja sí. Pasá el mouse para ver montos y saldo del día."
       >
-        <CajaFlujo data={flujo} />
+        <CajaFlujo movs={cf.movs} cajas={cf.cajas} />
       </Panel>
 
       {/* Egresos por categoría × mes */}
@@ -212,7 +211,7 @@ export default async function Caja() {
           </TableHeader>
           <TableBody>
             <TableRow>
-              <TableCell className="font-medium">Ingresos (giros cobrados)</TableCell>
+              <TableCell className="font-medium">Ingresos (cobros y ajustes)</TableCell>
               {meses.map((m) => celda(m, (x) => x.ingresos))}
             </TableRow>
             {filasEstructura.map((cat) => (
@@ -277,9 +276,23 @@ export default async function Caja() {
                 </span>
               </div>
             ))}
-            <div className="flex justify-between border-t pt-1.5">
-              <span className="text-muted-foreground">A cobrar ({cf.cobrar.length} pendientes)</span>
-              <span>{fmtMoney(aCobrar)}</span>
+            {cajas.some((s) => s.saldo < 0) && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Un saldo negativo es imposible en caja real: falta registrar la transferencia,
+                el ingreso o el ajuste que lo cubrió, en la app Cashflow.
+              </p>
+            )}
+            <div className="space-y-1 border-t pt-1.5">
+              {cf.cobrar.map((c, i) => (
+                <div key={i} className="flex justify-between">
+                  <span className="text-muted-foreground">A cobrar · {c.quien} ({fmtDate(c.fecha)})</span>
+                  <span>{fmtMoney(c.monto)}</span>
+                </div>
+              ))}
+              <div className="flex justify-between font-medium">
+                <span className="text-muted-foreground">Total a cobrar</span>
+                <span>{fmtMoney(aCobrar)}</span>
+              </div>
             </div>
           </div>
         </Panel>

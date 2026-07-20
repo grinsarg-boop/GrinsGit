@@ -57,18 +57,29 @@ describe("saldos", () => {
 });
 
 describe("flujoDiario", () => {
-  it("agrupa por día, retiros salen, transferencias no cuentan", () => {
     const movs: Mov[] = [
-      mov({ tipo: "ingreso", monto: 1000, fecha: "2026-07-10" }),
-      mov({ monto: 300, fecha: "2026-07-10" }),
-      mov({ monto: 200, fecha: "2026-07-10", es_retiro: true }), // retiro = plata que sale
-      mov({ tipo: "transferencia", monto: 999, fecha: "2026-07-10", caja_destino_id: 2 }),
-      mov({ tipo: "ingreso", monto: 50, fecha: "2026-07-09" }),
+      mov({ tipo: "ingreso", monto: 1000, fecha: "2026-07-10", caja_id: 1 }),
+      mov({ monto: 300, fecha: "2026-07-10", caja_id: 1 }),
+      mov({ monto: 200, fecha: "2026-07-10", caja_id: 2, es_retiro: true }), // retiro = plata que sale
+      mov({ tipo: "transferencia", monto: 999, fecha: "2026-07-10", caja_id: 1, caja_destino_id: 2 }),
+      mov({ tipo: "ingreso", monto: 50, fecha: "2026-07-09", caja_id: 2 }),
       mov({ monto: 1, fecha: "2026-02-01" }), // anterior a DESDE → afuera
     ];
+
+  it("agrupa por día, retiros salen, transferencias no cuentan en 'Todas'", () => {
     expect(flujoDiario(movs)).toEqual([
       { fecha: "2026-07-09", ingresos: 50, egresos: 0 },
       { fecha: "2026-07-10", ingresos: 1000, egresos: 500 },
+    ]);
+  });
+
+  it("filtrando una caja, las transferencias entran/salen de esa caja", () => {
+    expect(flujoDiario(movs, 1)).toEqual([
+      { fecha: "2026-07-10", ingresos: 1000, egresos: 300 + 999 }, // la transferencia sale de la caja 1
+    ]);
+    expect(flujoDiario(movs, 2)).toEqual([
+      { fecha: "2026-07-09", ingresos: 50, egresos: 0 },
+      { fecha: "2026-07-10", ingresos: 999, egresos: 200 }, // y entra a la caja 2
     ]);
   });
 });
