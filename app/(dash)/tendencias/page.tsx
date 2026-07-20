@@ -13,14 +13,15 @@ import { cn } from "@/lib/utils";
 export const revalidate = 60;
 
 // Proyecciones y tendencias. No calcula plata nueva: series diarias de las MISMAS RPCs que /ventas
-// (sales_days, por día de venta) y / (dashboard_days, por cohorte de despacho), con media móvil y una
-// proyección de cierre de mes a ritmo de los días maduros. Conservador a propósito: los últimos días
-// se marcan inmaduros (van a MEJORAR al madurar, no es caída) y el run-rate los excluye.
+// (sales_days + sales_by_product) — TODO el panel cohortea por día de VENTA (pedido del dueño, 20/07:
+// los días de despacho flacos meten 0%/100% de puro n chico). Media móvil + proyección de cierre a
+// ritmo de los días maduros. Conservador a propósito: los últimos días se marcan inmaduros (van a
+// MEJORAR al madurar, no es caída) y el run-rate los excluye.
 type SalesDay = {
-  sale_date: string; generadas: number; revenue_estimado: number;
-  profit_confirmado: number; profit_estimado: number; ads: number; ads_sin_cohorte: number;
+  sale_date: string; generadas: number; despachadas: number; entregadas: number;
+  revenue_estimado: number; profit_confirmado: number; profit_estimado: number;
+  ads: number; ads_sin_cohorte: number;
 };
-type DashDay = { dispatch_date: string; despachadas: number; entregadas: number };
 type ProdWeek = { product: string; generadas: number; profit_estimado: number; ads: number };
 
 const N = (v: number | null | undefined) => Number(v ?? 0);
@@ -67,9 +68,8 @@ export default async function Tendencias({
     return { from: daysAgoIso(7 * (i + 1)), to: daysAgoIso(7 * i + 1) };
   });
 
-  const [{ data: sdRaw }, { data: ddRaw }, ...weekly] = await Promise.all([
+  const [{ data: sdRaw }, ...weekly] = await Promise.all([
     db.rpc("sales_days", { p_from: pFrom, p_courier: courierParam }),
-    db.rpc("dashboard_days", { p_from: pFrom, p_courier: courierParam }),
     ...semanas.map((w) => db.rpc("sales_by_product", { p_from: w.from, p_to: w.to, p_courier: courierParam })),
   ]);
 
@@ -77,7 +77,8 @@ export default async function Tendencias({
   // plata real gastada aunque no ancle a ninguna venta; con filtro de courier viene en 0 desde la RPC).
   const sd = ((sdRaw ?? []) as SalesDay[])
     .map((r) => ({
-      date: r.sale_date, generadas: r.generadas ?? 0, ads: N(r.ads), sin: N(r.ads_sin_cohorte),
+      date: r.sale_date, generadas: r.generadas ?? 0, despachadas: r.despachadas ?? 0,
+      entregadas: r.entregadas ?? 0, ads: N(r.ads), sin: N(r.ads_sin_cohorte),
       revenueEst: N(r.revenue_estimado),
       neto: N(r.profit_estimado) - N(r.ads_sin_cohorte),
       netoConf: N(r.profit_confirmado) - N(r.ads_sin_cohorte),
@@ -118,10 +119,12 @@ export default async function Tendencias({
   // ad_spend de Meta del día natural) y rompería la serie — auditoría 20/07, verificado contra prod.
   const sCpa: PuntoT[] = rango.filter((d) => d.generadas > 0 && d.ads > 0).map((d) => ({ x: d.date, v: d.ads / d.generadas }));
   const sRoas: PuntoT[] = rango.filter((d) => d.ads > 0).map((d) => ({ x: d.date, v: d.revenueEst / d.ads }));
-  const sTasa: PuntoT[] = ((ddRaw ?? []) as DashDay[])
-    .filter((r) => r.dispatch_date >= rangoFrom && r.dispatch_date < today && (r.despachadas ?? 0) > 0)
-    .sort((a, b) => (a.dispatch_date < b.dispatch_date ? -1 : 1))
-    .map((r) => ({ x: r.dispatch_date, v: r.entregadas / r.despachadas }));
+  // Tasa por día de VENTA, no de despacho: un día de despacho flaco (domingo con 2 guías) daba 0% o
+  // 100% por puro n chico y arrastraba la media. El día de venta siempre tiene volumen sano (pedido del
+  // dueño, 20/07: "no hay día en que se hayan generado pedidos de los cuales no se entregó ninguno").
+  const sTasa: PuntoT[] = rango
+    .filter((d) => d.despachadas > 0)
+    .map((d) => ({ x: d.date, v: d.entregadas / d.despachadas }));
 
   const sombraDe = (pts: PuntoT[], horizonte: number) => pts.filter((p) => p.x > daysAgoIso(horizonte)).length;
 
@@ -178,9 +181,9 @@ export default async function Tendencias({
       tip: "Ads asignada del día ÷ ventas generadas ese día (misma fórmula que la tabla diaria de /ventas). El último día queda sombreado: la pauta de Meta termina de sincronizar unas horas después del cierre, y ese hueco se leería como un CPA buenísimo que no es. La pauta sin cohorte no entra (por día puede dar negativa). Ojo en 'Todos': si cambia la mezcla de productos, el CPA global se mueve sin que ninguna campaña haya cambiado — la referencia por producto vive en /analisis.",
     },
     {
-      titulo: "Tasa de entrega por cohorte de despacho", kind: "pct", pts: sTasa, sombra: sombraDe(sTasa, 21), bueno: "sube",
+      titulo: "Tasa de entrega por día de venta", kind: "pct", pts: sTasa, sombra: sombraDe(sTasa, 23), bueno: "sube",
       trazo: "stroke-violet-500", punto: "bg-violet-500", deltaTipo: "pct",
-      tip: "Entregadas ÷ despachadas de cada día de DESPACHO (dashboard_days, el mismo dato del Resumen). Una cohorte tarda ~3 semanas en madurar (98% a los 21 días): toda la franja sombreada va a subir sola — si la curva se aplana también fuera de la franja, ahí sí hay problema (o sync congelado). Ojo en 'Todos': si crece la parte de ML o Correo, la tasa global sube sin que Urbano haya mejorado — filtrá por canal para aislar.",
+      tip: "De las ventas generadas cada día que llegaron a despacharse, cuántas se entregaron. Se cohortea por día de VENTA a propósito: por día de despacho, un domingo con 2 guías daba 0% o 100% de puro ruido y arrastraba la media. Madura en ~3 semanas (entrega 21 días + 1-2 de despacho): toda la franja sombreada va a subir sola — si la curva se aplana también fuera de la franja, ahí sí hay problema (o sync congelado). Ojo en 'Todos': si crece la parte de ML o Correo, la tasa global sube sin que Urbano haya mejorado — filtrá por canal para aislar.",
     },
     {
       titulo: "ROAS estimado", kind: "ratio", pts: sRoas, sombra: sombraDe(sRoas, 10), bueno: "sube",
@@ -212,7 +215,7 @@ export default async function Tendencias({
     <main className="space-y-6">
       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <span><b className="text-foreground">Proyecciones y tendencias</b> — hacia dónde va el mes y hacia dónde van las curvas.</span>
-        <Tip tip="Mismos números que /ventas y el Resumen, mirados en el tiempo: la media móvil de 7 días es la tendencia (el valor diario es ruido) y el cierre de mes se proyecta al ritmo de los días ya maduros. Conservador a propósito: no se le da crédito a mejoras que todavía no se midieron." />
+        <Tip tip="Mismos números que /ventas, mirados en el tiempo: TODO el panel cohortea por día de VENTA (cuándo se generó el pedido), no de despacho. La media móvil de 7 días es la tendencia (el valor diario es ruido) y el cierre de mes se proyecta al ritmo de los días ya maduros. Conservador a propósito: no se le da crédito a mejoras que todavía no se midieron." />
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-sm">
