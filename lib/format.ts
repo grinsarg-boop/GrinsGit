@@ -21,5 +21,7 @@ export const fmtDate = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
 export const fmtRatio = (n: number | null | undefined) =>
   n == null ? "—" : n.toFixed(2).replace(".", ",");
 
+// Fecha de negocio en ART (§ zona horaria del SPEC): entre las 21 y las 24hs ART, la fecha UTC ya está
+// en "mañana" — con toISOString() los paneles corrían un día para adelante en esa ventana (auditoría 20/07).
 export const daysAgoIso = (n: number) =>
-  new Date(Date.now() - n * 86400_000).toISOString().slice(0, 10);
+  new Date(Date.now() - n * 86400_000).toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });

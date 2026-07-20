@@ -5,7 +5,7 @@ import { Chispa } from "@/components/chispa";
 import { Delta } from "@/components/delta";
 import { ProyeccionMes, type PuntoAcum } from "@/components/proyeccion-mes";
 import { Tendencia, type PuntoT } from "@/components/tendencia";
-import { daysAgoIso, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
+import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { mediaMovil } from "@/lib/tendencias";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -85,17 +85,20 @@ export default async function Tendencias({
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 
   // ---- proyección del mes ----
-  const mes = sd.filter((d) => d.date >= mesStart);
+  // HOY queda afuera del acumulado: el día está incompleto y contarlo a medias sesga para abajo tanto
+  // el acumulado como la comparación con el mes pasado. Hoy se proyecta entero, a ritmo (auditoría 20/07).
+  const mes = sd.filter((d) => d.date >= mesStart && d.date < today);
   const prev = sd.filter((d) => d.date >= prevStart && d.date <= prevEnd);
-  const acumHoy = mes.reduce((s, d) => s + d.neto, 0);
+  const acumAyer = mes.reduce((s, d) => s + d.neto, 0);
   const acumConf = mes.reduce((s, d) => s + d.netoConf, 0);
   // run-rate = promedio diario de los días "maduros" recientes: entre hace 18 y hace 5 días. Los últimos
   // 4 quedan afuera porque gran parte de sus ventas todavía ni despachó (aportan $0 por diseño §sales).
   const madDays = sd.filter((d) => d.date >= daysAgoIso(18) && d.date <= daysAgoIso(5));
   const ritmo = madDays.length ? madDays.reduce((s, d) => s + d.neto, 0) / madDays.length : 0;
-  const cierre = acumHoy + ritmo * (diasMes - dom);
+  const cierre = acumAyer + ritmo * (diasMes - dom + 1); // hoy incluido: se proyecta entero
   const prevTotal = prev.reduce((s, d) => s + d.neto, 0);
-  const prevMismaAltura = prev.filter((d) => Number(d.date.slice(8, 10)) <= dom).reduce((s, d) => s + d.neto, 0);
+  // "a esta altura" = mismos días completos que el acumulado (hasta ayer), para comparar peras con peras
+  const prevMismaAltura = prev.filter((d) => Number(d.date.slice(8, 10)) <= dom - 1).reduce((s, d) => s + d.neto, 0);
 
   const acumular = (rows: typeof sd): PuntoAcum[] => {
     let s = 0;
@@ -103,13 +106,16 @@ export default async function Tendencias({
   };
   const curvaActual = acumular(mes);
   const curvaPrevio = acumular(prev);
-  const curvaProy: PuntoAcum[] = [{ dom, acum: acumHoy }, { dom: diasMes, acum: cierre }];
+  const curvaProy: PuntoAcum[] = [{ dom: Math.max(dom - 1, 1), acum: acumAyer }, { dom: diasMes, acum: cierre }];
 
   // ---- series de tendencia (ventana elegida) ----
   // Hoy queda afuera: el día está incompleto (ads y ventas a medias) y dibuja un pozo falso al final.
   const rango = sd.filter((d) => d.date >= rangoFrom && d.date < today);
   const sProfit: PuntoT[] = rango.map((d) => ({ x: d.date, v: d.neto }));
   const sVentas: PuntoT[] = rango.map((d) => ({ x: d.date, v: d.generadas }));
+  // CPA/ROAS sobre la pauta ASIGNADA del día (misma fórmula que la tabla diaria de /ventas). No se le
+  // suma ads_sin_cohorte: por día puede ser NEGATIVO (la asignación por período + ads de ML supera el
+  // ad_spend de Meta del día natural) y rompería la serie — auditoría 20/07, verificado contra prod.
   const sCpa: PuntoT[] = rango.filter((d) => d.generadas > 0 && d.ads > 0).map((d) => ({ x: d.date, v: d.ads / d.generadas }));
   const sRoas: PuntoT[] = rango.filter((d) => d.ads > 0).map((d) => ({ x: d.date, v: d.revenueEst / d.ads }));
   const sTasa: PuntoT[] = ((ddRaw ?? []) as DashDay[])
@@ -139,6 +145,8 @@ export default async function Tendencias({
       const ult = pts[n - 1], cerrada = pts[n - 2], anterior = pts[n - 3];
       return {
         name,
+        // apagado = sin ventas en las últimas 4 semanas: no hay decisión que tomar, no ocupa card
+        activo: pts.slice(-4).some((w) => w.gen > 0),
         spark: pts.map((w, i) => ({ x: semanas[i].from, v: w.profit })),
         profitCerrada: cerrada.profit, profitAnterior: anterior.profit,
         ventas: ult.gen, ventasPrev: cerrada.gen,
@@ -147,6 +155,8 @@ export default async function Tendencias({
       };
     })
     .sort((a, b) => a.profitCerrada - b.profitCerrada); // lo que peor viene, primero
+  const prodActivos = prodTend.filter((p) => p.activo);
+  const prodApagados = prodTend.filter((p) => !p.activo).map((p) => p.name);
 
   const bloques: {
     titulo: string; tip: string; pts: PuntoT[]; kind: "money" | "num" | "pct" | "ratio";
@@ -163,19 +173,19 @@ export default async function Tendencias({
       tip: "Órdenes generadas por día (todas, se despachen o no). Este número queda firme el mismo día: acá no hay maduración.",
     },
     {
-      titulo: "CPA de adquisición", kind: "money", pts: sCpa, sombra: 0, bueno: "baja",
+      titulo: "CPA de adquisición", kind: "money", pts: sCpa, sombra: sombraDe(sCpa, 2), bueno: "baja",
       trazo: "stroke-amber-500", punto: "bg-amber-500", deltaTipo: "money",
-      tip: "Ads del día ÷ ventas generadas ese día (misma fórmula que la tabla diaria de /ventas; acá sin la pauta sin cohorte, que no ancla a ventas). También queda firme el mismo día. La referencia por producto vive en /analisis.",
+      tip: "Ads asignada del día ÷ ventas generadas ese día (misma fórmula que la tabla diaria de /ventas). El último día queda sombreado: la pauta de Meta termina de sincronizar unas horas después del cierre, y ese hueco se leería como un CPA buenísimo que no es. La pauta sin cohorte no entra (por día puede dar negativa). Ojo en 'Todos': si cambia la mezcla de productos, el CPA global se mueve sin que ninguna campaña haya cambiado — la referencia por producto vive en /analisis.",
     },
     {
-      titulo: "Tasa de entrega por cohorte de despacho", kind: "pct", pts: sTasa, sombra: sombraDe(sTasa, 14), bueno: "sube",
+      titulo: "Tasa de entrega por cohorte de despacho", kind: "pct", pts: sTasa, sombra: sombraDe(sTasa, 21), bueno: "sube",
       trazo: "stroke-violet-500", punto: "bg-violet-500", deltaTipo: "pct",
-      tip: "Entregadas ÷ despachadas de cada día de DESPACHO (dashboard_days, el mismo dato del Resumen). Una cohorte tarda ~2-3 semanas en madurar: la caída de la franja sombreada es maduración normal, no un derrumbe — si se aplana también fuera de la franja, ahí sí hay problema (o sync congelado).",
+      tip: "Entregadas ÷ despachadas de cada día de DESPACHO (dashboard_days, el mismo dato del Resumen). Una cohorte tarda ~3 semanas en madurar (98% a los 21 días): toda la franja sombreada va a subir sola — si la curva se aplana también fuera de la franja, ahí sí hay problema (o sync congelado). Ojo en 'Todos': si crece la parte de ML o Correo, la tasa global sube sin que Urbano haya mejorado — filtrá por canal para aislar.",
     },
     {
       titulo: "ROAS estimado", kind: "ratio", pts: sRoas, sombra: sombraDe(sRoas, 10), bueno: "sube",
       trazo: "stroke-rose-500", punto: "bg-rose-500", deltaTipo: "num",
-      tip: "Revenue estimado de las ventas del día ÷ ads del día. El revenue de los días inmaduros todavía está subestimado (ventas sin despachar), así que la cola reciente tira para abajo.",
+      tip: "Revenue estimado de las ventas del día ÷ ads asignada del día. El revenue de los días inmaduros todavía está subestimado (ventas sin despachar), así que la cola reciente tira para abajo — no leer ROAS real ahí adentro.",
     },
   ];
 
@@ -229,26 +239,38 @@ export default async function Tendencias({
         <CardContent className="space-y-4 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
             Cierre proyectado de {mesLabel}
-            <Tip tip={`Acumulado real del mes + (días restantes × ritmo diario). El ritmo es el promedio de los días de hace 18 a hace 5 días: los últimos días quedan afuera porque sus ventas todavía no despacharon y subestimarían. El acumulado de hoy también tiende a subestimar por lo mismo — es el piso, no el techo.`} />
+            <Tip tip={`Acumulado real hasta AYER + (hoy y los días que faltan × ritmo diario). Hoy no se cuenta a medias: el día incompleto se proyecta entero, a ritmo. El ritmo es el promedio de los días de hace 18 a hace 5: los últimos quedan afuera porque sus ventas todavía no despacharon y subestimarían. El acumulado igual tiende a ser piso, no techo — los días recientes siguen madurando para arriba.`} />
           </span>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div className="sube rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Cierre proyectado</div>
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Cierre proyectado
+                <Tip tip={`Acumulado hasta ayer + (hoy y los ${diasMes - dom} días que faltan) × ritmo. Es margen de contribución: NO incluye costos fijos (sueldos, estructura, packaging) — no es el bottom line del mes.`} />
+              </div>
               <div className={cn("text-lg font-semibold tabular-nums", pnlColor(cierre))}>{fmtMoney(cierre)}</div>
-              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">ritmo {fmtMoney(ritmo)}/día</div>
+              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">ritmo {fmtMoney(ritmo)}/día
+                <Tip tip="Promedio diario del profit estimado de los días de hace 18 a hace 5 — ya maduros. Si el ritmo real de esta semana es mejor, la proyección se queda corta (conservadora a propósito)." />
+              </div>
             </div>
             <div className="sube rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Acumulado hoy (día {dom})</div>
-              <div className={cn("text-lg font-semibold tabular-nums", pnlColor(acumHoy))}>{fmtMoney(acumHoy)}</div>
-              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">confirmado {fmtMoney(acumConf)}</div>
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Acumulado hasta ayer
+                <Tip tip="Profit ESTIMADO de las ventas del mes hasta ayer inclusive, neto de la pauta sin cohorte. Los días recientes todavía maduran para arriba: este número es piso, no techo." />
+              </div>
+              <div className={cn("text-lg font-semibold tabular-nums", pnlColor(acumAyer))}>{fmtMoney(acumAyer)}</div>
+              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">confirmado {fmtMoney(acumConf)}
+                <Tip tip="La parte del acumulado que ya es plata firme (guías resueltas). El resto del estimado converge hacia acá a medida que las cohortes maduran." />
+              </div>
             </div>
             <div className="sube rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{prevLabel} a esta altura</div>
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{prevLabel} a esta altura
+                <Tip tip={`Los mismos días completos (1 al ${dom - 1}) de ${prevLabel}, que ya están asentados. Ojo con el Δ: ${prevLabel} es número final, el mes en curso todavía es estimado y tiende a quedarse corto — si da verde apenas, en realidad va mejor.`} />
+              </div>
               <div className="text-lg font-semibold tabular-nums">{fmtMoney(prevMismaAltura)}</div>
-              <div className="pt-0.5"><Delta actual={acumHoy} previo={prevMismaAltura} /></div>
+              <div className="pt-0.5"><Delta actual={acumAyer} previo={prevMismaAltura} /></div>
             </div>
             <div className="sube rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{prevLabel} cerró</div>
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{prevLabel} cerró
+                <Tip tip={`Total de ${prevLabel} con la misma definición (margen de contribución, sin costos fijos). El Δ compara el CIERRE PROYECTADO contra ese total: cómo viene el mes contra el anterior si se sostiene el ritmo.`} />
+              </div>
               <div className="text-lg font-semibold tabular-nums">{fmtMoney(prevTotal)}</div>
               <div className="pt-0.5"><Delta actual={cierre} previo={prevTotal} /></div>
             </div>
@@ -259,22 +281,24 @@ export default async function Tendencias({
       </Card>
 
       {/* tendencia por producto */}
-      {prodTend.length > 0 && (
+      {prodActivos.length > 0 && (
       <Card>
         <CardContent className="space-y-3 pt-5">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               Tendencia por producto
-              <Tip tip="Profit estimado por semana (ventanas de 7 días hasta ayer), sumando los canales del filtro. El número grande es la última semana ya asentada con su variación contra la anterior; el punto hueco del sparkline es la semana que todavía madura — va a subir sola, no es caída. Ventas y CPA sí son de la última semana (quedan firmes el mismo día). Ordenado de peor a mejor: lo que hay que mirar, arriba." />
+              <Tip tip="Profit estimado por semana (ventanas de 7 días hasta ayer), sumando los canales del filtro. El número grande es la última semana ya asentada con su variación contra la anterior; el punto hueco del sparkline es la semana que todavía madura — va a subir sola, no es caída. Ventas y CPA sí son de la última semana (quedan firmes el mismo día). Ordenado de peor a mejor: lo que hay que mirar, arriba. Cada sparkline usa su propia escala — leé la forma; para comparar tamaños entre productos están los números." />
             </span>
             <span className="text-xs tabular-nums text-muted-foreground">{nSemanas} semanas · profit/semana</span>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {prodTend.map((p) => (
+            {prodActivos.map((p) => (
               <div key={p.name} className="sube space-y-1.5 rounded-lg bg-muted/40 p-3">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="truncate text-sm font-medium">{p.name}</span>
-                  <span className={cn("text-sm font-semibold tabular-nums", pnlColor(p.profitCerrada))}>{fmtMoney(p.profitCerrada)}</span>
+                  <Tip tip={`Profit estimado de la semana asentada: ${fmtDate(semanas[nSemanas - 2].from)} → ${fmtDate(semanas[nSemanas - 2].to)} (el Δ de abajo es contra la semana anterior). Ventas y CPA son de la última semana (${fmtDate(semanas[nSemanas - 1].from)} → ${fmtDate(semanas[nSemanas - 1].to)}): firmes en ventas, todavía madurando en profit.`}>
+                    <span className={cn("text-sm font-semibold tabular-nums", pnlColor(p.profitCerrada))}>{fmtMoney(p.profitCerrada)}</span>
+                  </Tip>
                 </div>
                 <div><Delta actual={p.profitCerrada} previo={p.profitAnterior} /></div>
                 <Chispa puntos={p.spark} positivo={p.profitCerrada >= 0} />
@@ -289,6 +313,9 @@ export default async function Tendencias({
               </div>
             ))}
           </div>
+          {prodApagados.length > 0 && (
+            <p className="text-xs text-muted-foreground">Sin ventas en 4 semanas (apagados): {prodApagados.join(" · ")}</p>
+          )}
         </CardContent>
       </Card>
       )}
@@ -311,6 +338,7 @@ export default async function Tendencias({
                   <span className="flex items-baseline gap-2 text-xs tabular-nums text-muted-foreground">
                     media 7d <span className="font-semibold text-foreground">{fmtMa}</span>
                     {isFinite(maAntes) && <Delta actual={maHoy} previo={maAntes} tipo={b.deltaTipo} bueno={b.bueno} />}
+                    <Tip tip={`La media móvil de 7 días tomada en el último punto ya MADURO (fuera de la franja sombreada), comparada con la misma media 14 días antes. Esa es la tendencia real de la curva; el color dice si mejora o empeora — en esta métrica, mejorar es ${b.bueno === "baja" ? "bajar" : "subir"}.`} />
                   </span>
                 )}
               </div>
