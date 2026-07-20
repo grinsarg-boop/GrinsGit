@@ -24,12 +24,14 @@ type PnlRow = {
 };
 type ZonaRow = {
   province: string; guias: number; entregadas: number; devueltas: number;
-  cod_cobrado: number; flete: number; flete_perdido: number; margen_bruto: number;
+  cod_cobrado: number; flete: number; flete_perdido: number;
+  comisiones: number; costo_producto: number; margen_bruto: number; margen_neto: number;
 };
 type DesenlaceRow = { estado: string; guias: number; cod: number };
 type PackRow = {
   pack: number; guias: number; entregadas: number; devueltas: number;
-  cod_cobrado: number; flete: number; margen_bruto: number;
+  cod_cobrado: number; flete: number;
+  comisiones: number; costo_producto: number; margen_bruto: number; margen_neto: number;
 };
 
 const COURIER: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML" };
@@ -182,8 +184,8 @@ export default async function Analisis({
     ["Máx", "2020-01-01", today],
   ];
 
-  const maxMargen = Math.max(...zonas.map((z) => Math.abs(N(z.margen_bruto))), 1);
-  const maxPackM = Math.max(...packs.map((p) => Math.abs(N(p.margen_bruto))), 1);
+  const maxMargen = Math.max(...zonas.map((z) => Math.abs(N(z.margen_neto))), 1);
+  const maxPackM = Math.max(...packs.map((p) => Math.abs(N(p.margen_neto))), 1);
 
   const chip = (active: boolean) => cn(
     "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
@@ -366,25 +368,27 @@ export default async function Analisis({
         <CardContent className="space-y-3 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
             Por tamaño de pack
-            <Tip tip="Solo pedidos de una línea (con carrito mixto el pack no está definido). La tasa de entrega suele subir con el tamaño del pack: un pack más grande no solo es más ticket, también vuelve menos." />
+            <Tip tip="Solo pedidos de una línea (con carrito mixto el pack no está definido). La tasa de entrega suele subir con el tamaño del pack. Margen bruto = cobrado − flete. Neto s/Ads = bruto − comisiones − costo de producto; lo único que falta ahí son los Ads, que van por producto y día y no se pueden repartir por pack sin inventar." />
           </span>
           <Table>
             <TableHeader><TableRow>
               <TableHead>Pack</TableHead><TableHead className="text-right">Guías</TableHead>
               <TableHead className="text-right">Entrega</TableHead><TableHead className="text-right">Devolución</TableHead>
-              <TableHead className="text-right">Margen bruto</TableHead><TableHead className="w-28" />
+              <TableHead className="text-right">Margen bruto</TableHead>
+              <TableHead className="text-right">Neto s/Ads</TableHead><TableHead className="w-28" />
             </TableRow></TableHeader>
             <TableBody>
               {packs.map((p) => {
                 const t = p.guias ? p.entregadas / p.guias : 0;
                 const dev = p.guias ? p.devueltas / p.guias : 0;
-                const m = N(p.margen_bruto);
+                const m = N(p.margen_neto);
                 return (
                   <TableRow key={p.pack}>
                     <TableCell className="font-medium">×{p.pack}</TableCell>
                     <TableCell className="text-right tabular-nums">{p.guias.toLocaleString("es-AR")}</TableCell>
                     <TableCell className={cn("text-right tabular-nums", t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-emerald-600 dark:text-emerald-400")}>{fmtPct(t)}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(dev)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(p.margen_bruto))}</TableCell>
                     <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
                     <TableCell><div className="h-1.5 w-full rounded bg-muted"><div className={cn("barra h-1.5 rounded", m >= 0 ? "bg-emerald-500" : "bg-destructive")} style={{ width: `${Math.abs(m) / maxPackM * 100}%` }} /></div></TableCell>
                   </TableRow>
@@ -402,7 +406,7 @@ export default async function Analisis({
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               Zonas
-              <Tip tip="Margen bruto = COD cobrado − flete de TODAS las guías de la provincia. No baja a profit porque el costo de producto y los Ads no se pueden imputar por zona sin inventar un reparto. De peor a mejor: arriba es donde se va la plata." />
+              <Tip tip="Margen bruto = COD cobrado − flete de TODAS las guías de la provincia. Neto s/Ads = bruto − comisiones − costo de producto, con las mismas reglas del P&L (comisión solo sobre entregadas, costo en entregado y siniestro). Lo único que falta es los Ads, que van por producto y día y no se reparten por zona sin inventar. De peor a mejor NETO: arriba es donde se va la plata." />
             </span>
             <span className="text-xs text-muted-foreground">{zonas.length} provincias · de peor a mejor</span>
           </div>
@@ -411,12 +415,12 @@ export default async function Analisis({
               <TableHead>Provincia</TableHead><TableHead className="text-right">Guías</TableHead>
               <TableHead className="text-right">Entrega</TableHead><TableHead className="text-right">COD cobrado</TableHead>
               <TableHead className="text-right">Flete</TableHead><TableHead className="text-right">Margen bruto</TableHead>
-              <TableHead className="w-28" />
+              <TableHead className="text-right">Neto s/Ads</TableHead><TableHead className="w-28" />
             </TableRow></TableHeader>
             <TableBody>
               {zonas.map((z) => {
                 const t = z.guias ? z.entregadas / z.guias : 0;
-                const m = N(z.margen_bruto);
+                const m = N(z.margen_neto);
                 return (
                   <TableRow key={z.province}>
                     <TableCell className="font-medium">{z.province}</TableCell>
@@ -424,6 +428,7 @@ export default async function Analisis({
                     <TableCell className={cn("text-right tabular-nums", t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-muted-foreground")}>{fmtPct(t)}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.cod_cobrado))}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.flete))}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.margen_bruto))}</TableCell>
                     <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
                     <TableCell><div className="h-1.5 w-full rounded bg-muted"><div className={cn("barra h-1.5 rounded", m >= 0 ? "bg-emerald-500" : "bg-destructive")} style={{ width: `${Math.abs(m) / maxMargen * 100}%` }} /></div></TableCell>
                   </TableRow>

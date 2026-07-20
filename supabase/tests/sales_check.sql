@@ -392,6 +392,12 @@ begin
   assert round(z_perd, 2) = 5160, format('035: flete PERDIDO = solo la devuelta = 5160 (got %s)', z_perd);
   assert z_perd < z_flete, '035: el flete perdido es un subconjunto del total';
 
+  -- 036: margen neto = cobrado − flete − comisión (solo entregada) − costo (entregado+siniestro)
+  --      = 50000 − 10320 − 2600 − 4500 = 32580. Clava la fórmula: un swap o contar la comisión de
+  --      la devuelta lo corre.
+  select margen_neto into pk_m from analisis_zonas(d6, current_date, 'urbano') where province = 'Córdoba';
+  assert round(pk_m, 2) = 32580, format('036: margen neto = 32580 (got %s)', pk_m);
+
   -- maduración: el bucket exige >=20 guías, con 2 tampoco aparece
   select count(*) into md_g from analisis_maduracion(d6, 'urbano');
   assert md_g = 0, format('035: con 2 guías el bucket de maduración NO se muestra (got %s)', md_g);
