@@ -18,16 +18,19 @@ export async function POST(req: Request) {
     const { enriched, flex } = await enrichMlShipments(supabaseAdmin(), enrichLimit);
     // Estima por CP el flete de los Flex en curso (sin listado todavía).
     const { estimated } = await estimateFlexByCP(supabaseAdmin(), enrichLimit);
-    // Retenciones IIBB/SIRTAC del pago en MP (backlog drenado a mano; en régimen son ~15-25/día).
-    const { taxed } = await enrichMlTaxes(supabaseAdmin(), enrichLimit);
-    // Gasto de Product Ads de ML (antes del recompute, que lo reparte por revenue).
-    const { total: adsTotal } = await syncMlAdSpend(Math.max(days, 60), supabaseAdmin());
-    // Bonificaciones Flex del MP (045): menor flete del día, también repartidas por revenue.
-    const { total: bonifTotal } = await syncMlFlexBonif(Math.max(days, 60), supabaseAdmin());
-    // Percepciones IVA/IIBB estimadas (046) para los días sin dato real del Reporte_Facturacion.
+    // Presupuesto de 60s de Vercel (Hobby): los refrescos de ads/bonif/khalil/retenciones son
+    // independientes → en paralelo, y con ventana rolling de 21 días (el histórico profundo ya está
+    // backfilleado; 21d cubre restatements de ads y refunds típicos — los backfills largos van por
+    // script local, no por esta ruta).
+    const REFRESH_DAYS = 21;
+    const [{ taxed }, { total: adsTotal }, { total: bonifTotal }, { pagos: mpPagos }] = await Promise.all([
+      enrichMlTaxes(supabaseAdmin(), enrichLimit),
+      syncMlAdSpend(REFRESH_DAYS, supabaseAdmin()),
+      syncMlFlexBonif(REFRESH_DAYS, supabaseAdmin()),
+      syncMpKhalil(REFRESH_DAYS, supabaseAdmin()),
+    ]);
+    // Percepciones IVA/IIBB estimadas (046) — después de ads/bonif: su base usa esas tablas.
     const { estimated: percepEst } = await estimateMlPercep(supabaseAdmin());
-    // Fee real de los links de pago del ecom (048, cuenta MP Khalil) — mismo cron del ecosistema MP.
-    const { pagos: mpPagos } = await syncMpKhalil(Math.max(days, 60), supabaseAdmin());
     // ML entra al P&L acá mismo, sin depender del recompute de otro courier.
     const from = new Date(Date.now() - Math.max(days, 60) * 86400_000).toISOString().slice(0, 10);
     await supabaseAdmin().rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
