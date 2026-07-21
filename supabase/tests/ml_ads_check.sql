@@ -4,6 +4,8 @@ begin;
 do $t$
 declare d date := current_date - 1; pid_pureza int; pid_rev int; r daily_pnl%rowtype; r2 daily_pnl%rowtype;
 begin
+  -- este check prueba el REPARTO por revenue; el IVA de ads (046) se neutraliza acá (rollback lo restaura)
+  update settings set value = '0' where key = 'ml_ads_iva';
   select id into pid_pureza from products where name = 'Pureza';
   select id into pid_rev    from products where name = 'Revival Oil';
 

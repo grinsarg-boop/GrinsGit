@@ -13,6 +13,9 @@ export const TIP_FLETE =
 export const TIP_COMIS =
   "Comisión final del courier por cobrar en puerta (Urbano y Fixy), solo sobre lo efectivamente entregado — la de lo que sigue en la calle todavía no se cuenta. Correo: 18% de MercadoPago en 3 cuotas. ML: comisión real de la venta. Informativo: ya está descontada del profit.";
 
+export const TIP_PERCEP =
+  "Percepciones de IVA e IIBB que MercadoLibre/MercadoPago facturan sobre sus servicios (comisiones, envíos y publicidad) — SOLO canal ML, ~18% de esos cargos. Por día: estimadas con la tasa calibrada contra la factura real hasta que se sube el Reporte_Facturacion del mes en /sync, que las reemplaza por el valor exacto. Son pagos a cuenta de impuestos (criterio conservador: se cuentan como costo hasta que el contador diga lo contrario). Informativo: ya están descontadas del profit.";
+
 export const TIP_CONFIRMADO =
   "Profit ya cerrado: lo cobrado menos envío, comisiones, costo de producto y Ads. NO es el monto cobrado — las columnas Envío y Comis. son informativas y ya están restadas acá, no las restes de nuevo. Puede dar negativo de forma temporal cuando todavía gastaste más en Ads de lo que maduró en ventas; se corrige a medida que las guías se entregan.";
 

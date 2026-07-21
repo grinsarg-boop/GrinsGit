@@ -405,6 +405,101 @@ export async function syncMlFlexBonif(days = 60, db: Db = supabaseAdmin()): Prom
   return { days: rows.length, total: rows.reduce((s, r) => s + r.amount, 0) };
 }
 
+// --- Percepciones IVA/IIBB de la factura mensual (046) ---
+
+// Parsea el Reporte_Facturacion xlsx del panel de ML: header en la fila "N° de factura fiscal";
+// suma percepciones (IVA RG5319, IIBB, etc.) + cargos fijos (Mi página, suscripciones) y devuelve
+// la ventana del período. El resto de la factura (vender/cuotas/flat_fee/envíos/ads) YA se cuenta
+// por otras vías — acá solo lo que falta.
+export function parseMlBilling(buf: Buffer): { percep: number; fijos: number; from: string; to: string; cargos: number } {
+  const wb = XLSX.read(buf, { type: "buffer", cellDates: true });
+  let percep = 0, fijos = 0, cargos = 0;
+  let from = "", to = "";
+  for (const name of wb.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, blankrows: false, defval: null });
+    const hi = rows.findIndex((r) => (r ?? []).some((c) => typeof c === "string" && /n° de factura fiscal/i.test(c)));
+    if (hi < 0) continue;
+    for (let i = hi + 1; i < rows.length; i++) {
+      const r = rows[i] as unknown[]; if (!r) continue;
+      const detalle = String(r[3] ?? "");
+      const valor = Number(r[7]);
+      if (!detalle || !Number.isFinite(valor)) continue;
+      cargos++;
+      const fecha = r[1] instanceof Date ? r[1].toISOString().slice(0, 10) : null;
+      if (fecha) { if (!from || fecha < from) from = fecha; if (!to || fecha > to) to = fecha; }
+      if (/percepci/i.test(detalle)) percep += valor;
+      else if (/mi p[áa]gina|suscripci/i.test(detalle)) fijos += valor;
+    }
+  }
+  if (!cargos || !from) throw new Error("no parece un Reporte_Facturacion de ML (falta el header o no hay cargos)");
+  return { percep, fijos, from, to, cargos };
+}
+
+const artDay = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+
+// Base diaria sobre la que ML factura percepciones: comisión (sale_fee) + flete neto de
+// bonificaciones + ads brutos (con IVA). Contra esta base se calibra settings.ml_percep_pct.
+async function mlDailyBase(db: Db, from: string, to: string): Promise<Map<string, number>> {
+  const iva = Number((await db.from("settings").select("value").eq("key", "ml_ads_iva").maybeSingle()).data?.value ?? 0);
+  const base = new Map<string, number>();
+  const add = (d: string, v: number) => { if (d >= from && d <= to) base.set(d, (base.get(d) ?? 0) + v); };
+  // sale_fee + flete por día ART de la venta (mismo criterio que la rama ml del recompute)
+  const PAGE = 1000;
+  for (let off = 0; ; off += PAGE) {
+    const { data } = await db.from("ml_orders")
+      .select("created_at, sale_fee, ship_cost, product")
+      .eq("status", "paid").not("product", "is", null)
+      .gte("created_at", `${from}T00:00:00-00:00`) // margen: el día ART se afina abajo
+      .range(off, off + PAGE - 1);
+    for (const r of data ?? []) add(artDay(r.created_at), (r.sale_fee ?? 0) + (r.ship_cost ?? 0));
+    if (!data || data.length < PAGE) break;
+  }
+  const { data: ads } = await db.from("ml_ad_spend").select("date, cost").gte("date", from).lte("date", to);
+  for (const r of ads ?? []) add(r.date, (r.cost ?? 0) * (1 + iva));
+  const { data: bon } = await db.from("ml_flex_bonif").select("date, amount").gte("date", from).lte("date", to);
+  for (const r of bon ?? []) add(r.date, -(r.amount ?? 0));
+  return base;
+}
+
+// Estima las percepciones de los días que aún no tienen dato REAL (ml_percep_pct × base del día),
+// para no quedar ciegos entre factura y factura. El import mensual las pisa con estimated=false.
+export async function estimateMlPercep(db: Db = supabaseAdmin(), days = 45): Promise<{ estimated: number }> {
+  const pct = Number((await db.from("settings").select("value").eq("key", "ml_percep_pct").maybeSingle()).data?.value ?? 0);
+  if (!pct) return { estimated: 0 };
+  const from = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10);
+  const to = today();
+  const { data: real } = await db.from("ml_percepciones").select("date, estimated").gte("date", from);
+  const reales = new Set((real ?? []).filter((r) => !r.estimated).map((r) => r.date));
+  const base = await mlDailyBase(db, from, to);
+  const rows = [...base.entries()]
+    .filter(([d, b]) => b > 0 && !reales.has(d))
+    .map(([date, b]) => ({ date, amount: Math.round(pct * b * 100) / 100, estimated: true }));
+  if (rows.length) {
+    const { error } = await db.from("ml_percepciones").upsert(rows, { onConflict: "date" });
+    if (error) throw new Error(`ml_percepciones upsert: ${error.message}`);
+  }
+  return { estimated: rows.length };
+}
+
+// Import del Reporte_Facturacion mensual: percepciones + fijos REALES prorrateados por base diaria
+// sobre la ventana del período (pisa los estimados) + recompute. Idempotente por período.
+export async function importMlBilling(buf: Buffer, db: Db = supabaseAdmin()): Promise<{ total: number; from: string; to: string; days: number }> {
+  const { percep, fijos, from, to } = parseMlBilling(buf);
+  const total = percep + fijos;
+  const base = await mlDailyBase(db, from, to);
+  const dias = [...base.entries()].filter(([, b]) => b > 0).sort();
+  if (!dias.length) throw new Error(`sin ventas ML en la ventana ${from}→${to} (¿sync corrido?)`);
+  const baseTotal = dias.reduce((s, [, b]) => s + b, 0);
+  const rows = dias.map(([date, b]) => ({ date, amount: Math.round((total * b / baseTotal) * 100) / 100, estimated: false }));
+  const spread = rows.reduce((s, r) => s + r.amount, 0); // redondeo: el último día absorbe la diferencia
+  rows[rows.length - 1].amount = Math.round((rows[rows.length - 1].amount + total - spread) * 100) / 100;
+  const { error } = await db.from("ml_percepciones").upsert(rows, { onConflict: "date" });
+  if (error) throw new Error(`ml_percepciones upsert: ${error.message}`);
+  await db.rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
+  return { total, from, to, days: rows.length };
+}
+
 // Import completo de la liquidación Flex (archivo → staging → ship_cost + tabla CP→costo → recompute).
 // Auto-detecta el formato: listado DarLogistica (trae CP e ID venta) o el xlsx semanal de Santiago.
 // Lo usan el endpoint /api/import/ml-flex y la subida desde /sync, para no duplicar la lógica.

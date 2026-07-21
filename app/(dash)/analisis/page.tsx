@@ -19,7 +19,7 @@ export const revalidate = 60;
 type PnlRow = {
   courier: string; product_id: number | null; product: string;
   despachadas: number; entregadas: number;
-  revenue: number; flete: number; comisiones: number; costo_producto: number; ads: number;
+  revenue: number; flete: number; comisiones: number; costo_producto: number; ads: number; percepciones: number;
   profit_conf: number; profit_est: number;
 };
 type ZonaRow = {
@@ -97,6 +97,7 @@ export default async function Analisis({
 
   const sumOf = (rows: PnlRow[], k: keyof PnlRow) => rows.reduce((s, r) => s + N(r[k] as number), 0);
   const revenue = sumOf(pnl, "revenue"), flete = sumOf(pnl, "flete"), comis = sumOf(pnl, "comisiones");
+  const percep = sumOf(pnl, "percepciones");
   const costo = sumOf(pnl, "costo_producto"), ads = sumOf(pnl, "ads");
   const profitConf = sumOf(pnl, "profit_conf"), profitEst = sumOf(pnl, "profit_est");
   const despachos = sumOf(pnl, "despachadas"), entregas = sumOf(pnl, "entregadas");
@@ -111,6 +112,7 @@ export default async function Analisis({
     { label: "Flete", value: flete, className: "stroke-rose-500", dot: "bg-rose-500" },
     { label: "Ads", value: ads, className: "stroke-amber-500", dot: "bg-amber-500" },
     { label: "Comisiones", value: comis, className: "stroke-slate-400", dot: "bg-slate-400" },
+    { label: "Percepciones ML", value: percep, className: "stroke-sky-400", dot: "bg-sky-400" },
     { label: "Costo de producto", value: costo, className: "stroke-violet-400", dot: "bg-violet-400" },
     { label: "Profit confirmado", value: Math.max(profitConf, 0), className: "stroke-emerald-500", dot: "bg-emerald-500" },
   ].filter((s) => s.value > 0);
@@ -269,7 +271,7 @@ export default async function Analisis({
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               A dónde va cada peso que cobrás
-              <Tip tip="Sobre el COD efectivamente cobrado del período. El flete es hundido: se paga por toda guía despachada, entregue o no, por eso pesa más de lo que uno espera." />
+              <Tip tip="Sobre el COD efectivamente cobrado del período. El flete es hundido: se paga por toda guía despachada, entregue o no, por eso pesa más de lo que uno espera. Percepciones ML = IVA/IIBB que MercadoLibre factura sobre sus servicios (solo canal ML): estimadas por día al ~18% calibrado contra la factura real; el Reporte_Facturacion mensual (en /sync) las pisa con el valor exacto." />
             </span>
             <span className="text-xs tabular-nums text-muted-foreground">cobrado {fmtMoney(revenue)}</span>
           </div>

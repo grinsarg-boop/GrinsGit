@@ -12,20 +12,20 @@ import {
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
-import { TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO } from "@/lib/tips";
+import { TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO, TIP_PERCEP } from "@/lib/tips";
 
 export const revalidate = 60; // R12
 
 type Day = {
   date: string; despachadas: number; entregadas: number; resueltas: number; proyectadas: number;
   revenueConf: number; revenueEst: number; profitConf: number; profitEst: number;
-  ads: number; adsSinCohorte: number; flete: number; comisiones: number;
+  ads: number; adsSinCohorte: number; flete: number; comisiones: number; percepciones: number;
 };
 
 type MonthAgg = {
   month: string; despachadas: number; entregadas: number; proyectadas: number;
   revenueEst: number; profitConf: number; profitEst: number; ads: number;
-  flete: number; comisiones: number;
+  flete: number; comisiones: number; percepciones: number;
 };
 
 
@@ -59,7 +59,7 @@ export default async function Resumen({
   type Row = {
     dispatch_date: string; despachadas: number; entregadas: number; resueltas: number; proyectadas: number;
     revenue_confirmado: number; revenue_estimado: number; profit_confirmado: number; profit_estimado: number;
-    flete: number; comisiones: number; ads: number; ads_sin_cohorte: number;
+    flete: number; comisiones: number; ads: number; ads_sin_cohorte: number; percepciones: number;
   };
   const mapDay = (r: Row): Day => ({
     date: r.dispatch_date, despachadas: r.despachadas, entregadas: r.entregadas, resueltas: r.resueltas,
@@ -67,7 +67,7 @@ export default async function Resumen({
     revenueConf: Number(r.revenue_confirmado), revenueEst: Number(r.revenue_estimado),
     profitConf: Number(r.profit_confirmado), profitEst: Number(r.profit_estimado),
     ads: Number(r.ads), adsSinCohorte: Number(r.ads_sin_cohorte),
-    flete: Number(r.flete), comisiones: Number(r.comisiones),
+    flete: Number(r.flete), comisiones: Number(r.comisiones), percepciones: Number(r.percepciones),
   });
 
   // Agregación server-side (dashboard_days, 009). El P&L por producto → /dia/[fecha].
@@ -162,10 +162,10 @@ export default async function Resumen({
     const m = new Map<string, MonthAgg>();
     for (const d of list) {
       const k = d.date.slice(0, 7);
-      const a = m.get(k) ?? { month: k, despachadas: 0, entregadas: 0, proyectadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, flete: 0, comisiones: 0 };
+      const a = m.get(k) ?? { month: k, despachadas: 0, entregadas: 0, proyectadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, flete: 0, comisiones: 0, percepciones: 0 };
       a.despachadas += d.despachadas; a.entregadas += d.entregadas; a.proyectadas += d.proyectadas;
       a.revenueEst += d.revenueEst; a.profitConf += d.profitConf; a.profitEst += d.profitEst; a.ads += d.ads;
-      a.flete += d.flete; a.comisiones += d.comisiones;
+      a.flete += d.flete; a.comisiones += d.comisiones; a.percepciones += d.percepciones;
       m.set(k, a);
     }
     meses = [...m.values()].sort((a, b) => (a.month < b.month ? 1 : -1));
@@ -778,6 +778,7 @@ export default async function Resumen({
             </TableHead>
             <TableHead className="text-right">Envío <Tip tip={TIP_FLETE} /></TableHead>
             <TableHead className="text-right">Comis. <Tip tip={TIP_COMIS} /></TableHead>
+            <TableHead className="text-right">Percep. <Tip tip={TIP_PERCEP} /></TableHead>
             <TableHead className="text-right">Ads</TableHead>
             <TableHead className="text-right">
               <span className="inline-flex items-center gap-1">ROAS est.
@@ -838,6 +839,7 @@ export default async function Resumen({
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.flete ? fmtMoney(d.flete) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.comisiones ? fmtMoney(d.comisiones) : "—"}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{d.percepciones ? fmtMoney(d.percepciones) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads ? fmtMoney(d.ads) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums">{d.ads > 0 ? fmtRatio(d.revenueEst / d.ads) : "—"}</TableCell>
               </TableRow>
@@ -864,6 +866,7 @@ export default async function Resumen({
             <TableHead className="text-right">confirmado</TableHead>
             <TableHead className="text-right">Envío <Tip tip={TIP_FLETE} /></TableHead>
             <TableHead className="text-right">Comis. <Tip tip={TIP_COMIS} /></TableHead>
+            <TableHead className="text-right">Percep. <Tip tip={TIP_PERCEP} /></TableHead>
             <TableHead className="text-right">Ads</TableHead>
             <TableHead className="text-right">ROAS est.</TableHead>
           </TableRow>
@@ -881,6 +884,7 @@ export default async function Resumen({
                 <TableCell className={cn("text-right tabular-nums", m.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(m.profitConf)}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.flete ? fmtMoney(m.flete) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.comisiones ? fmtMoney(m.comisiones) : "—"}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{m.percepciones ? fmtMoney(m.percepciones) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads ? fmtMoney(m.ads) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums">{m.ads > 0 ? fmtRatio(m.revenueEst / m.ads) : "—"}</TableCell>
               </TableRow>

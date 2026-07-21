@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { Badge } from "@/components/ui/badge";
 import { Tip } from "@/components/ui/tooltip";
 import { SyncRun } from "@/components/sync-run";
+import { BillingUpload, type BillingResult } from "@/components/billing-upload";
 import { FlexUpload, type FlexResult } from "@/components/flex-upload";
 import { AssignProduct } from "@/components/assign-product";
 import {
@@ -49,6 +50,24 @@ async function importFlex(_prev: FlexResult | null, formData: FormData): Promise
     return { ok: true, parsed, matched, cps };
   } catch (e) {
     await logSyncRun("ml-flex", "error", 0, [], String(e));
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// Subida del Reporte_Facturacion mensual de ML: percepciones reales por día (pisa estimados) + recompute.
+async function importBilling(_prev: BillingResult | null, formData: FormData): Promise<BillingResult> {
+  "use server";
+  const file = formData.get("file");
+  if (!(file instanceof File) || !file.size) return { ok: false, error: "elegí un archivo .xlsx" };
+  try {
+    const { importMlBilling } = await import("@/lib/ml");
+    const { total, from, to, days } = await importMlBilling(Buffer.from(await file.arrayBuffer()));
+    await logSyncRun("ml-billing", "ok", days, [{ total: Math.round(total), from, to }]);
+    revalidatePath("/sync");
+    revalidatePath("/");
+    return { ok: true, total, from, to, days };
+  } catch (e) {
+    await logSyncRun("ml-billing", "error", 0, [], String(e));
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
@@ -116,6 +135,12 @@ export default async function SyncPage() {
             )}
           </span>
         )}
+      </section>
+
+      <section className="flex flex-wrap items-center gap-2">
+        <span className="mr-2 text-sm font-medium">Factura ML mensual (Reporte_Facturacion):</span>
+        <BillingUpload action={importBilling} />
+        <Tip label="Qué es esto" tip="Subí el Reporte_Facturacion xlsx que se baja del panel de facturación de ML una vez por mes (sale ~el 17). La app toma las percepciones de IVA/IIBB y cargos fijos REALES del período y reemplaza los estimados diarios del P&L. El resto de la factura (comisiones, envíos, ads) ya se cuenta solo." />
       </section>
 
       <section>

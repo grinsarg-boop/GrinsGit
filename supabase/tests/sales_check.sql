@@ -3,6 +3,9 @@
 -- el día de VENTA (created_at). Sin ad_spend cargado, ads=0 en ambos → los montos deben coincidir al peso.
 begin;
 
+-- ancla el reparto de ads Meta+ML; el IVA de ads ML (046) se neutraliza acá (rollback restaura)
+update settings set value = '0' where key = 'ml_ads_iva';
+
 delete from product_costs;
 insert into product_costs (product_id, pack, unit_cost, is_estimated)
 select id, 1, 5000, false from products where name = 'Natures';
@@ -177,6 +180,9 @@ rollback;
 -- El riesgo real de la 032 es un swap posicional en el `union all` de sales_rows: flete quedando en la
 -- columna de comisiones o viceversa. Por eso se asertan VALORES exactos, no solo consistencia.
 begin;
+
+-- ancla el reparto de ads Meta+ML; el IVA de ads ML (046) se neutraliza acá (rollback restaura)
+update settings set value = '0' where key = 'ml_ads_iva';
 
 delete from product_costs;
 insert into product_costs (product_id, pack, unit_cost, is_estimated)
@@ -427,6 +433,8 @@ end $t$;
 
 -- ===== 037: el sin cohorte NO se contamina con los Product Ads de ML =====
 begin;
+-- reparto puro Meta+ML: el IVA de ads ML (046) se neutraliza acá (rollback restaura)
+update settings set value = '0' where key = 'ml_ads_iva';
 do $t$
 declare
   d4 date := current_date - 8;

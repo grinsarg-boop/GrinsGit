@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
-import { groupBonifByDay, mapMlOrder, needsRefresh, nextTokenState, parseDarLogistica, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
+import { groupBonifByDay, mapMlOrder, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
 
 const NOW = 1_700_000_000_000;
 
@@ -154,5 +154,38 @@ describe("groupBonifByDay", () => {
     expect(groupBonifByDay([
       { date_approved: "2026-07-15T23:30:00.000-04:00", transaction_amount: 100, status: "approved", description: "bonificaciones_flex_fc" },
     ])).toEqual({ "2026-07-16": 100 });
+  });
+});
+
+describe("parseMlBilling", () => {
+  // Layout real del Reporte_Facturacion: metadata arriba, header "N° de factura fiscal" en fila 8.
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ["Fecha de actualización", null, "2026-07-21"],
+    [],
+    ["N° de factura fiscal", "Fecha del cargo", "Número del cargo", "Detalle", "Cobrado de la operación", "Estado", "Anula", "Valor del cargo"],
+    ["0057A1", new Date("2026-06-17T12:00:00Z"), 1, "Cargo por vender ", "Si", null, null, 5000],
+    ["0057A1", new Date("2026-07-16T12:00:00Z"), 2, "Cargo por campaña de publicidad de Product Ads", "No", null, null, 1210],
+    ["0057A1", new Date("2026-07-17T12:00:00Z"), 3, "Percepción especial de IVA RG5319/2023", "No", null, null, 1006448.71],
+    ["0057A1", new Date("2026-07-17T12:00:00Z"), 4, "Percepción impuesto IIBB Buenos Aires", "No", null, null, 476438.68],
+    ["0057A1", new Date("2026-07-17T12:00:00Z"), 5, " Cargo por percepción de IIBB del régimen general para Tucumán", "No", null, null, 91024.9],
+    ["0057A1", new Date("2026-07-01T12:00:00Z"), 6, "Cargo por mantenimiento de Mi página", "No", null, null, 15999],
+    ["0057A1", new Date("2026-06-18T12:00:00Z"), 7, "Anulación del cargo por vender", "No aplica", null, null, -3000],
+  ]), "REPORT");
+  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+
+  it("suma percepciones y fijos, ignora lo ya contado, y saca la ventana del período", () => {
+    const r = parseMlBilling(buf);
+    expect(r.percep).toBeCloseTo(1006448.71 + 476438.68 + 91024.9, 2);
+    expect(r.fijos).toBe(15999);
+    expect(r.from).toBe("2026-06-17");
+    expect(r.to).toBe("2026-07-17");
+    expect(r.cargos).toBe(7);
+  });
+
+  it("rechaza un xlsx que no es el reporte", () => {
+    const w2 = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(w2, XLSX.utils.aoa_to_sheet([["Otra", "cosa"]]), "X");
+    expect(() => parseMlBilling(XLSX.write(w2, { type: "buffer", bookType: "xlsx" }) as Buffer)).toThrow();
   });
 });

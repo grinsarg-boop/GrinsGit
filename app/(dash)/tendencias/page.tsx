@@ -242,7 +242,7 @@ export default async function Tendencias({
         <CardContent className="space-y-4 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
             Cierre proyectado de {mesLabel}
-            <Tip tip={`Acumulado real hasta AYER + (hoy y los días que faltan × ritmo diario). Hoy no se cuenta a medias: el día incompleto se proyecta entero, a ritmo. El ritmo es el promedio de los días de hace 18 a hace 5: los últimos quedan afuera porque sus ventas todavía no despacharon y subestimarían. El acumulado igual tiende a ser piso, no techo — los días recientes siguen madurando para arriba.`} />
+            <Tip tip={`Acumulado real hasta AYER + (hoy y los días que faltan × ritmo diario). Hoy no se cuenta a medias: el día incompleto se proyecta entero, a ritmo. El ritmo es el promedio de los días de hace 18 a hace 5: los últimos quedan afuera porque sus ventas todavía no despacharon y subestimarían. El acumulado igual tiende a ser piso, no techo — los días recientes siguen madurando para arriba. El profit del canal ML ya viene neto de percepciones IVA/IIBB (estimadas al ~18% hasta que el Reporte_Facturacion del mes las confirme en /sync).`} />
           </span>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div className="sube rounded-lg bg-muted/40 p-3">
