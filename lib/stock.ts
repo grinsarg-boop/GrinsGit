@@ -24,6 +24,11 @@ export type Combo = {
 };
 export type ComboPack = { combo_id: string; material_id: string; cantidad: number };
 
+// Categoría "Proveedor" (egreso) en la app Cashflow — id estable desde el alta de la app (06/06).
+export const CAT_PROVEEDOR = 1780865913467;
+// El circuito de compras existe desde acá; lo anterior es histórico y se concilia aparte (v2).
+export const ESPEJO_DESDE = "2026-07-21";
+
 export function stockHeaders() {
   const key = process.env.STOCK_SERVICE_KEY!;
   return { apikey: key, Authorization: `Bearer ${key}` };
@@ -36,20 +41,60 @@ export async function fetchStock() {
       if (!r.ok) throw new Error(`stock ${p.split("?")[0]}: HTTP ${r.status}`);
       return r.json();
     });
-  const [materiales, productos, recetas, combos, packs] = await Promise.all([
+  const [materiales, productos, recetas, combos, packs, compras] = await Promise.all([
     j("materiales?select=id,nombre,categoria,unidad,stock,stock_minimo,costo_unitario&order=nombre.asc"),
     j("productos?select=id,nombre,stock,precio_venta&order=nombre.asc"),
     j("recetas?select=producto_id,material_id,cantidad"),
     j("combos?select=id,nombre,producto_id,cantidad_producto,precio&order=nombre.asc"),
     j("combo_packaging?select=combo_id,material_id,cantidad"),
+    j(`movimientos?select=precio_total,created_at&tipo=eq.ingreso_insumo&precio_total=not.is.null&created_at=gte.${ESPEJO_DESDE}`),
   ]);
-  return { materiales, productos, recetas, combos, packs } as {
+  return { materiales, productos, recetas, combos, packs, compras } as {
     materiales: Material[];
     productos: Producto[];
     recetas: Receta[];
     combos: Combo[];
     packs: ComboPack[];
+    compras: CompraStock[];
   };
+}
+
+export type CompraStock = { precio_total: number; created_at: string };
+export type EgresoCaja = { id: number; fecha: string; monto: number; descripcion: string | null; autor: string | null };
+
+// Interpreta la descripción libre de un egreso del bot ("por compra de 100 frascos 250ml
+// Revival oil") → insumo + cantidad, SOLO si es inequívoco: exactamente UN material cuyos
+// tokens aparecen todos en el texto, y UN número suelto como cantidad (los pegados a letras
+// no cuentan: "1m" es plata, "250ml" es el envase). Ante cualquier duda devuelve null y la
+// compra queda en el panel de espejo — mejor pedir un click que sumarle stock al insumo
+// equivocado.
+const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+export function parseCompra(desc: string, materiales: Material[]): { material: Material; cantidad: number } | null {
+  const t = norm(desc);
+  const candidatos = materiales.filter((m) => {
+    const tokens = norm(m.nombre).split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+    return tokens.length > 0 && tokens.every((w) => t.includes(w));
+  });
+  if (candidatos.length !== 1) return null;
+  const sueltos = [...t.matchAll(/(?<![a-z0-9$.,])(\d+(?:[.,]\d+)?)(?![a-z0-9.,])/g)].map((m) => Number(m[1].replace(",", ".")));
+  if (sueltos.length !== 1 || !(sueltos[0] > 0) || sueltos[0] > 99999) return null;
+  return { material: candidatos[0], cantidad: sueltos[0] };
+}
+
+// Egresos Proveedor de la caja SIN compra gemela en Stock. El hábito real: la compra se
+// anota por el bot de WhatsApp o la PWA (monto + texto libre) → Stock no puede enterarse
+// solo; acá se detecta y solo falta completar insumo + cantidad. Espejo = mismo monto
+// (±$1) y fecha a ±3 días; cada compra de Stock espeja a lo sumo UN egreso.
+export function egresosSinEspejo(egresos: EgresoCaja[], compras: CompraStock[]): EgresoCaja[] {
+  const libres = [...compras];
+  const dia = (iso: string) => new Date(iso.slice(0, 10) + "T12:00:00Z").getTime();
+  return egresos.filter((e) => {
+    const i = libres.findIndex((c) =>
+      Math.abs(Number(c.precio_total) - Number(e.monto)) <= 1 &&
+      Math.abs(dia(c.created_at) - dia(e.fecha)) <= 3 * 86400_000);
+    if (i >= 0) { libres.splice(i, 1); return false; }
+    return true;
+  });
 }
 
 // Costo de fabricar UNA unidad del producto según su receta. Un insumo sin costo cargado suma 0

@@ -2,10 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { CASHFLOW_BASE } from "@/lib/cashflow";
-import { STOCK_BASE, stockHeaders } from "@/lib/stock";
-
-// Categoría "Proveedor" (egreso) en la app Cashflow — id estable desde el alta de la app (06/06).
-const CAT_PROVEEDOR = 1780865913467;
+import { CAT_PROVEEDOR, STOCK_BASE, stockHeaders } from "@/lib/stock";
 
 // Carga ÚNICA de la compra: la RPC de Stock suma unidades y actualiza el costo del insumo, y de ahí
 // se propaga el egreso Proveedor a la caja. Si se elige "no registrar en caja" (compra ya cargada a

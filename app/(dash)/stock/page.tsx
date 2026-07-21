@@ -5,9 +5,9 @@ import {
 } from "@/components/ui/table";
 import { Panel } from "@/components/panel";
 import { SaveButton } from "@/components/save-button";
-import { daysAgoIso, fmtMoney } from "@/lib/format";
+import { daysAgoIso, fmtDate, fmtMoney } from "@/lib/format";
 import { fetchCashflow } from "@/lib/cashflow";
-import { costosCombos, fetchStock, valorInventario } from "@/lib/stock";
+import { CAT_PROVEEDOR, ESPEJO_DESDE, costosCombos, egresosSinEspejo, fetchStock, valorInventario } from "@/lib/stock";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { registrarCompra } from "./actions";
@@ -71,6 +71,18 @@ export default async function Stock() {
   ]);
   const costosPanel = pc.data ?? [];
 
+  // El hábito real: la compra se anota por el bot de WhatsApp o la PWA → llega a la caja
+  // como egreso Proveedor (monto + texto). Acá se detectan los que Stock no tiene y solo
+  // falta ponerles insumo + cantidad.
+  const sinEspejo = cf
+    ? egresosSinEspejo(
+        cf.movs
+          .filter((m) => m.tipo === "egreso" && !m.es_retiro && m.categoria_id === CAT_PROVEEDOR && m.fecha >= ESPEJO_DESDE)
+          .map((m) => ({ id: m.id, fecha: m.fecha, monto: Number(m.monto), descripcion: m.descripcion, autor: m.autor })),
+        s.compras,
+      )
+    : [];
+
   return (
     <div className="space-y-6">
       <div>
@@ -103,6 +115,39 @@ export default async function Stock() {
           Insumos sin costo cargado (el valor y los costos por combo son un piso):{" "}
           {inv.sinCosto.join(", ")}. Se cargan comprando acá o editando el insumo en la app Stock.
         </p>
+      )}
+
+      {/* Compras anotadas por el bot/PWA que Stock todavía no conoce: se completan acá */}
+      {sinEspejo.length > 0 && (
+        <Panel
+          titulo={<span className="text-amber-600 dark:text-amber-400">Compras de la caja sin espejo en Stock ({sinEspejo.length})</span>}
+          tip="Egresos Proveedor que entraron a la caja (por el bot de WhatsApp o la PWA) y no tienen compra gemela en Stock. Elegí el insumo y la cantidad y Guardar: Stock suma unidades y actualiza el costo usando el monto y la fecha que ya vinieron de la caja — sin duplicar el egreso. El panel desaparece cuando no queda ninguna."
+        >
+          <div className="space-y-2.5 text-sm">
+            {sinEspejo.map((e) => (
+              <div key={e.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+                <span className="truncate text-muted-foreground tabular-nums">
+                  {fmtDate(e.fecha)} · «{e.descripcion || "sin descripción"}» ({e.autor ?? "?"}) · {fmtMoney(e.monto)}
+                </span>
+                <form action={registrarCompra} className="flex items-center gap-1.5">
+                  <input type="hidden" name="precio" value={e.monto} />
+                  <input type="hidden" name="caja" value="0" />
+                  <input type="hidden" name="fecha" value={e.fecha} />
+                  <input type="hidden" name="nota" value={`espejo caja: ${e.descripcion || e.id}`} />
+                  <select name="material" required defaultValue="" className="rounded border bg-background px-1.5 py-0.5 text-xs">
+                    <option value="" disabled>insumo…</option>
+                    {s.materiales.map((m) => (
+                      <option key={m.id} value={`${m.id}|${m.nombre}`}>{m.nombre} ({m.unidad})</option>
+                    ))}
+                  </select>
+                  <input name="cantidad" type="number" step="any" min="0.000001" required placeholder="cant."
+                    className="w-20 rounded border bg-background px-1.5 py-0.5 text-xs" />
+                  <SaveButton />
+                </form>
+              </div>
+            ))}
+          </div>
+        </Panel>
       )}
 
       {/* Compra de insumos: carga única */}
