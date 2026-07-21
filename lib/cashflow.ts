@@ -172,6 +172,25 @@ export function conciliarGiros(
   });
 }
 
+// El diff por ventana ENGAÑA: Urbano paga partido en varios giros, corrido algún día y
+// hace catch-up entre semanas (21/07: giro +9,8% sobre su ventana devolviendo faltantes
+// del 30/06 y 07/07). La lectura que importa es la ACUMULADA: todo lo vencido desde que
+// la caja registra giros, menos todo lo girado = lo que Urbano debe HOY.
+export type SaldoUrbano = { esperado: number; girado: number; saldo: number; desde: string };
+export function saldoUrbano(
+  ventanas: { fecha_pago: string; neto: number }[],
+  giros: { fecha: string; monto: number }[],
+  hoy: string,
+): SaldoUrbano | null {
+  if (!giros.length) return null;
+  const desde = giros[0].fecha; // giros llega ordenado por fecha asc
+  const esperado = ventanas
+    .filter((v) => v.fecha_pago >= desde && v.fecha_pago <= hoy)
+    .reduce((s, v) => s + Number(v.neto), 0);
+  const girado = giros.reduce((s, g) => s + Number(g.monto), 0);
+  return { esperado, girado, saldo: esperado - girado, desde };
+}
+
 // Fixy rinde en sobres físicos con días de demora, y una parte del COD se cobra digital (no pasa
 // por sobre). El gap se calcula contra lo entregado hasta hace LAG días (lo más nuevo todavía no
 // tiene sobre) y es un TECHO de reclamo, no deuda exacta.

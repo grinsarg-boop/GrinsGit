@@ -6,7 +6,7 @@ import {
 import Link from "next/link";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import {
-  FIXY_LAG_DIAS, conciliarGiros, fetchCobranzas, fixyCobranza,
+  DESDE as CASHFLOW_DESDE, FIXY_LAG_DIAS, conciliarGiros, fetchCobranzas, fixyCobranza, saldoUrbano,
   type GiroUrbano, type SobreFixy,
 } from "@/lib/cashflow";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
@@ -117,10 +117,14 @@ export default async function Resumen({
     ventana_ini: string; ventana_fin: string; fecha_pago: string;
     guias: number; cod_bruto: number; comision: number; neto: number;
   };
+  // Desde el inicio de la caja (no 35 días): el saldo acumulado necesita TODAS las
+  // ventanas vencidas desde que hay giros registrados. La tabla sigue mostrando 5.
+  let cobranzaFull: Cobranza[] = [];
   let cobranza: Cobranza[] = [];
   if (!courierParam || courierParam === "urbano") {
-    const { data: cb } = await db.rpc("urbano_cobranza", { p_desde: daysAgoIso(35) });
-    cobranza = ((cb ?? []) as Cobranza[]).slice(0, 5);
+    const { data: cb } = await db.rpc("urbano_cobranza", { p_desde: `${CASHFLOW_DESDE}-01` });
+    cobranzaFull = (cb ?? []) as Cobranza[];
+    cobranza = cobranzaFull.slice(0, 5);
   }
 
   // Conciliación contra la caja real (app Cashflow): giros de Urbano y sobres de Fixy. Si la
@@ -136,6 +140,10 @@ export default async function Resumen({
     conciliarGiros(cobranza.map((c) => ({ fecha_pago: c.fecha_pago, neto: Number(c.neto) })), giros, today)
       .map((v) => [v.fecha_pago, v]),
   );
+  // La lectura que manda: saldo acumulado (todo lo vencido − todo lo girado). El diff
+  // por ventana queda como detalle — Urbano paga partido y hace catch-up entre semanas.
+  const saldoU = saldoUrbano(
+    cobranzaFull.map((c) => ({ fecha_pago: c.fecha_pago, neto: Number(c.neto) })), giros, today);
 
   // A cobrar de Fixy: entregado neto (RPC 041) vs sobres cargados en la caja. Si la 041 no está
   // aplicada todavía, el bloque no se muestra (error → null).
@@ -569,6 +577,25 @@ export default async function Resumen({
               ) : null;
             })()}
 
+            {/* La lectura que manda: acumulado vencido − girado. El diff por ventana es detalle. */}
+            {saldoU && (
+              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-md border px-3 py-2 text-sm">
+                <span className="inline-flex items-center gap-1 text-muted-foreground">
+                  Saldo acumulado con Urbano
+                  <Tip tip="Todo lo vencido según el panel desde que la caja registra giros, menos todo lo girado. Es EL número a reclamar: Urbano paga partido en varios giros y compensa faltantes en semanas siguientes, así que el % de una ventana suelta engaña (el giro del 21/07 vino +9,8% devolviendo faltantes de semanas anteriores). Si este saldo crece semana a semana, ahí sí hay reclamo." />
+                </span>
+                <span className={cn(
+                  "font-semibold tabular-nums",
+                  saldoU.saldo > 500_000 ? "text-amber-700 dark:text-amber-500" : "text-emerald-700 dark:text-emerald-500",
+                )}>
+                  {fmtMoney(saldoU.saldo)}
+                </span>
+                <span className="w-full text-xs text-muted-foreground">
+                  vencido desde el {fmtDate(saldoU.desde)}: {fmtMoney(saldoU.esperado)} − girado: {fmtMoney(saldoU.girado)}
+                </span>
+              </div>
+            )}
+
             {/* Igual que arriba: a primera vista solo el giro pendiente, el histórico se despliega. */}
             <details className="group text-sm">
               <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
@@ -586,7 +613,7 @@ export default async function Resumen({
                   <TableHead className="text-right">
                     <span className="inline-flex items-center gap-1">
                       Cobrado (caja)
-                      <Tip tip="Ingresos con categoría Urbano en la app Cashflow, asignados a la ventana cuyo martes de pago es el más reciente anterior al giro (Urbano a veces paga partido o corrido un día). Diferencias de ±3% son normales (el panel es conservador ~1,2% y hay redondeos); más que eso o 'sin registro' = falta cargar el giro en la caja o hay que reclamar." />
+                      <Tip tip="Ingresos con categoría Urbano en la app Cashflow, asignados a la ventana cuyo martes de pago es el más reciente anterior al giro. OJO: el % de una ventana suelta engaña — Urbano paga partido y compensa faltantes en semanas siguientes (21/07: +9,8% devolviendo lo del 30/06 y 07/07). Para reclamar, mirá el 'Saldo acumulado' de arriba; esta columna es el detalle de cómo se repartió." />
                     </span>
                   </TableHead>
                   <TableHead className="text-right">Estado</TableHead>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  balance5050, conciliarGiros, fixyCobranza, flujoDiario, porMes, saldos,
+  balance5050, conciliarGiros, fixyCobranza, flujoDiario, porMes, saldoUrbano, saldos,
   type Caja, type Cat, type Mov,
 } from "./cashflow";
 
@@ -108,6 +108,30 @@ describe("conciliarGiros", () => {
     const r = conciliarGiros(ventanas, [{ fecha: "2026-07-14", monto: 2000 }], "2026-07-20");
     expect(r[0].diff).toBeNull(); // pago 07/07 < primer giro en caja
     expect(r[1].diff).toBe(0);
+  });
+});
+
+describe("saldoUrbano", () => {
+  const ventanas = [
+    { fecha_pago: "2026-07-21", neto: 10000 },
+    { fecha_pago: "2026-07-14", neto: 12000 },
+    { fecha_pago: "2026-07-07", neto: 9000 }, // anterior al primer giro: afuera
+    { fecha_pago: "2026-07-28", neto: 8000 }, // no vencida: afuera
+  ];
+  it("acumula lo vencido desde el primer giro y resta todo lo girado", () => {
+    const giros = [
+      { fecha: "2026-07-14", monto: 11000 },
+      { fecha: "2026-07-21", monto: 6000 }, // pagó partido en dos giros
+      { fecha: "2026-07-21", monto: 4000 },
+    ];
+    const s = saldoUrbano(ventanas, giros, "2026-07-21")!;
+    expect(s.desde).toBe("2026-07-14");
+    expect(s.esperado).toBe(22000);
+    expect(s.girado).toBe(21000);
+    expect(s.saldo).toBe(1000);
+  });
+  it("sin giros registrados no hay lectura (null, no cero)", () => {
+    expect(saldoUrbano(ventanas, [], "2026-07-21")).toBeNull();
   });
 });
 
