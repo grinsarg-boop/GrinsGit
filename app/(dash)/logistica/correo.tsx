@@ -185,8 +185,8 @@ function CargaMasiva() {
       <h2 className="font-semibold">CSV carga masiva MiCorreo</h2>
       <p className="text-sm text-muted-foreground">
         Subí un borrador (21 columnas, separado por ;) y/o agregá pedidos por número desde Shopify.
-        Aplica la receta completa: ASCII, CP de 4 dígitos, peso con punto, CRLF, y área de cel de 4
-        dígitos → sucursal.
+        Aplica la receta completa: ASCII, CP de 4 dígitos, peso con punto, CRLF. Todo va a
+        domicilio; sucursal solo si al pedido le faltan datos de dirección.
       </p>
       <div className="space-y-3">
         <Dropzone
@@ -250,8 +250,8 @@ function CargaMasiva() {
                     ) : errores[i].length ? (
                       <div className="space-y-1">
                         {/* Shopify a veces manda un teléfono que splitPhone no puede partir → "cel inválido".
-                            Editable acá para no trabar todo el CSV por una fila. Área de 4 díg. → cae al
-                            selector de sucursal de arriba (needsSucursal). */}
+                            Editable acá para no trabar todo el CSV por una fila. Sin dirección completa
+                            → cae al selector de sucursal de arriba (needsSucursal). */}
                         {errores[i].includes("cel inválido") && (
                           <div className="flex items-center gap-1">
                             <input

@@ -50,8 +50,15 @@ describe("correo", () => {
     expect(productoCode(pedido)).toBe("N2");
   });
 
-  it("área de 4 dígitos exige sucursal y la deriva limpia domicilio", () => {
+  it("área de 4 dígitos va a DOMICILIO igual (regla 21/07: Correo rechazó la sucursal, no el área)", () => {
     const row = pedidoToRow({ ...pedido, telefono: "+542224534184" });
+    expect(row.area).toBe("2224");
+    expect(needsSucursal(row)).toBe(false);
+    expect(rowErrors(row)).toEqual([]);
+  });
+
+  it("sucursal solo como rescate cuando falta la dirección, y la deriva limpia domicilio", () => {
+    const row = pedidoToRow({ ...pedido, address1: "", address2: "", zip: "" });
     expect(needsSucursal(row)).toBe(true);
     expect(rowErrors(row).join()).toContain("sucursal");
     const suc = toSucursal(row, "OAR");

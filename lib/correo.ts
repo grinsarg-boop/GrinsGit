@@ -1,7 +1,9 @@
 // Receta "Carga masiva Mi Correo" del vault (Operaciones-COD, validada 13/07,
 // 41 pedidos sin rechazo): ;-separado, 21 columnas, ASCII puro, CRLF, peso con
-// punto, CP de 4 dígitos, provincia = letra patente, área de cel de 4 dígitos
-// → envío a sucursal.
+// punto, CP de 4 dígitos, provincia = letra patente. Domicilio SIEMPRE; sucursal
+// es solo el rescate cuando faltan datos de dirección (regla 21/07 — la vieja
+// "área de 4 dígitos → sucursal" era precaución sin evidencia y Correo terminó
+// rechazando por sucursal inválida un pedido que tenía dirección completa).
 
 import { matchProduct } from "./product-match";
 
@@ -10,8 +12,8 @@ export const CORREO_HEADER =
 
 export const PROVINCIAS = new Set("ABCDEFGHJKLMNPQRSTUVWXYZ".split(""));
 
-// Códigos de área de 3 dígitos (ENACOM). Todo lo que no sea 11 ni esté acá es
-// de 4 dígitos → el pedido va a sucursal (regla 9 de la receta).
+// Códigos de área de 3 dígitos (ENACOM), para partir área+celular. Lo que no
+// sea 11 ni esté acá es de 4 dígitos (válido — ya no manda el pedido a sucursal).
 const AREAS_3 = new Set([
   "220", "221", "223", "230", "236", "237", "260", "261", "263", "264", "266",
   "280", "291", "294", "297", "298", "299", "336", "341", "342", "343", "345",
@@ -57,8 +59,10 @@ export type CorreoRow = {
   orden: string;
 };
 
+// Sucursal como ÚLTIMO recurso: solo cuando no se puede armar el domicilio
+// (falta localidad, calle o CP). El área de 4 dígitos ya no cuenta.
 export function needsSucursal(row: CorreoRow): boolean {
-  return row.area.length === 4 && !row.sucursal;
+  return !row.sucursal && (!row.localidad.trim() || !row.calle.trim() || !cp4(row.cp));
 }
 
 export function toSucursal(row: CorreoRow, codigo: string): CorreoRow {
@@ -102,15 +106,15 @@ export function rowErrors(r: CorreoRow): string[] {
   if (!PROVINCIAS.has(r.provincia)) e.push(`provincia "${r.provincia}" fuera de tabla`);
   if (r.sucursal) {
     if (r.localidad || r.calle || r.altura || r.cp) e.push("sucursal con campos de domicilio");
+  } else if (needsSucursal(r)) {
+    e.push("dirección incompleta (localidad, calle o CP) → completar o elegir sucursal");
   } else {
-    if (!r.localidad || !r.calle) e.push("falta localidad o calle");
-    if (r.localidad && !/^[A-Za-z0-9 ]+$/.test(r.localidad)) e.push(`localidad con signos "${r.localidad}" (solo letras y números)`);
+    if (!/^[A-Za-z0-9 ]+$/.test(r.localidad)) e.push(`localidad con signos "${r.localidad}" (solo letras y números)`);
     if (!/^\d{4}$/.test(r.cp)) e.push(`CP "${r.cp}" no es de 4 dígitos`);
   }
   if (!r.nombre) e.push("falta nombre");
   if (!r.email.includes("@") || /\s/.test(r.email)) e.push(`email inválido "${r.email}"`);
   if (!/^\d{2,4}$/.test(r.area) || !/^\d{6,8}$/.test(r.cel)) e.push("cel inválido");
-  if (needsSucursal(r)) e.push(`área ${r.area} de 4 dígitos → elegir sucursal`);
   const line = toLine(r);
   if (/[^\x00-\x7F]/.test(line)) e.push("caracteres no-ASCII");
   if (line.split(";").length !== 21) e.push("no son 21 columnas");
