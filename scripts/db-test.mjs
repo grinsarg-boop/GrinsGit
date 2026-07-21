@@ -67,6 +67,7 @@ try {
                    'supabase/migrations/040_fixy_codigos_faltantes.sql',
                    'supabase/migrations/041_fixy_cobranza.sql',
                    'supabase/migrations/042_courier_tiempos.sql',
+                   'supabase/migrations/043_ml_retenciones.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
@@ -74,7 +75,8 @@ try {
                    'supabase/tests/flex_estimado_check.sql', 'supabase/tests/ml_ads_check.sql',
                    'supabase/tests/sales_check.sql',
                    'supabase/tests/urbano_discover_check.sql',
-                   'supabase/tests/trabados_check.sql']) {
+                   'supabase/tests/trabados_check.sql',
+                   'supabase/tests/ml_retenciones_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');

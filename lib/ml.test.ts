@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
-import { mapMlOrder, needsRefresh, nextTokenState, parseDarLogistica, parseMlPack, parseSantiagoFlex, sellerFlete } from "./ml";
+import { mapMlOrder, needsRefresh, nextTokenState, parseDarLogistica, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
 
 const NOW = 1_700_000_000_000;
 
@@ -115,5 +115,26 @@ describe("parseDarLogistica", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ shipment_id: 47530552328, price: 6634, cp: "1702", localidad: "Ciudadela" });
     expect(rows[1]).toMatchObject({ shipment_id: 47531258883, price: 9221, cp: "1837" });
+  });
+});
+
+describe("sumWithholdings", () => {
+  it("suma solo los cargos tax_withholding_* (caso real: pago 168914140511)", () => {
+    expect(sumWithholdings([
+      { name: "coupon_rebate", amounts: { original: 1078.65 } },
+      { name: "tax_withholding_sirtac_sobretasa-cordoba", amounts: { original: 1071.16 } },
+      { name: "tax_withholding_collector-iibb_tucuman", amounts: { original: 17.85 } },
+      { name: "tax_withholding_sirtac-cordoba", amounts: { original: 214.23 } },
+      { name: "shp_cross_docking", amounts: { original: 7470 } },
+      { name: "meli_percentage_fee", amounts: { original: 11068.68 } },
+      { name: "financing_add_on_fee", amounts: { original: 8783.54 } },
+    ])).toBeCloseTo(1303.24, 2);
+  });
+
+  it("tolera charges vacíos, null o sin amounts", () => {
+    expect(sumWithholdings([])).toBe(0);
+    expect(sumWithholdings(null)).toBe(0);
+    expect(sumWithholdings(undefined)).toBe(0);
+    expect(sumWithholdings([{ name: "tax_withholding_x" }])).toBe(0);
   });
 });

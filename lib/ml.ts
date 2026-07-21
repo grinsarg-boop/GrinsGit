@@ -79,7 +79,7 @@ export type MlOrder = {
   total_amount?: number;
   order_items?: MlItem[];
   shipping?: { id?: number; logistic_type?: string };
-  payments?: { shipping_cost?: number }[];
+  payments?: { id?: number; status?: string; shipping_cost?: number }[];
 };
 
 // Pack (unidades por venta) embebido en el título ML: "3 Gotero Pureza"→3, "4 X 30ml"→4, "Gotas"→1.
@@ -203,6 +203,52 @@ export async function enrichMlShipments(db: Db = supabaseAdmin(), limit = 300): 
     }));
   }
   return { enriched, flex };
+}
+
+// --- Retenciones impositivas (IIBB/SIRTAC) ---
+
+// Suma los cargos tax_withholding_* de un pago de MP (retenciones provinciales que ML descuenta
+// de la liquidación; ~1,4% del revenue promedio, 0,3%–5% según provincia del comprador).
+export function sumWithholdings(charges: { name?: string; amounts?: { original?: number } }[] | null | undefined): number {
+  return (charges ?? []).reduce(
+    (s, c) => (String(c.name ?? "").startsWith("tax_withholding") ? s + (c.amounts?.original ?? 0) : s),
+    0,
+  );
+}
+
+// Enriquece tax_withheld leyendo el pago en MP (no viene en /orders). null = pendiente; 0 = consultado
+// sin retención. Solo marca la orden si TODOS sus pagos aprobados respondieron (si no, reintenta).
+// Requiere token OAuth (scope payments); con el estático MP da 401 → queda todo pendiente, sin romper.
+export async function enrichMlTaxes(db: Db = supabaseAdmin(), limit = 300): Promise<{ taxed: number }> {
+  const { data } = await db
+    .from("ml_orders")
+    .select("ml_id, raw")
+    .eq("status", "paid").is("tax_withheld", null)
+    .limit(limit);
+  if (!data?.length) return { taxed: 0 };
+  const token = await getMlAccessToken(db);
+  let taxed = 0;
+  const CONC = 8;
+  for (let i = 0; i < data.length; i += CONC) {
+    await Promise.all(data.slice(i, i + CONC).map(async (r) => {
+      try { // falla por-orden = se saltea, no aborta la tanda
+        const ids = ((r.raw as MlOrder).payments ?? [])
+          .filter((p) => p.status === "approved" && p.id).map((p) => p.id);
+        if (!ids.length) return; // sin pago aprobado (raro en paid) → queda pendiente
+        let wh = 0;
+        for (const id of ids) {
+          const res = await fetch(`https://api.mercadopago.com/v1/payments/${id}`, {
+            headers: { authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return;
+          wh += sumWithholdings((await res.json()).charges_details);
+        }
+        await db.from("ml_orders").update({ tax_withheld: wh }).eq("ml_id", r.ml_id);
+        taxed++;
+      } catch { /* se saltea */ }
+    }));
+  }
+  return { taxed };
 }
 
 // Copia el flete Flex REAL del staging (ml_flex_flete) a ml_orders.ship_cost por shipment_id. Marca
