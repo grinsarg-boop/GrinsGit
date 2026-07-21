@@ -146,6 +146,16 @@ export default async function Resumen({
     if (dias.length) fixyCob = fixyCobranza(dias.map((d) => ({ dia: d.dia, neto: Number(d.neto) })), sobres, today);
   }
 
+  // A liquidar de ML: neto pendiente de liberar en el MP (RPC 044), por semana de liberación.
+  // ML retiene la plata ~28 días; el neto ya viene sin comisión, flete ni retenciones. Si la 044
+  // no está aplicada, el bloque no se muestra (error → []).
+  type MlLiq = { semana: string; pagos: number; neto: number };
+  let mlLiq: MlLiq[] = [];
+  if (!courierParam || courierParam === "ml") {
+    const { data: mq } = await db.rpc("ml_a_liquidar");
+    mlLiq = ((mq ?? []) as MlLiq[]).filter((w) => Number(w.neto) > 0);
+  }
+
   // Vista MESES: agrupa los días DEL RANGO por mes (para todo el histórico, usá el preset "Máx").
   let meses: MonthAgg[] = [];
   if (vista === "meses") {
@@ -682,6 +692,53 @@ export default async function Resumen({
                 )}
               </div>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* A liquidar de ML: la plata retenida en el MP hasta la fecha de liberación (~28 días). */}
+      {mlLiq.length > 0 && (
+        <Card>
+          <CardContent className="space-y-3 pt-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                A liquidar de ML
+                <Tip tip="Ventas de MercadoLibre ya pagadas cuya plata todavía está retenida en el MercadoPago (MP Santi = MP DERMATECH). ML libera a ~28 días de la aprobación del pago. El neto ya viene descontado de comisión, flete y retenciones impositivas — es plata que cae tal cual. Verificado contra el detalle de liberaciones de MP." />
+              </span>
+              <span className="text-xs text-muted-foreground">libera en el MP a ~28 días · independiente del rango de arriba</span>
+            </div>
+
+            <div className="rounded-md border bg-muted/40 px-3 py-2.5">
+              <div className="text-[0.7rem] uppercase tracking-wide text-emerald-700 dark:text-emerald-500">
+                Pendiente de liberar
+              </div>
+              <div className="text-2xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400">
+                {fmtMoney(mlLiq.reduce((s, w) => s + Number(w.neto), 0))}
+              </div>
+              <div className="pt-0.5 text-xs text-muted-foreground">
+                {mlLiq.reduce((s, w) => s + w.pagos, 0).toLocaleString("es-AR")} ventas ·{" "}
+                próxima liberación la semana del {fmtDate(mlLiq[0].semana)}
+              </div>
+            </div>
+
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Semana de liberación</TableHead>
+                  <TableHead className="text-right">Ventas</TableHead>
+                  <TableHead className="text-right">Neto que libera</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {mlLiq.map((w) => (
+                  <TableRow key={w.semana}>
+                    <TableCell className="font-medium tabular-nums">semana del {fmtDate(w.semana)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{w.pagos.toLocaleString("es-AR")}</TableCell>
+                    <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(Number(w.neto))}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       )}

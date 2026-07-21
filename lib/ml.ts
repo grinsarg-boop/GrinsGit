@@ -216,8 +216,9 @@ export function sumWithholdings(charges: { name?: string; amounts?: { original?:
   );
 }
 
-// Enriquece tax_withheld leyendo el pago en MP (no viene en /orders). null = pendiente; 0 = consultado
-// sin retención. Solo marca la orden si TODOS sus pagos aprobados respondieron (si no, reintenta).
+// Enriquece tax_withheld + mp_release_date/mp_net (para "A liquidar de ML") leyendo el pago en MP
+// (nada de esto viene en /orders). null = pendiente; 0 = consultado sin retención. Solo marca la
+// orden si TODOS sus pagos aprobados respondieron (si no, reintenta en la próxima corrida).
 // Requiere token OAuth (scope payments); con el estático MP da 401 → queda todo pendiente, sin romper.
 export async function enrichMlTaxes(db: Db = supabaseAdmin(), limit = 300): Promise<{ taxed: number }> {
   const { data } = await db
@@ -235,15 +236,19 @@ export async function enrichMlTaxes(db: Db = supabaseAdmin(), limit = 300): Prom
         const ids = ((r.raw as MlOrder).payments ?? [])
           .filter((p) => p.status === "approved" && p.id).map((p) => p.id);
         if (!ids.length) return; // sin pago aprobado (raro en paid) → queda pendiente
-        let wh = 0;
+        let wh = 0, net = 0, rel: string | null = null;
         for (const id of ids) {
           const res = await fetch(`https://api.mercadopago.com/v1/payments/${id}`, {
             headers: { authorization: `Bearer ${token}` },
           });
           if (!res.ok) return;
-          wh += sumWithholdings((await res.json()).charges_details);
+          const pay = await res.json();
+          wh += sumWithholdings(pay.charges_details);
+          net += pay.transaction_details?.net_received_amount ?? 0;
+          const rd = String(pay.money_release_date ?? "").slice(0, 10);
+          if (rd && (!rel || rd > rel)) rel = rd; // multi-pago: libera cuando libera el último
         }
-        await db.from("ml_orders").update({ tax_withheld: wh }).eq("ml_id", r.ml_id);
+        await db.from("ml_orders").update({ tax_withheld: wh, mp_net: net, mp_release_date: rel }).eq("ml_id", r.ml_id);
         taxed++;
       } catch { /* se saltea */ }
     }));
