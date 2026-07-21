@@ -169,6 +169,7 @@ describe("parseMlBilling", () => {
     ["0057A1", new Date("2026-07-17T12:00:00Z"), 3, "Percepción especial de IVA RG5319/2023", "No", null, null, 1006448.71],
     ["0057A1", new Date("2026-07-17T12:00:00Z"), 4, "Percepción impuesto IIBB Buenos Aires", "No", null, null, 476438.68],
     ["0057A1", new Date("2026-07-17T12:00:00Z"), 5, " Cargo por percepción de IIBB del régimen general para Tucumán", "No", null, null, 91024.9],
+    ["0057A1", new Date("2026-07-17T12:00:00Z"), 8, "Percep. gral. impuesto IIBB Bs. As. Mercado Envíos", "No", null, null, 150454.36],
     ["0057A1", new Date("2026-07-01T12:00:00Z"), 6, "Cargo por mantenimiento de Mi página", "No", null, null, 15999],
     ["0057A1", new Date("2026-06-18T12:00:00Z"), 7, "Anulación del cargo por vender", "No aplica", null, null, -3000],
   ]), "REPORT");
@@ -176,11 +177,11 @@ describe("parseMlBilling", () => {
 
   it("suma percepciones y fijos, ignora lo ya contado, y saca la ventana del período", () => {
     const r = parseMlBilling(buf);
-    expect(r.percep).toBeCloseTo(1006448.71 + 476438.68 + 91024.9, 2);
+    expect(r.percep).toBeCloseTo(1006448.71 + 476438.68 + 91024.9 + 150454.36, 2);
     expect(r.fijos).toBe(15999);
     expect(r.from).toBe("2026-06-17");
     expect(r.to).toBe("2026-07-17");
-    expect(r.cargos).toBe(7);
+    expect(r.cargos).toBe(8);
   });
 
   it("rechaza un xlsx que no es el reporte", () => {

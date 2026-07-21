@@ -427,7 +427,7 @@ export function parseMlBilling(buf: Buffer): { percep: number; fijos: number; fr
       cargos++;
       const fecha = r[1] instanceof Date ? r[1].toISOString().slice(0, 10) : null;
       if (fecha) { if (!from || fecha < from) from = fecha; if (!to || fecha > to) to = fecha; }
-      if (/percepci/i.test(detalle)) percep += valor;
+      if (/percep/i.test(detalle)) percep += valor; // "Percepción…" y también "Percep. gral." (abreviado)
       else if (/mi p[áa]gina|suscripci/i.test(detalle)) fijos += valor;
     }
   }
