@@ -451,6 +451,7 @@ async function mlDailyBase(db: Db, from: string, to: string): Promise<Map<string
       .select("created_at, sale_fee, ship_cost, product")
       .eq("status", "paid").not("product", "is", null)
       .gte("created_at", `${from}T00:00:00-00:00`) // margen: el día ART se afina abajo
+      .order("ml_id") // sin orden estable, range() puede repetir filas entre páginas (duplicaba base)
       .range(off, off + PAGE - 1);
     for (const r of data ?? []) add(artDay(r.created_at), (r.sale_fee ?? 0) + (r.ship_cost ?? 0));
     if (!data || data.length < PAGE) break;
