@@ -11,7 +11,7 @@ export const TIP_FLETE =
   "Gasto de envío final. Es hundido: se paga por TODA guía despachada, se entregue o no — por eso no baja cuando sube la tasa de entrega. Correo: flete plano por orden pagada. ML: flete real de Mercado Envíos o Flex. Informativo: ya está descontado del profit.";
 
 export const TIP_COMIS =
-  "Comisión final del courier por cobrar en puerta (Urbano y Fixy), solo sobre lo efectivamente entregado — la de lo que sigue en la calle todavía no se cuenta. Correo: 18% de MercadoPago en 3 cuotas. ML: comisión real de la venta. Informativo: ya está descontada del profit.";
+  "Comisión final del courier por cobrar en puerta (Urbano y Fixy), solo sobre lo efectivamente entregado — la de lo que sigue en la calle todavía no se cuenta. Correo: fee REAL de MercadoPago del pago conciliado (transferencia ~8%, Mercado Crédito ~7,6%, tarjeta 3 sin interés ~22%; el 18% plano queda solo para pagos aún no conciliados). ML: comisión real de la venta. Informativo: ya está descontada del profit.";
 
 export const TIP_PERCEP =
   "Percepciones de IVA e IIBB que MercadoLibre/MercadoPago facturan sobre sus servicios (comisiones, envíos y publicidad) — SOLO canal ML, ~18% de esos cargos. Por día: estimadas con la tasa calibrada contra la factura real hasta que se sube el Reporte_Facturacion del mes en /sync, que las reemplaza por el valor exacto. Son pagos a cuenta de impuestos (criterio conservador: se cuentan como costo hasta que el contador diga lo contrario). Informativo: ya están descontadas del profit.";

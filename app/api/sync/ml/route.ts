@@ -1,4 +1,4 @@
-import { enrichMlShipments, enrichMlTaxes, estimateFlexByCP, estimateMlPercep, syncMlAdSpend, syncMlFlexBonif, syncMlOrders } from "@/lib/ml";
+import { enrichMlShipments, enrichMlTaxes, estimateFlexByCP, estimateMlPercep, syncMlAdSpend, syncMlFlexBonif, syncMlOrders, syncMpKhalil } from "@/lib/ml";
 import { today } from "@/lib/couriers/sync";
 import { badCronAuth, logSyncRun, supabaseAdmin } from "@/lib/supabase";
 
@@ -26,13 +26,15 @@ export async function POST(req: Request) {
     const { total: bonifTotal } = await syncMlFlexBonif(Math.max(days, 60), supabaseAdmin());
     // Percepciones IVA/IIBB estimadas (046) para los días sin dato real del Reporte_Facturacion.
     const { estimated: percepEst } = await estimateMlPercep(supabaseAdmin());
+    // Fee real de los links de pago del ecom (048, cuenta MP Khalil) — mismo cron del ecosistema MP.
+    const { pagos: mpPagos } = await syncMpKhalil(Math.max(days, 60), supabaseAdmin());
     // ML entra al P&L acá mismo, sin depender del recompute de otro courier.
     const from = new Date(Date.now() - Math.max(days, 60) * 86400_000).toISOString().slice(0, 10);
     await supabaseAdmin().rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
-    const info = { enriched, flex, estimated, taxed, ads_ml: Math.round(adsTotal), bonif_ml: Math.round(bonifTotal), percep_est: percepEst };
+    const info = { enriched, flex, estimated, taxed, ads_ml: Math.round(adsTotal), bonif_ml: Math.round(bonifTotal), percep_est: percepEst, mp_khalil: mpPagos };
     const warnings = sinProducto > 0 ? [{ ventas_sin_producto: sinProducto }, info] : [info];
     await logSyncRun("ml", "ok", rows, warnings);
-    return Response.json({ ok: true, rows, enriched, flex, estimated, taxed, adsTotal, bonifTotal, percepEst, sinProducto });
+    return Response.json({ ok: true, rows, enriched, flex, estimated, taxed, adsTotal, bonifTotal, percepEst, mpPagos, sinProducto });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await logSyncRun("ml", "error", 0, [], msg);

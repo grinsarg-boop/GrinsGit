@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
-import { groupBonifByDay, mapMlOrder, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
+import { groupBonifByDay, mapMlOrder, parseOrderRef, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
 
 const NOW = 1_700_000_000_000;
 
@@ -188,5 +188,20 @@ describe("parseMlBilling", () => {
     const w2 = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(w2, XLSX.utils.aoa_to_sheet([["Otra", "cosa"]]), "X");
     expect(() => parseMlBilling(XLSX.write(w2, { type: "buffer", bookType: "xlsx" }) as Buffer)).toThrow();
+  });
+});
+
+describe("parseOrderRef", () => {
+  it("extrae el order_number pelado de los refs ORDER-", () => {
+    expect(parseOrderRef("ORDER-17876")).toBe("17876");
+    expect(parseOrderRef("ORDER-1")).toBe("1");
+  });
+  it("descarta refs personales/QR/vacíos de la cuenta", () => {
+    expect(parseOrderRef("134129803103")).toBeNull();     // merchant order de checkout ajeno
+    expect(parseOrderRef("cashback_2919370616")).toBeNull();
+    expect(parseOrderRef("ORDER-17876-b")).toBeNull();    // formato exacto o nada
+    expect(parseOrderRef("")).toBeNull();
+    expect(parseOrderRef(null)).toBeNull();
+    expect(parseOrderRef(undefined)).toBeNull();
   });
 });

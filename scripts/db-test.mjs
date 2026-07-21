@@ -72,6 +72,7 @@ try {
                    'supabase/migrations/045_ml_flex_bonif.sql',
                    'supabase/migrations/046_ml_percepciones.sql',
                    'supabase/migrations/047_percepciones_columna.sql',
+                   'supabase/migrations/048_mp_khalil_fee.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
@@ -83,7 +84,8 @@ try {
                    'supabase/tests/ml_retenciones_check.sql',
                    'supabase/tests/ml_liquidar_check.sql',
                    'supabase/tests/ml_bonif_check.sql',
-                   'supabase/tests/ml_percep_check.sql']) {
+                   'supabase/tests/ml_percep_check.sql',
+                   'supabase/tests/mp_khalil_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');

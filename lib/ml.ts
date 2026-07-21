@@ -405,6 +405,59 @@ export async function syncMlFlexBonif(days = 60, db: Db = supabaseAdmin()): Prom
   return { days: rows.length, total: rows.reduce((s, r) => s + r.amount, 0) };
 }
 
+// --- MP Khalil: fee real de los links de pago del ecom (048) ---
+
+// "ORDER-17876" → "17876" (el order_number pelado de orders). Otro formato → null (pagos
+// personales/QR de la cuenta, se ignoran).
+export function parseOrderRef(ref: string | null | undefined): string | null {
+  const m = /^ORDER-(\d+)$/.exec(ref ?? "");
+  return m ? m[1] : null;
+}
+
+// Aterriza en mp_payments los pagos aprobados de los links (refs ORDER-) de la cuenta MP Khalil.
+// Token ESTÁTICO del panel (MP_KHALIL_ACCESS_TOKEN); sin env la función es un no-op (no rompe el
+// cron). fee = transaction_amount − net_received (mp fee + financing_fee del "3 sin interés").
+// ponytail: refunds no se borran (raro acá; la orden refunded sale del P&L por financial_status).
+export async function syncMpKhalil(days = 60, db: Db = supabaseAdmin()): Promise<{ pagos: number; fee: number }> {
+  const token = process.env.MP_KHALIL_ACCESS_TOKEN;
+  if (!token) return { pagos: 0, fee: 0 };
+  const from = new Date(Date.now() - days * 86400_000).toISOString();
+  const LIMIT = 100;
+  const rows: { payment_id: number; order_number: string; amount: number; fee: number; installments: number | null; approved_at: string | null }[] = [];
+  for (let offset = 0; offset <= 2000; offset += LIMIT) {
+    const qs = new URLSearchParams({
+      status: "approved",
+      range: "date_created", begin_date: from, end_date: new Date().toISOString(),
+      sort: "date_created", criteria: "desc",
+      offset: String(offset), limit: String(LIMIT),
+    });
+    const res = await fetch(`https://api.mercadopago.com/v1/payments/search?${qs}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`MP Khalil ${res.status}: ${await res.text()}`);
+    const j = await res.json();
+    type Pay = { id: number; external_reference?: string; transaction_amount?: number; installments?: number; date_approved?: string; transaction_details?: { net_received_amount?: number } };
+    const results: Pay[] = j.results ?? [];
+    for (const p of results) {
+      const on = parseOrderRef(p.external_reference);
+      if (!on) continue;
+      const amount = p.transaction_amount ?? 0;
+      rows.push({
+        payment_id: p.id, order_number: on, amount,
+        fee: amount - (p.transaction_details?.net_received_amount ?? 0),
+        installments: p.installments ?? null,
+        approved_at: p.date_approved ?? null,
+      });
+    }
+    if (results.length < LIMIT) break;
+  }
+  if (rows.length) {
+    const { error } = await db.from("mp_payments").upsert(rows, { onConflict: "payment_id" });
+    if (error) throw new Error(`mp_payments upsert: ${error.message}`);
+  }
+  return { pagos: rows.length, fee: rows.reduce((s, r) => s + r.fee, 0) };
+}
+
 // --- Percepciones IVA/IIBB de la factura mensual (046) ---
 
 // Parsea el Reporte_Facturacion xlsx del panel de ML: header en la fila "N° de factura fiscal";
