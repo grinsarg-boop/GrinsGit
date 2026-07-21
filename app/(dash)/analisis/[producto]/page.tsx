@@ -1,0 +1,313 @@
+import { Card, CardContent } from "@/components/ui/card";
+import { Tip } from "@/components/ui/tooltip";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { Donut, type Slice } from "@/components/donut";
+import { Delta } from "@/components/delta";
+import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
+import { supabaseAdmin } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
+
+export const revalidate = 60;
+
+// Subpágina de análisis POR PRODUCTO. El foco es el profit por PACK en un rango libre: el mismo corte
+// del bloque Packs de /analisis pero sin el umbral de 40 guías (acá los buckets chicos se marcan con ~,
+// no se esconden — eso pide la 049) y con mix de volumen y neto por guía. Los demás cortes del producto
+// ya viven en /analisis?producto= — esta página no los duplica, linkea.
+type PnlRow = {
+  courier: string; product_id: number | null; product: string;
+  despachadas: number; entregadas: number;
+  revenue: number; flete: number; comisiones: number; costo_producto: number; ads: number; percepciones: number;
+  profit_conf: number; profit_est: number;
+};
+type PackRow = {
+  pack: number; guias: number; entregadas: number; devueltas: number;
+  cod_cobrado: number; flete: number;
+  comisiones: number; costo_producto: number; margen_bruto: number; margen_neto: number;
+};
+
+const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
+const N = (v: number | null | undefined) => Number(v ?? 0);
+
+export default async function AnalisisProducto({ params, searchParams }: {
+  params: Promise<{ producto: string }>;
+  searchParams: Promise<{ courier?: string; desde?: string; hasta?: string }>;
+}) {
+  const { producto } = await params;
+  if (!/^\d+$/.test(producto)) notFound();
+  const id = Number(producto);
+  const { courier, desde, hasta } = await searchParams;
+  const db = supabaseAdmin();
+  const today = daysAgoIso(0);
+  const ISO = /^\d{4}-\d{2}-\d{2}$/;
+  const to = hasta && ISO.test(hasta) ? hasta : today;
+  let from = desde && ISO.test(desde) ? desde : daysAgoIso(30);
+  if (from > to) from = to;
+  const rangeLabel = `${fmtDate(from)} → ${fmtDate(to)}`;
+  const courierParam = courier === "urbano" || courier === "fixy" || courier === "correo" || courier === "ml" ? courier : null;
+
+  // período anterior de igual largo, contiguo (mismo criterio que /analisis)
+  const largoDias = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1;
+  const prevTo = new Date(Date.parse(from) - 86400000).toISOString().slice(0, 10);
+  const prevFrom = new Date(Date.parse(prevTo) - (largoDias - 1) * 86400000).toISOString().slice(0, 10);
+
+  const [{ data: pnlRaw }, { data: pnlPrevRaw }, { data: packRaw }, { data: cpaRef }, { data: prodsRaw }] = await Promise.all([
+    db.rpc("analisis_pnl", { p_from: from, p_to: to, p_courier: courierParam }),
+    db.rpc("analisis_pnl", { p_from: prevFrom, p_to: prevTo, p_courier: courierParam }),
+    db.rpc("analisis_packs", { p_from: from, p_to: to, p_courier: courierParam, p_producto: id, p_min: 1 }),
+    db.from("settings").select("value").eq("key", "cpa_referencia").maybeSingle(),
+    db.from("products").select("id, name").order("id"),
+  ]);
+  const prods = (prodsRaw ?? []) as { id: number; name: string }[];
+  const prod = prods.find((p) => p.id === id);
+  if (!prod) notFound();
+  // analisis_pnl ya viene por producto → filtro en el cliente, sin RPC extra (mismo truco que /analisis)
+  const rows = ((pnlRaw ?? []) as PnlRow[]).filter((r) => r.product_id === id);
+  const prev = ((pnlPrevRaw ?? []) as PnlRow[]).filter((r) => r.product_id === id);
+  const packs = (packRaw ?? []) as PackRow[];
+  const cpaObj = (cpaRef?.value ?? {}) as Record<string, { objetivo: number; maximo: number }>;
+
+  const sumOf = (rs: PnlRow[], k: keyof PnlRow) => rs.reduce((s, r) => s + N(r[k] as number), 0);
+  const revenue = sumOf(rows, "revenue"), flete = sumOf(rows, "flete"), comis = sumOf(rows, "comisiones");
+  const percep = sumOf(rows, "percepciones"), costo = sumOf(rows, "costo_producto"), ads = sumOf(rows, "ads");
+  const profitConf = sumOf(rows, "profit_conf"), profitEst = sumOf(rows, "profit_est");
+  const despachos = sumOf(rows, "despachadas"), entregas = sumOf(rows, "entregadas");
+  const tasa = despachos ? entregas / despachos : 0;
+  const pRev = sumOf(prev, "revenue"), pProfitEst = sumOf(prev, "profit_est");
+  const pDesp = sumOf(prev, "despachadas"), pEnt = sumOf(prev, "entregadas"), pAds = sumOf(prev, "ads");
+  const pTasa = pDesp ? pEnt / pDesp : 0;
+  const cpa = despachos ? ads / despachos : 0;
+  const prevCpa = pDesp ? pAds / pDesp : 0;
+  const ref = cpaObj[prod.name];
+  const cpaEstado = !ref || !cpa ? null : cpa <= ref.objetivo ? "ok" : cpa <= ref.maximo ? "vig" : "mal";
+
+  const composicion: Slice[] = [
+    { label: "Flete", value: flete, className: "stroke-rose-500", dot: "bg-rose-500" },
+    { label: "Ads", value: ads, className: "stroke-amber-500", dot: "bg-amber-500" },
+    { label: "Comisiones", value: comis, className: "stroke-slate-400", dot: "bg-slate-400" },
+    { label: "Percepciones ML", value: percep, className: "stroke-sky-400", dot: "bg-sky-400" },
+    { label: "Costo de producto", value: costo, className: "stroke-violet-400", dot: "bg-violet-400" },
+    { label: "Profit confirmado", value: Math.max(profitConf, 0), className: "stroke-emerald-500", dot: "bg-emerald-500" },
+  ].filter((s) => s.value > 0);
+
+  const totalPackGuias = packs.reduce((s, p) => s + p.guias, 0);
+  const maxPackM = Math.max(...packs.map((p) => Math.abs(N(p.margen_neto))), 1);
+
+  // querystring heredable: subpáginas hermanas, presets y volver a /analisis con el mismo estado
+  const qs = (o: { courier?: string; desde?: string; hasta?: string } = {}) => {
+    const c = o.courier !== undefined ? o.courier : (courier ?? "");
+    const dd = o.desde !== undefined ? o.desde : (desde ?? "");
+    const hh = o.hasta !== undefined ? o.hasta : (hasta ?? "");
+    const q = new URLSearchParams();
+    if (c) q.set("courier", c);
+    if (dd) q.set("desde", dd);
+    if (hh) q.set("hasta", hh);
+    const s = q.toString();
+    return s ? `?${s}` : "";
+  };
+  const cortesHref = (() => {
+    const q = new URLSearchParams(qs().slice(1));
+    q.set("producto", String(id));
+    return `/analisis?${q.toString()}`;
+  })();
+
+  const [ey, em] = today.slice(0, 7).split("-").map(Number);
+  const pmY = em === 1 ? ey - 1 : ey;
+  const pmM = em === 1 ? 12 : em - 1;
+  const pm = `${pmY}-${String(pmM).padStart(2, "0")}`;
+  const pmLast = new Date(pmY, pmM, 0).getDate();
+  const presets: [string, string, string][] = [
+    ["7 días", daysAgoIso(7), today],
+    ["30 días", daysAgoIso(30), today],
+    ["90 días", daysAgoIso(90), today],
+    ["Este mes", `${today.slice(0, 7)}-01`, today],
+    ["Mes pasado", `${pm}-01`, `${pm}-${String(pmLast).padStart(2, "0")}`],
+    ["Máx", "2020-01-01", today],
+  ];
+
+  const chip = (active: boolean) => cn(
+    "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
+    active ? "bg-foreground text-background shadow-sm hover:shadow"
+           : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+  );
+
+  return (
+    <main className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <Link href={`/analisis${qs()}`} className="text-sm text-muted-foreground hover:text-foreground">← Análisis</Link>
+          <h1 className="text-xl font-semibold">{prod.name}</h1>
+        </div>
+        <span className="text-sm tabular-nums text-muted-foreground">{rangeLabel}</span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <div className="flex flex-wrap items-center gap-1">
+          {presets.map(([label, d, h]) => (
+            <Link key={label} href={`/analisis/${id}${qs({ desde: d, hasta: h })}`}
+                  aria-current={from === d && to === h ? "page" : undefined} className={chip(from === d && to === h)}>{label}</Link>
+          ))}
+        </div>
+        <form method="get" className="inline-flex items-center gap-1.5">
+          {courier && <input type="hidden" name="courier" value={courier} />}
+          <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
+            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          <span className="text-muted-foreground">→</span>
+          <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
+            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent">Aplicar</button>
+        </form>
+        <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
+          {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
+            <Link key={val} href={`/analisis/${id}${qs({ courier: val })}`}
+                  aria-current={(courier ?? "") === val ? "page" : undefined}
+                  className={cn("rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
+                    (courier ?? "") === val ? "bg-foreground text-background shadow-sm hover:shadow"
+                                            : "text-muted-foreground hover:bg-background/70 hover:text-foreground")}>{label}</Link>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          {prods.map((pr) => (
+            <Link key={pr.id} href={`/analisis/${pr.id}${qs()}`}
+                  aria-current={pr.id === id ? "page" : undefined} className={chip(pr.id === id)}>
+              {pr.name}
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {!rows.length && !packs.length ? (
+        <Card><CardContent className="pt-5 text-sm text-muted-foreground">Sin datos de {prod.name} en el rango elegido.</CardContent></Card>
+      ) : (
+      <>
+      {rows.length > 0 && (
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+              El producto en el rango
+              <Tip tip="P&L del producto con las mismas reglas del panel, cohorte por día de DESPACHO (igual que /analisis). El Δ compara contra los mismos días inmediatamente anteriores (igual largo): verde mejora, rojo empeora — en CPA, bajar es mejorar." />
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">vs {fmtDate(prevFrom)} → {fmtDate(prevTo)}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Profit estimado</div>
+              <div className={cn("text-lg font-semibold tabular-nums", pnlColor(profitEst))}>{fmtMoney(profitEst)}</div>
+              <div className="pt-0.5"><Delta actual={profitEst} previo={pProfitEst} /></div>
+              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">confirmado {fmtMoney(profitConf)}</div>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Cobrado</div>
+              <div className="text-lg font-semibold tabular-nums text-foreground">{fmtMoney(revenue)}</div>
+              <div className="pt-0.5"><Delta actual={revenue} previo={pRev} /></div>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Despachos</div>
+              <div className="text-lg font-semibold tabular-nums text-foreground">{despachos.toLocaleString("es-AR")}</div>
+              <div className="pt-0.5"><Delta actual={despachos} previo={pDesp} tipo="num" /></div>
+              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">
+                entrega {fmtPct(tasa)} <Delta actual={tasa} previo={pTasa} tipo="pct" className="ml-1" />
+              </div>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">CPA (ads ÷ despachos)</div>
+              <div className={cn("text-lg font-semibold tabular-nums",
+                cpaEstado === "ok" ? "text-emerald-600 dark:text-emerald-400"
+                : cpaEstado === "vig" ? "text-amber-600 dark:text-amber-500"
+                : cpaEstado === "mal" ? "text-destructive" : "text-foreground")}>
+                {cpa ? fmtMoney(cpa) : "—"}
+              </div>
+              <div className="pt-0.5"><Delta actual={cpa} previo={prevCpa} bueno="baja" /></div>
+              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">
+                {ref ? <>objetivo {fmtMoney(ref.objetivo)} · máx {fmtMoney(ref.maximo)}</> : "sin referencia en el vault"}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      )}
+
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+              Profit por pack
+              <Tip tip="Solo pedidos de una línea (con carrito mixto el pack no está definido), cohorte por día de DESPACHO, canales con guía — ML queda afuera. Margen bruto = cobrado − flete. Neto s/Ads = bruto − comisiones − costo de producto; los Ads van por producto y día y no se reparten por pack sin inventar. A diferencia del bloque de /analisis, acá los buckets con menos de 40 guías se muestran marcados con ~ en vez de ocultarse." />
+            </span>
+            {totalPackGuias > 0 && <span className="text-xs tabular-nums text-muted-foreground">{totalPackGuias.toLocaleString("es-AR")} guías</span>}
+          </div>
+          {!packs.length ? (
+            <p className="text-sm text-muted-foreground">
+              Sin desglose por pack en el rango: este corte usa guías COD/Correo de pedidos de una sola línea (ML queda afuera).
+            </p>
+          ) : (
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Pack</TableHead><TableHead className="text-right">Guías</TableHead>
+              <TableHead className="text-right">% vol</TableHead>
+              <TableHead className="text-right">Entrega</TableHead><TableHead className="text-right">Devolución</TableHead>
+              <TableHead className="text-right">Margen bruto</TableHead>
+              <TableHead className="text-right">Neto s/Ads</TableHead>
+              <TableHead className="text-right">Neto/guía</TableHead><TableHead className="w-28" />
+            </TableRow></TableHeader>
+            <TableBody>
+              {packs.map((p) => {
+                const t = p.guias ? p.entregadas / p.guias : 0;
+                const dev = p.guias ? p.devueltas / p.guias : 0;
+                const m = N(p.margen_neto);
+                return (
+                  <TableRow key={p.pack}>
+                    <TableCell className="font-medium">
+                      ×{p.pack}
+                      {p.guias < 40 && (
+                        <span title="Menos de 40 guías: poco volumen, la tasa y el margen tienen ruido (en /analisis este bucket directamente se oculta)"
+                              className="ml-1 cursor-help font-bold text-amber-600 dark:text-amber-500">~</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{p.guias.toLocaleString("es-AR")}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(totalPackGuias ? p.guias / totalPackGuias : 0)}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-emerald-600 dark:text-emerald-400")}>{fmtPct(t)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(dev)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(p.margen_bruto))}</TableCell>
+                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", pnlColor(m))}>{p.guias ? fmtMoney(m / p.guias) : "—"}</TableCell>
+                    <TableCell><div className="h-1.5 w-full rounded bg-muted"><div className={cn("barra h-1.5 rounded", m >= 0 ? "bg-emerald-500" : "bg-destructive")} style={{ width: `${Math.abs(m) / maxPackM * 100}%` }} /></div></TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {rows.length > 0 && (
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+              A dónde va cada peso de {prod.name}
+              <Tip tip="Sobre el COD efectivamente cobrado del producto en el período. El flete es hundido: se paga por toda guía despachada, entregue o no. Percepciones ML solo si el producto vende por ese canal." />
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">cobrado {fmtMoney(revenue)}</span>
+          </div>
+          <Donut slices={composicion} centro={fmtPct(profitConf / (revenue || 1))} subcentro="queda" />
+          {profitConf < 0 && <p className="text-xs text-destructive">Profit confirmado negativo en el período: los costos ya pagados superan lo cobrado hasta ahora. Con cohortes recientes es esperable — mirá el estimado.</p>}
+        </CardContent>
+      </Card>
+      )}
+
+      <p className="text-sm">
+        <Link href={cortesHref} className="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">
+          Todos los cortes de {prod.name} (zonas, desenlaces, maduración) en /analisis →
+        </Link>
+      </p>
+      </>
+      )}
+    </main>
+  );
+}

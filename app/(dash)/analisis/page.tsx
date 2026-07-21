@@ -130,6 +130,7 @@ export default async function Analisis({
   const porCanal = agrupar(pnl, (r) => r.courier);
   const porProducto = agrupar(pnl, (r) => r.product);
   const profitProdPrev = new Map(agrupar(pnlPrev, (r) => r.product).map((g) => [g.k, g.profitEst]));
+  const prodIdByName = new Map(pnl.map((r) => [r.product, r.product_id]));
   // CPA actual por producto (ads / despachos) para contrastar con la referencia
   const cpaProd = new Map(porProducto.map((g) => [g.k, {
     cpa: g.despachadas ? pnl.filter((r) => r.product === g.k).reduce((s, r) => s + N(r.ads), 0) / g.despachadas : 0,
@@ -172,6 +173,16 @@ export default async function Analisis({
     return s ? `/analisis?${s}` : "/analisis";
   };
 
+  // link a la subpágina del producto (packs sin umbral + CPA), heredando rango y canal
+  const subHref = (pid: number) => {
+    const q = new URLSearchParams();
+    if (courier) q.set("courier", courier);
+    if (desde) q.set("desde", desde);
+    if (hasta) q.set("hasta", hasta);
+    const s = q.toString();
+    return s ? `/analisis/${pid}?${s}` : `/analisis/${pid}`;
+  };
+
   const [ey, em] = today.slice(0, 7).split("-").map(Number);
   const pmY = em === 1 ? ey - 1 : ey;
   const pmM = em === 1 ? 12 : em - 1;
@@ -209,6 +220,16 @@ export default async function Analisis({
                   aria-current={from === d && to === h ? "page" : undefined} className={chip(from === d && to === h)}>{label}</Link>
           ))}
         </div>
+        <form method="get" className="inline-flex items-center gap-1.5">
+          {courier && <input type="hidden" name="courier" value={courier} />}
+          {producto && <input type="hidden" name="producto" value={producto} />}
+          <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
+            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          <span className="text-muted-foreground">→</span>
+          <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
+            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent">Aplicar</button>
+        </form>
         <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
           {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
             <Link key={val} href={hrefWith({ courier: val })}
@@ -228,6 +249,12 @@ export default async function Analisis({
               {pr.name}
             </Link>
           ))}
+          {prodParam && (
+            <Link href={subHref(prodParam)}
+                  className="font-medium text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">
+              Packs del producto →
+            </Link>
+          )}
         </div>
       </div>
 
@@ -323,7 +350,7 @@ export default async function Analisis({
         <CardContent className="space-y-3 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
             Productos
-            <Tip tip="Profit ESTIMADO de cada producto (el confirmado al lado — en rangos recientes es bajo porque las cohortes no maduraron, no porque se pierda plata), la variación contra el período anterior, y el CPA actual (ads ÷ despachos) contra la referencia del vault. Verde ≤ objetivo, ámbar entre objetivo y máximo, rojo > máximo. La referencia es guía, no regla: manda producto × zona." />
+            <Tip tip="Profit ESTIMADO de cada producto (el confirmado al lado — en rangos recientes es bajo porque las cohortes no maduraron, no porque se pierda plata), la variación contra el período anterior, y el CPA actual (ads ÷ despachos) contra la referencia del vault. Verde ≤ objetivo, ámbar entre objetivo y máximo, rojo > máximo. La referencia es guía, no regla: manda producto × zona. Click en un producto para abrir su análisis: packs sin umbral y rango libre." />
           </span>
           <Donut slices={porProducto.filter((p) => p.profitEst > 0).map((p, i) => ({ label: p.k, value: p.profitEst, className: PALETA[i % PALETA.length].s, dot: PALETA[i % PALETA.length].b }))} />
           <Table>
@@ -339,9 +366,17 @@ export default async function Analisis({
                 const ref = cpaObj[p.k];
                 const cpa = cpaProd.get(p.k)?.cpa ?? 0;
                 const estado = !ref || !cpa ? null : cpa <= ref.objetivo ? "ok" : cpa <= ref.maximo ? "vig" : "mal";
+                const pid = prodIdByName.get(p.k);
                 return (
                   <TableRow key={p.k}>
-                    <TableCell className="font-medium">{p.k}</TableCell>
+                    <TableCell className="font-medium">
+                      {pid != null ? (
+                        <Link href={subHref(pid)} title="Análisis del producto: packs sin umbral, CPA y rango libre"
+                              className="underline decoration-dotted underline-offset-2 hover:text-foreground">
+                          {p.k} <span className="text-muted-foreground">›</span>
+                        </Link>
+                      ) : p.k}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{p.despachadas.toLocaleString("es-AR")}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{p.despachadas ? fmtPct(p.entregadas / p.despachadas) : "—"}</TableCell>
                     <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(p.profitEst))}>{fmtMoney(p.profitEst)}</TableCell>
