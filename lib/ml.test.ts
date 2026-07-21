@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
-import { mapMlOrder, needsRefresh, nextTokenState, parseDarLogistica, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
+import { groupBonifByDay, mapMlOrder, needsRefresh, nextTokenState, parseDarLogistica, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
 
 const NOW = 1_700_000_000_000;
 
@@ -136,5 +136,23 @@ describe("sumWithholdings", () => {
     expect(sumWithholdings(null)).toBe(0);
     expect(sumWithholdings(undefined)).toBe(0);
     expect(sumWithholdings([{ name: "tax_withholding_x" }])).toBe(0);
+  });
+});
+
+describe("groupBonifByDay", () => {
+  it("agrupa aprobadas por día ART y deja afuera refunds y otras descripciones", () => {
+    expect(groupBonifByDay([
+      { date_approved: "2026-07-15T05:51:55.000-04:00", transaction_amount: 869, status: "approved", description: "bonificaciones_flex_fc" },
+      { date_approved: "2026-07-15T22:30:00.000-04:00", transaction_amount: 649, status: "approved", description: "bonificaciones_flex_fc" }, // 23:30 ART, mismo día
+      { date_approved: "2026-07-15T10:00:00.000-04:00", transaction_amount: 869, status: "refunded", description: "bonificaciones_flex_fc" },
+      { date_approved: "2026-07-15T10:00:00.000-04:00", transaction_amount: 107000, status: "approved", description: "Varios" },
+      { date_approved: "2026-07-16T01:00:00.000-04:00", transaction_amount: 1024.6, status: "approved", description: "bonificaciones_flex_fc" },
+    ])).toEqual({ "2026-07-15": 1518, "2026-07-16": 1024.6 });
+  });
+
+  it("cruce de medianoche: 23:30 -04:00 cae al día siguiente en ART", () => {
+    expect(groupBonifByDay([
+      { date_approved: "2026-07-15T23:30:00.000-04:00", transaction_amount: 100, status: "approved", description: "bonificaciones_flex_fc" },
+    ])).toEqual({ "2026-07-16": 100 });
   });
 });

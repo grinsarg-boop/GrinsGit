@@ -356,6 +356,55 @@ export async function syncMlAdSpend(days = 60, db: Db = supabaseAdmin()): Promis
   return { days: rows.length, total: rows.reduce((s, r) => s + r.cost, 0) };
 }
 
+// --- Bonificaciones Flex de ML (money_transfer "bonificaciones_flex_fc" en el MP) ---
+
+export type MpTransfer = { date_approved?: string; transaction_amount?: number; status?: string; description?: string };
+
+// Agrupa las bonificaciones aprobadas por día ART de aprobación. El pago no referencia al envío
+// (metadata vacía) → día es la máxima granularidad honesta. Refunds quedan afuera por status.
+export function groupBonifByDay(transfers: MpTransfer[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const t of transfers) {
+    if (t.status !== "approved" || t.description !== "bonificaciones_flex_fc" || !t.date_approved) continue;
+    const d = new Date(t.date_approved).toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
+    out[d] = (out[d] ?? 0) + (t.transaction_amount ?? 0);
+  }
+  return out;
+}
+
+// Trae los money_transfer aprobados de los últimos `days` días del MP y aterriza las bonificaciones
+// Flex por día en ml_flex_bonif. Upsert por día completo: si un transfer se refunda después, el
+// re-sync del día lo deja afuera solo (status ya no es approved).
+export async function syncMlFlexBonif(days = 60, db: Db = supabaseAdmin()): Promise<{ days: number; total: number }> {
+  const token = await getMlAccessToken(db);
+  const from = new Date(Date.now() - days * 86400_000).toISOString();
+  const LIMIT = 100;
+  const transfers: MpTransfer[] = [];
+  for (let offset = 0; offset <= 2000; offset += LIMIT) {
+    const qs = new URLSearchParams({
+      operation_type: "money_transfer",
+      range: "date_created", begin_date: from, end_date: new Date().toISOString(),
+      sort: "date_created", criteria: "desc",
+      offset: String(offset), limit: String(LIMIT),
+    });
+    const res = await fetch(`https://api.mercadopago.com/v1/payments/search?${qs}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`MP transfers ${res.status}: ${await res.text()}`);
+    const j = await res.json();
+    const results: MpTransfer[] = j.results ?? [];
+    transfers.push(...results);
+    if (results.length < LIMIT) break;
+  }
+  const byDay = groupBonifByDay(transfers);
+  const rows = Object.entries(byDay).map(([date, amount]) => ({ date, amount }));
+  if (rows.length) {
+    const { error } = await db.from("ml_flex_bonif").upsert(rows, { onConflict: "date" });
+    if (error) throw new Error(`ml_flex_bonif upsert: ${error.message}`);
+  }
+  return { days: rows.length, total: rows.reduce((s, r) => s + r.amount, 0) };
+}
+
 // Import completo de la liquidación Flex (archivo → staging → ship_cost + tabla CP→costo → recompute).
 // Auto-detecta el formato: listado DarLogistica (trae CP e ID venta) o el xlsx semanal de Santiago.
 // Lo usan el endpoint /api/import/ml-flex y la subida desde /sync, para no duplicar la lógica.
