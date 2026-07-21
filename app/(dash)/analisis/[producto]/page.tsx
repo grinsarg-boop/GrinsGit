@@ -94,7 +94,13 @@ export default async function AnalisisProducto({ params, searchParams }: {
   ].filter((s) => s.value > 0);
 
   const totalPackGuias = packs.reduce((s, p) => s + p.guias, 0);
-  const maxPackM = Math.max(...packs.map((p) => Math.abs(N(p.margen_neto))), 1);
+  // Ads por guía: los ads van por producto×día — el pack lo elige el cliente en el checkout — así que
+  // cada guía carga el MISMO costo de adquisición: CPA del producto en el rango (sin ML, que no pasa por
+  // este corte). profit_final = neto s/Ads − cpa × guías. Es asignación, no medición → columna ámbar.
+  const rowsCod = rows.filter((r) => r.courier !== "ml");
+  const despCod = sumOf(rowsCod, "despachadas");
+  const cpaGuia = despCod ? sumOf(rowsCod, "ads") / despCod : 0;
+  const maxPackM = Math.max(...packs.map((p) => Math.abs(N(p.margen_neto) - cpaGuia * p.guias)), 1);
 
   // querystring heredable: subpáginas hermanas, presets y volver a /analisis con el mismo estado
   const qs = (o: { courier?: string; desde?: string; hasta?: string } = {}) => {
@@ -236,13 +242,13 @@ export default async function AnalisisProducto({ params, searchParams }: {
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               Profit por pack
-              <Tip tip="Solo pedidos de una línea (con carrito mixto el pack no está definido), cohorte por día de DESPACHO, canales con guía — ML queda afuera. Margen bruto = cobrado − flete. Neto s/Ads = bruto − comisiones − costo de producto; los Ads van por producto y día y no se reparten por pack sin inventar. A diferencia del bloque de /analisis, acá los buckets con menos de 40 guías se muestran marcados con ~ en vez de ocultarse." />
+              <Tip tip="Todo CERRADO a hoy, sin proyección: cobrado = solo guías entregadas; flete de TODA guía despachada (hundido); comisiones solo sobre entregadas; costo en entregadas y siniestros; Ads del rango completos, también hundidos. Solo pedidos de una línea (con carrito mixto el pack no está definido), cohorte por día de DESPACHO, solo canales con guía — ML y Correo quedan afuera. Margen bruto = cobrado − flete. Neto s/Ads = bruto − comisiones − costo de producto. Profit final = neto − Ads asignados por guía: los Ads van por producto y día, no por pack (el pack lo elige el cliente en el checkout), así que cada guía carga el mismo costo de adquisición — el CPA del producto en el rango (Meta, sin ML). Es una asignación, por eso va en ámbar: el CPA sale de TODOS los despachos del producto, incluidos los pedidos multi-línea que esta tabla no muestra. A diferencia del bloque de /analisis, los buckets con menos de 40 guías se muestran marcados con ~ en vez de ocultarse." />
             </span>
             {totalPackGuias > 0 && <span className="text-xs tabular-nums text-muted-foreground">{totalPackGuias.toLocaleString("es-AR")} guías</span>}
           </div>
           {!packs.length ? (
             <p className="text-sm text-muted-foreground">
-              Sin desglose por pack en el rango: este corte usa guías COD/Correo de pedidos de una sola línea (ML queda afuera).
+              Sin desglose por pack en el rango: este corte usa guías COD (Urbano/Fixy) de pedidos de una sola línea — ML y Correo quedan afuera.
             </p>
           ) : (
           <Table>
@@ -252,13 +258,17 @@ export default async function AnalisisProducto({ params, searchParams }: {
               <TableHead className="text-right">Entrega</TableHead><TableHead className="text-right">Devolución</TableHead>
               <TableHead className="text-right">Margen bruto</TableHead>
               <TableHead className="text-right">Neto s/Ads</TableHead>
-              <TableHead className="text-right">Neto/guía</TableHead><TableHead className="w-28" />
+              <TableHead className="text-right">Ads</TableHead>
+              <TableHead className="text-right text-amber-600 dark:text-amber-500">Profit final</TableHead>
+              <TableHead className="text-right">Final/guía</TableHead><TableHead className="w-28" />
             </TableRow></TableHeader>
             <TableBody>
               {packs.map((p) => {
                 const t = p.guias ? p.entregadas / p.guias : 0;
                 const dev = p.guias ? p.devueltas / p.guias : 0;
                 const m = N(p.margen_neto);
+                const adsP = cpaGuia * p.guias;
+                const f = m - adsP;
                 return (
                   <TableRow key={p.pack}>
                     <TableCell className="font-medium">
@@ -273,14 +283,22 @@ export default async function AnalisisProducto({ params, searchParams }: {
                     <TableCell className={cn("text-right tabular-nums", t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-emerald-600 dark:text-emerald-400")}>{fmtPct(t)}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(dev)}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(p.margen_bruto))}</TableCell>
-                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", pnlColor(m))}>{p.guias ? fmtMoney(m / p.guias) : "—"}</TableCell>
-                    <TableCell><div className="h-1.5 w-full rounded bg-muted"><div className={cn("barra h-1.5 rounded", m >= 0 ? "bg-emerald-500" : "bg-destructive")} style={{ width: `${Math.abs(m) / maxPackM * 100}%` }} /></div></TableCell>
+                    <TableCell className={cn("text-right tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{adsP ? fmtMoney(adsP) : "—"}</TableCell>
+                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(f))}>{fmtMoney(f)}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", pnlColor(f))}>{p.guias ? fmtMoney(f / p.guias) : "—"}</TableCell>
+                    <TableCell><div className="h-1.5 w-full rounded bg-muted"><div className={cn("barra h-1.5 rounded", f >= 0 ? "bg-emerald-500" : "bg-destructive")} style={{ width: `${Math.abs(f) / maxPackM * 100}%` }} /></div></TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
           </Table>
+          )}
+          {packs.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Cerrado a hoy, sin proyección: las guías en la calle todavía no suman acá (su flete y los Ads sí, ya están hundidos).
+              En rangos recientes el Profit final castiga de más — para comparar packs usá rangos maduros (Mes pasado, o un hasta ≥10 días atrás).
+            </p>
           )}
         </CardContent>
       </Card>
