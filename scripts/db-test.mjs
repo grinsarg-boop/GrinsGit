@@ -74,6 +74,7 @@ try {
                    'supabase/migrations/047_percepciones_columna.sql',
                    'supabase/migrations/048_mp_khalil_fee.sql',
                    'supabase/migrations/049_packs_pmin.sql',
+                   'supabase/migrations/050_packs_estimado.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',

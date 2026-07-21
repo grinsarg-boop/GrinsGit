@@ -24,9 +24,10 @@ type PnlRow = {
   profit_conf: number; profit_est: number;
 };
 type PackRow = {
-  pack: number; guias: number; entregadas: number; devueltas: number;
+  pack: number; guias: number; entregadas: number; devueltas: number; en_calle: number;
   cod_cobrado: number; flete: number;
   comisiones: number; costo_producto: number; margen_bruto: number; margen_neto: number;
+  margen_neto_est: number;
 };
 
 const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
@@ -100,7 +101,8 @@ export default async function AnalisisProducto({ params, searchParams }: {
   const rowsCod = rows.filter((r) => r.courier !== "ml");
   const despCod = sumOf(rowsCod, "despachadas");
   const cpaGuia = despCod ? sumOf(rowsCod, "ads") / despCod : 0;
-  const maxPackM = Math.max(...packs.map((p) => Math.abs(N(p.margen_neto) - cpaGuia * p.guias)), 1);
+  // la barra escala sobre el FINAL ESTIMADO (el titular, como en todo el dashboard)
+  const maxPackM = Math.max(...packs.map((p) => Math.abs(N(p.margen_neto_est) - cpaGuia * p.guias)), 1);
 
   // querystring heredable: subpáginas hermanas, presets y volver a /analisis con el mismo estado
   const qs = (o: { courier?: string; desde?: string; hasta?: string } = {}) => {
@@ -242,7 +244,7 @@ export default async function AnalisisProducto({ params, searchParams }: {
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               Profit por pack
-              <Tip tip="Todo CERRADO a hoy, sin proyección: cobrado = solo guías entregadas; flete de TODA guía despachada (hundido); comisiones solo sobre entregadas; costo en entregadas y siniestros; Ads del rango completos, también hundidos. Solo pedidos de una línea (con carrito mixto el pack no está definido), cohorte por día de DESPACHO, solo canales con guía — ML y Correo quedan afuera. Margen bruto = cobrado − flete. Neto s/Ads = bruto − comisiones − costo de producto. Profit final = neto − Ads asignados por guía: los Ads van por producto y día, no por pack (el pack lo elige el cliente en el checkout), así que cada guía carga el mismo costo de adquisición — el CPA del producto en el rango (Meta, sin ML). Es una asignación, por eso va en ámbar: el CPA sale de TODOS los despachos del producto, incluidos los pedidos multi-línea que esta tabla no muestra. A diferencia del bloque de /analisis, los buckets con menos de 40 guías se muestran marcados con ~ en vez de ocultarse." />
+              <Tip tip="Final ESTIMADO = el número para decidir: neto estimado − Ads. El neto estimado proyecta las guías en la calle con los mismos priors del panel (courier×provincia×producto): por cada una suma prior×COD×(1−comisión) − prior×costo; el flete no se proyecta porque ya está hundido completo. CERRADO = lo mismo sin proyección (cobrado solo de entregadas − todos los costos hundidos) — en rangos recientes castiga de más. Ads asignados por guía: van por producto y día, no por pack (el pack lo elige el cliente en el checkout), así que cada guía carga el CPA del producto en el rango (Meta, sin ML); es asignación, por eso la columna va en ámbar. Solo pedidos de una línea (con carrito mixto el pack no está definido), cohorte por día de DESPACHO, ML y Correo quedan afuera. Buckets con menos de 40 guías marcados con ~ (en /analisis se ocultan)." />
             </span>
             {totalPackGuias > 0 && <span className="text-xs tabular-nums text-muted-foreground">{totalPackGuias.toLocaleString("es-AR")} guías</span>}
           </div>
@@ -255,20 +257,22 @@ export default async function AnalisisProducto({ params, searchParams }: {
             <TableHeader><TableRow>
               <TableHead>Pack</TableHead><TableHead className="text-right">Guías</TableHead>
               <TableHead className="text-right">% vol</TableHead>
-              <TableHead className="text-right">Entrega</TableHead><TableHead className="text-right">Devolución</TableHead>
+              <TableHead className="text-right">Entrega</TableHead>
               <TableHead className="text-right">Margen bruto</TableHead>
               <TableHead className="text-right">Neto s/Ads</TableHead>
               <TableHead className="text-right">Ads</TableHead>
-              <TableHead className="text-right text-amber-600 dark:text-amber-500">Profit final</TableHead>
-              <TableHead className="text-right">Final/guía</TableHead><TableHead className="w-28" />
+              <TableHead className="text-right text-amber-600 dark:text-amber-500">Final estimado</TableHead>
+              <TableHead className="text-right">cerrado</TableHead>
+              <TableHead className="text-right">Est./guía</TableHead><TableHead className="w-28" />
             </TableRow></TableHeader>
             <TableBody>
               {packs.map((p) => {
                 const t = p.guias ? p.entregadas / p.guias : 0;
-                const dev = p.guias ? p.devueltas / p.guias : 0;
                 const m = N(p.margen_neto);
+                const me = N(p.margen_neto_est);
                 const adsP = cpaGuia * p.guias;
-                const f = m - adsP;
+                const f = m - adsP;      // final CERRADO
+                const fe = me - adsP;    // final ESTIMADO (titular)
                 return (
                   <TableRow key={p.pack}>
                     <TableCell className="font-medium">
@@ -281,13 +285,14 @@ export default async function AnalisisProducto({ params, searchParams }: {
                     <TableCell className="text-right tabular-nums">{p.guias.toLocaleString("es-AR")}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(totalPackGuias ? p.guias / totalPackGuias : 0)}</TableCell>
                     <TableCell className={cn("text-right tabular-nums", t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-emerald-600 dark:text-emerald-400")}>{fmtPct(t)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(dev)}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(p.margen_bruto))}</TableCell>
                     <TableCell className={cn("text-right tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{adsP ? fmtMoney(adsP) : "—"}</TableCell>
-                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(f))}>{fmtMoney(f)}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", pnlColor(f))}>{p.guias ? fmtMoney(f / p.guias) : "—"}</TableCell>
-                    <TableCell><div className="h-1.5 w-full rounded bg-muted"><div className={cn("barra h-1.5 rounded", f >= 0 ? "bg-emerald-500" : "bg-destructive")} style={{ width: `${Math.abs(f) / maxPackM * 100}%` }} /></div></TableCell>
+                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(fe))}
+                               title={p.en_calle ? `${p.en_calle} guías en la calle, proyectadas con los priors del panel` : "sin guías en la calle: estimado = cerrado"}>{fmtMoney(fe)}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", f < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(f)}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", pnlColor(fe))}>{p.guias ? fmtMoney(fe / p.guias) : "—"}</TableCell>
+                    <TableCell><div className="h-1.5 w-full rounded bg-muted"><div className={cn("barra h-1.5 rounded", fe >= 0 ? "bg-emerald-500" : "bg-destructive")} style={{ width: `${Math.abs(fe) / maxPackM * 100}%` }} /></div></TableCell>
                   </TableRow>
                 );
               })}
@@ -296,8 +301,9 @@ export default async function AnalisisProducto({ params, searchParams }: {
           )}
           {packs.length > 0 && (
             <p className="text-xs text-muted-foreground">
-              Cerrado a hoy, sin proyección: las guías en la calle todavía no suman acá (su flete y los Ads sí, ya están hundidos).
-              En rangos recientes el Profit final castiga de más — para comparar packs usá rangos maduros (Mes pasado, o un hasta ≥10 días atrás).
+              El titular es el <b>Final estimado</b> (cerrado + proyección de lo en-calle con los priors del panel — mismo criterio
+              que el resto del dashboard); el cerrado queda al lado para ver cuánto ya es plata firme. En rangos muy recientes el
+              estimado también es tentativo: madura en ~3 semanas.
             </p>
           )}
         </CardContent>
