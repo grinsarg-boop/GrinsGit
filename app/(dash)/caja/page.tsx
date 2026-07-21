@@ -5,11 +5,13 @@ import {
 } from "@/components/ui/table";
 import { CajaFlujo } from "@/components/caja-flujo";
 import { CajaPendiente } from "@/components/caja-pendiente";
+import { Panel } from "@/components/panel";
 import { daysAgoIso, fmtDate, fmtMoney } from "@/lib/format";
 import {
   DESDE, ESTRUCTURA, YA_MODELADO, balance5050, fetchCashflow, porMes, saldos,
   type MesCaja,
 } from "@/lib/cashflow";
+import { inventarioSafe } from "@/lib/stock";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { categorizarMov } from "./actions";
@@ -26,25 +28,6 @@ const N = (v: number | null | undefined) => Number(v ?? 0);
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const mesLabel = (mes: string) => `${MESES[Number(mes.slice(5, 7)) - 1]} ${mes.slice(0, 4)}`;
 const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
-
-// Panel colapsable: <details> nativo (mismo recurso que los recuadros del Resumen). El estado
-// no persiste entre recargas — alcanza para despejar la vista mientras se lee.
-function Panel({ titulo, tip, children }: { titulo: React.ReactNode; tip?: string; children: React.ReactNode }) {
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <details open className="group">
-          <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
-            <span aria-hidden className="text-muted-foreground transition-transform group-open:rotate-90">▸</span>
-            {titulo}
-            {tip && <Tip tip={tip} />}
-          </summary>
-          <div className="mt-3">{children}</div>
-        </details>
-      </CardContent>
-    </Card>
-  );
-}
 
 export default async function Caja() {
   let cf: Awaited<ReturnType<typeof fetchCashflow>>;
@@ -78,6 +61,7 @@ export default async function Caja() {
   }
 
   const heroMeses = meses.slice(0, 2); // mes en curso + anterior
+  const inventario = await inventarioSafe(); // null si Stock no está conectado — la página no depende
   const cajas = saldos(cf.movs, cf.cajas);
   const socios = balance5050(cf.movs);
   const aCobrar = cf.cobrar.reduce((s, c) => s + Number(c.monto), 0);
@@ -294,6 +278,15 @@ export default async function Caja() {
                 <span>{fmtMoney(aCobrar)}</span>
               </div>
             </div>
+            {inventario != null && (
+              <div className="flex justify-between border-t pt-1.5">
+                <span className="text-muted-foreground">
+                  Inventario inmovilizado (Stock){" "}
+                  <Tip tip="Insumos y terminados valorizados a costo, en vivo desde la app Stock Cosmética. Con la caja y el a cobrar completa la foto de la plata: caja + a cobrar + stock. Detalle en /stock." />
+                </span>
+                <span className="tabular-nums">{fmtMoney(inventario)}</span>
+              </div>
+            )}
           </div>
         </Panel>
 
