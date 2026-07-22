@@ -1,6 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Tip } from "@/components/ui/tooltip";
 import { TrabadosTabla, type TrabadoRow } from "@/components/trabados-tabla";
+import { UrbanoRedirigir } from "@/components/urbano-redirigir";
 import { fmtMoney } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -63,6 +64,8 @@ export default async function Trabados() {
           </CardContent>
         </Card>
       )}
+
+      <UrbanoRedirigir />
     </div>
   );
 }
