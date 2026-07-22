@@ -7,6 +7,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Donut, type Slice } from "@/components/donut";
 import { PackCourierBars } from "@/components/pack-courier-bars";
+import { ChannelBars } from "@/components/channel-bars";
 import { Delta } from "@/components/delta";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -120,11 +121,27 @@ export default async function AnalisisProducto({ params, searchParams }: {
   const cpaGuiaProd = despCodProd ? sumOf(codProd, "ads") / despCodProd : 0;
   const packCells = (["urbano", "fixy"] as const).flatMap((courier) =>
     (((courier === "urbano" ? packUrb : packFix) ?? []) as PackRow[]).map((p) => {
-      const total = N(p.margen_neto_est) - cpaGuiaProd * p.guias;
+      const adsP = cpaGuiaProd * p.guias;
+      const total = N(p.margen_neto_est) - adsP;    // estimado (proyecta lo en la calle)
+      const totalCerr = N(p.margen_neto) - adsP;    // cerrado (solo cobrado)
       return { pack: p.pack, courier, guias: p.guias, entrega: p.guias ? p.entregadas / p.guias : 0,
-               total, estGuia: p.guias ? total / p.guias : 0 };
+               total, estGuia: p.guias ? total / p.guias : 0,
+               totalCerr, estGuiaCerr: p.guias ? totalCerr / p.guias : 0 };
     }),
   );
+
+  // Contraste por canal (los 4): de dónde sale la plata del producto. analisis_pnl ya viene por
+  // courier×producto y sin filtrar (allRowsProd) → una barra por canal presente.
+  const canalRows = allRowsProd.filter((r) => r.product_id === id);
+  const channelCells = (["urbano", "fixy", "correo", "ml"] as const).flatMap((courier) => {
+    const rs = canalRows.filter((r) => r.courier === courier);
+    if (!rs.length) return [];
+    const profitEst = sumOf(rs, "profit_est");
+    const desp = sumOf(rs, "despachadas");
+    return [{ courier, profitEst, profitConf: sumOf(rs, "profit_conf"),
+              despachos: desp, entrega: desp ? sumOf(rs, "entregadas") / desp : 0,
+              estPorDesp: desp ? profitEst / desp : 0 }];
+  });
 
   // querystring heredable: subpáginas hermanas, presets y volver a /analisis con el mismo estado
   const qs = (o: { courier?: string; desde?: string; hasta?: string } = {}) => {
@@ -337,14 +354,33 @@ export default async function AnalisisProducto({ params, searchParams }: {
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               Profit por pack y courier
-              <Tip tip="El mismo profit del bloque de arriba, pero abierto por courier COD (Urbano vs Fixy) y expresado POR GUÍA — así se compara peral con peral entre packs y couriers, sin que el volumen lo tape. Altura = profit estimado por guía (neto estimado del bucket − CPA del producto, ÷ guías); verde/rojo por signo. El total, las guías y la entrega salen al pasar el mouse. Barras tenues = menos de 40 guías (est/guía ruidoso). ML y Correo no aparecen: no llevan guía COD por pack." />
+              <Tip tip="El mismo profit del bloque de arriba, pero abierto por courier COD (Urbano vs Fixy) y expresado POR GUÍA — así se compara peral con peral entre packs y couriers, sin que el volumen lo tape. Altura = profit por guía (neto del bucket − CPA del producto, ÷ guías); verde/rojo por signo. Toggle Estimado (proyecta lo en la calle con los priors) / Cerrado (solo lo ya cobrado — deja ver dónde HOY hay pérdida real). El total, las guías y la entrega salen al pasar el mouse. Barras tenues = menos de 40 guías (por-guía ruidoso). ML y Correo no aparecen: no llevan guía COD por pack." />
             </span>
-            <span className="text-xs tabular-nums text-muted-foreground">est/guía · Urbano vs Fixy</span>
+            <span className="text-xs tabular-nums text-muted-foreground">por guía · Urbano vs Fixy</span>
           </div>
           <PackCourierBars data={packCells} />
           <p className="text-xs text-muted-foreground">
             Cada barra es un <b>pack en un courier</b>: comparás el mismo pack entre Urbano y Fixy, y los packs entre sí, por su rentabilidad
             unitaria (independiente del filtro de courier de arriba). Para la plata total de cada pack, mirá la tabla anterior.
+          </p>
+        </CardContent>
+      </Card>
+      )}
+
+      {channelCells.length > 1 && (
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+              Profit por canal
+              <Tip tip="Los cuatro canales del producto contrastados: de dónde sale la plata. Altura = profit ESTIMADO total del producto en ese canal (volumen × margen) — complementa al bloque de packs, que mira la rentabilidad por guía. Despachos, entrega y est/despacho salen al pasar el mouse. Es el corte producto×canal completo: acá SÍ entran ML (prepago) y Correo, que no tienen desglose por pack." />
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">profit estimado · los 4 canales</span>
+          </div>
+          <ChannelBars data={channelCells} />
+          <p className="text-xs text-muted-foreground">
+            Dónde vive el profit de {prod.name} por canal (independiente del filtro de arriba). Para la rentabilidad por unidad de cada uno,
+            el tooltip trae el est/despacho; el desglose fino por pack está en las barras de arriba (solo COD).
           </p>
         </CardContent>
       </Card>
