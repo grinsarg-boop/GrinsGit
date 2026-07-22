@@ -6,6 +6,7 @@ const NAV: [string, string][] = [
   ["/", "Resumen"],
   ["/ventas", "Ventas"],
   ["/analisis", "Análisis"],
+  ["/anuncios", "Anuncios"],
   ["/tendencias", "Tendencias"],
   ["/caja", "Caja"],
   ["/stock", "Stock"],
