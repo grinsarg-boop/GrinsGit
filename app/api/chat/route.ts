@@ -133,7 +133,7 @@ export async function POST(req: NextRequest) {
       system,
       tools: chatTools,
       messages,
-      max_iterations: 12,
+      max_iterations: 6,
     }).done();
     reply = final.content
       .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")

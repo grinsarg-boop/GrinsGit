@@ -44,9 +44,9 @@ function rpcTool(cfg: Cfg) {
       }
       const { data, error } = await supabaseAdmin().rpc(cfg.rpc, args);
       if (error) return `ERROR de ${cfg.rpc}: ${error.message}`;
-      // Cap defensivo: algunas devuelven muchas filas; el modelo debe acotar el rango.
-      const rows = Array.isArray(data) ? data.slice(0, 800) : data;
-      const note = Array.isArray(data) && data.length > 800 ? ` [truncado: ${data.length} filas, mostrando 800; acotá el rango]` : "";
+      // Cap defensivo: menos filas = menos JSON por turno = loop más rápido. El modelo acota el rango.
+      const rows = Array.isArray(data) ? data.slice(0, 80) : data;
+      const note = Array.isArray(data) && data.length > 80 ? ` [truncado: ${data.length} filas, mostrando 80; acotá el rango o agrupá]` : "";
       return JSON.stringify(rows) + note;
     },
   });
