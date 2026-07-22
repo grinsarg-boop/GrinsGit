@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
+import { parseMarkdown, type Inline } from "@/lib/markdown";
 
 // Asistente flotante: burbuja abajo-derecha en todos los paneles. Historial multi-sesión persistido
 // en Supabase (chat_sessions/chat_messages) vía /api/chat — sobrevive al reload. Sin dep de iconos
@@ -162,9 +163,9 @@ export function ChatWidget() {
         {messages.map((m, i) => (
           <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
             <div className={cn(
-              "max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2",
-              m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted",
-            )}>{m.content}</div>
+              "max-w-[85%] rounded-lg px-3 py-2",
+              m.role === "user" ? "whitespace-pre-wrap bg-primary text-primary-foreground" : "bg-muted",
+            )}>{m.role === "user" ? m.content : <Markdown text={m.content} />}</div>
           </div>
         ))}
         {loading && messages[messages.length - 1]?.role !== "assistant" && (
@@ -198,6 +199,29 @@ export function ChatWidget() {
           <SendIcon />
         </button>
       </div>
+    </div>
+  );
+}
+
+function renderInlines(inls: Inline[]) {
+  return inls.map((n, i) => {
+    if (n.k === "b") return <strong key={i}>{n.v}</strong>;
+    if (n.k === "i") return <em key={i}>{n.v}</em>;
+    if (n.k === "code") return <code key={i} className="rounded bg-background/60 px-1 py-0.5 text-[0.85em]">{n.v}</code>;
+    return <span key={i}>{n.v}</span>;
+  });
+}
+
+// Render del subset markdown (ver lib/markdown). Tolera texto parcial mientras streamea.
+function Markdown({ text }: { text: string }) {
+  return (
+    <div className="space-y-1.5">
+      {parseMarkdown(text).map((b, i) => {
+        if (b.type === "ul") return <ul key={i} className="list-disc space-y-0.5 pl-4">{b.items.map((it, j) => <li key={j}>{renderInlines(it)}</li>)}</ul>;
+        if (b.type === "ol") return <ol key={i} className="list-decimal space-y-0.5 pl-4">{b.items.map((it, j) => <li key={j}>{renderInlines(it)}</li>)}</ol>;
+        if (b.type === "h") return <p key={i} className="font-semibold">{renderInlines(b.inlines)}</p>;
+        return <p key={i}>{renderInlines(b.inlines)}</p>;
+      })}
     </div>
   );
 }
