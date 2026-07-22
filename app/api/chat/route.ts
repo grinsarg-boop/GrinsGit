@@ -121,36 +121,56 @@ export async function POST(req: NextRequest) {
     { role: "user" as const, content: message },
   ];
 
-  let reply: string;
-  try {
-    const client = new Anthropic();
-    // Sonnet 5 por default: interactivo y con techo de timeout → prima la latencia (además es el
-    // modelo del bot de WhatsApp y más barato). Subir a claude-opus-4-8 vía CHAT_MODEL si se quiere
-    // más profundidad. Sin thinking adaptativo: agrega segundos y las tools ya aportan el dato duro.
-    const final = await client.beta.messages.toolRunner({
-      model: process.env.CHAT_MODEL || "claude-sonnet-5",
-      max_tokens: 8000,
-      // cache_control: el system (glosario + catálogo + baseline) es estable dentro del loop y entre
-      // turnos → se cachea y abarata cada iteración (~10% del costo en cache_read). Latencia neutra.
-      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-      tools: chatTools,
-      messages,
-      max_iterations: 5,
-    }).done();
-    reply = final.content
-      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-      .map((b) => b.text).join("\n").trim();
-    if (!reply) reply = "(sin respuesta)";
-  } catch (e) {
-    return NextResponse.json({ error: `Error del modelo: ${(e as Error).message}` }, { status: 502 });
-  }
-
-  // Persistir el turno + bumpear la sesión.
-  await sb.from("chat_messages").insert([
-    { session_id: sessionId, role: "user", content: message },
-    { session_id: sessionId, role: "assistant", content: reply },
-  ]);
-  await sb.from("chat_sessions").update({ updated_at: new Date().toISOString() }).eq("id", sessionId);
-
-  return NextResponse.json({ sessionId, reply });
+  // Respuesta STREAMING (NDJSON): {status} mientras el modelo consulta tools, {delta} con el texto
+  // token a token, {done,sessionId} al final. Los bytes fluyen ya → el usuario ve progreso y NO se
+  // corta por timeout de gateway. Sonnet 5 default (interactivo/barato; opus vía CHAT_MODEL), sin
+  // thinking, system con cache_control (abarata el loop).
+  const sid = sessionId as string;
+  const client = new Anthropic();
+  const enc = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (o: Record<string, unknown>) => controller.enqueue(enc.encode(JSON.stringify(o) + "\n"));
+      let full = "";
+      try {
+        const runner = client.beta.messages.toolRunner({
+          model: process.env.CHAT_MODEL || "claude-sonnet-5",
+          max_tokens: 8000,
+          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+          tools: chatTools,
+          messages,
+          max_iterations: 5,
+          stream: true,
+        });
+        for await (const turn of runner) {
+          for await (const event of turn) {
+            if (event.type === "content_block_start" && event.content_block.type === "tool_use") {
+              send({ status: `consultando ${event.content_block.name}…` });
+            } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+              full += event.delta.text;
+              send({ delta: event.delta.text });
+            }
+          }
+        }
+      } catch (e) {
+        send({ delta: `\n⚠ ${(e as Error).message}` });
+      }
+      if (!full.trim()) full = "(sin respuesta)";
+      // Persistir el turno + bumpear la sesión (al cerrar el stream).
+      await sb.from("chat_messages").insert([
+        { session_id: sid, role: "user", content: message },
+        { session_id: sid, role: "assistant", content: full },
+      ]);
+      await sb.from("chat_sessions").update({ updated_at: new Date().toISOString() }).eq("id", sid);
+      send({ done: true, sessionId: sid });
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "content-type": "application/x-ndjson; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      "x-accel-buffering": "no",
+    },
+  });
 }

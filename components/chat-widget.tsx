@@ -20,6 +20,7 @@ export function ChatWidget() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -62,8 +63,9 @@ export function ChatWidget() {
     if (!text || loading) return;
     setInput("");
     setError(null);
-    const optimistic: Msg[] = [...messages, { role: "user", content: text }];
-    setMessages(optimistic);
+    setStatus(null);
+    const base: Msg[] = [...messages, { role: "user", content: text }];
+    setMessages(base);
     setLoading(true);
     try {
       const res = await fetch("/api/chat", {
@@ -71,14 +73,37 @@ export function ChatWidget() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId: currentId, message: text }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `error ${res.status}`);
-      if (!currentId) { setCurrentId(data.sessionId); void loadSessions(); }
-      setMessages([...optimistic, { role: "assistant", content: data.reply }]);
+      if (!res.ok || !res.body) throw new Error(`error ${res.status}`);
+      // Stream NDJSON: {status} (tool corriendo) · {delta} (texto) · {done,sessionId}
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "", assistant = "", started = false, sid = currentId;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let ev: { status?: string; delta?: string; done?: boolean; sessionId?: string };
+          try { ev = JSON.parse(line); } catch { continue; }
+          if (ev.status) setStatus(ev.status);
+          else if (ev.delta != null) {
+            assistant += ev.delta;
+            started = true;
+            setStatus(null);
+            setMessages([...base, { role: "assistant", content: assistant }]);
+          } else if (ev.done) sid = ev.sessionId ?? sid;
+        }
+      }
+      if (!currentId && sid) { setCurrentId(sid); void loadSessions(); }
+      if (!started) setMessages([...base, { role: "assistant", content: "(sin respuesta)" }]);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
+      setStatus(null);
     }
   }
 
@@ -142,10 +167,10 @@ export function ChatWidget() {
             )}>{m.content}</div>
           </div>
         ))}
-        {loading && (
+        {loading && messages[messages.length - 1]?.role !== "assistant" && (
           <div className="flex justify-start">
             <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-muted-foreground">
-              <Spinner className="size-3" /> pensando…
+              <Spinner className="size-3" /> {status || "pensando…"}
             </div>
           </div>
         )}
