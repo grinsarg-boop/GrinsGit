@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SyncAlert } from "@/components/sync-alert";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ChatWidget } from "@/components/chat-widget";
 
 const NAV: [string, string][] = [
   ["/", "Resumen"],
@@ -36,6 +37,7 @@ export default function DashLayout({ children }: { children: React.ReactNode }) 
       </nav>
       <SyncAlert />
       {children}
+      <ChatWidget />
     </div>
   );
 }
