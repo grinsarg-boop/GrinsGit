@@ -76,6 +76,7 @@ try {
                    'supabase/migrations/049_packs_pmin.sql',
                    'supabase/migrations/050_packs_estimado.sql',
                    'supabase/migrations/051_anuncios.sql',
+                   'supabase/migrations/052_fixy_codigos_faltantes.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
