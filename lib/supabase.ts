@@ -10,8 +10,12 @@ export function supabaseAdmin() {
 }
 
 // Guard de los endpoints de sync/import (§5): Bearer CRON_SECRET.
+// Sin la env seteada se rechaza TODO (500): si no, "Bearer undefined" pasaría y
+// las rutas de sync/import quedarían públicas en un entorno mal configurado.
 export function badCronAuth(req: Request): Response | null {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return new Response("CRON_SECRET sin configurar", { status: 500 });
+  if (req.headers.get("authorization") !== `Bearer ${secret}`) {
     return new Response("unauthorized", { status: 401 });
   }
   return null;
