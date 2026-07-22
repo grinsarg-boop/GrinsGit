@@ -75,6 +75,16 @@ export default async function Resumen({
   const { data: rows } = await db.rpc("dashboard_days", { p_from: from, p_courier: courierParam });
   const list: Day[] = ((rows ?? []) as Row[]).map(mapDay).filter((d) => d.date <= to);
 
+  // Tasa madura por courier (prior a nivel courier: province/product null) — para desarmar el sesgo del
+  // blend en "Tasa proy." de la vista Todos: el promedio sube por ML (~100%) y Fixy, pero Urbano —el grueso—
+  // entrega mucho menos. Es el mismo prior que el panel usa para proyectar; 3 filas, sin truncar.
+  const priorByCourier = new Map<string, number>();
+  if (!courierParam) {
+    const { data: pr } = await db.from("delivery_priors")
+      .select("courier, p_delivery").is("province", null).is("product_id", null);
+    for (const r of (pr ?? []) as { courier: string; p_delivery: number }[]) priorByCourier.set(r.courier, Number(r.p_delivery));
+  }
+
   // Flete Flex de ML sin cargar, por semana (solo en la vista ML o Todos). Las órdenes Flex
   // (self_service) con ship_cost null cuentan flete $0 hasta subir el xlsx de Santiago de esa semana.
   let flexPend: { semana: string; n: number }[] = [];
@@ -390,8 +400,18 @@ export default async function Resumen({
               <div className="text-base font-semibold tabular-nums">{rango.despachadas}</div>
             </div>
             <div>
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Tasa proy.</div>
+              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+                Tasa proy.
+                {!courierParam && priorByCourier.size > 0 && (
+                  <Tip tip={`Es el blend proyectado de TODOS los canales, y engaña: sube porque ML entrega ~100% y Fixy ~${fmtPct(priorByCourier.get("fixy") ?? 0)}. Urbano —que es el grueso de las guías— entrega ~${fmtPct(priorByCourier.get("urbano") ?? 0)} ya maduro (cohortes resueltas). El promedio tapa esa brecha; filtrá por courier arriba para ver cada uno sin mezcla.`} />
+                )}
+              </div>
               <div className="text-base font-semibold tabular-nums">{rango.despachadas ? fmtPct(rango.proyectadas / rango.despachadas) : "—"}</div>
+              {!courierParam && priorByCourier.has("urbano") && (
+                <div className="pt-0.5 text-[0.7rem] tabular-nums text-amber-600 dark:text-amber-500">
+                  Urbano maduro {fmtPct(priorByCourier.get("urbano")!)}
+                </div>
+              )}
             </div>
             <div>
               <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">ROAS est.</div>
