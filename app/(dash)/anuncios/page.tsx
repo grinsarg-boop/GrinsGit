@@ -1,20 +1,19 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Tip } from "@/components/ui/tooltip";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
 import Link from "next/link";
-import { Donut, PALETA, type Slice } from "@/components/donut";
+import { adLabel, campaignLabel } from "@/lib/ad-label";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
 export const revalidate = 60;
 
-// Cruce venta ↔ anuncio de Meta. RPC anuncios_pnl (051): une orders.raw->note_attributes.utm_content
-// (= ad_id de Meta) con ad_spend, y con shipments para el desenlace real. No calcula plata nueva:
-// reagrupa lo que ya cierra en /ventas por eje CAMPAÑA / ANUNCIO / CONJUNTO. La pregunta que responde:
-// qué campaña trae clientes de CALIDAD (COD que se entrega y cobra), no solo pedidos que después vuelven.
+// Cruce venta ↔ anuncio de Meta (RPC anuncios_pnl, 051). Responde "qué producto/campaña trae clientes
+// que PAGAN, y dónde quemo". Dos capas separadas a propósito: NEGOCIO (todo el COD ÷ gasto, sobrevive
+// si la atribución se rompe) y ATRIBUIDO (el subconjunto con ad_id, que se puede desglosar por campaña/
+// anuncio). Cuando el form COD deja de estampar utm_content (pasó ~6/jul 2026), la cobertura se desploma
+// y el ROAS atribuido se vuelve basura — de ahí el banner de atribución. Cohortes recientes maduran ~21d.
 type AdRow = {
   ad_id: string | null; ad_name: string | null; adset_name: string | null;
   campaign_name: string | null; product: string | null;
@@ -26,11 +25,7 @@ const N = (v: number | null | undefined) => Number(v ?? 0);
 const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 const tasaColor = (t: number) => (t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-emerald-600 dark:text-emerald-400");
 
-// suma cruda de un grupo de anuncios + las métricas derivadas (todas dividen acá, con guardas)
-type Sums = {
-  pedidos: number; despachadas: number; entregadas: number; devueltas: number; resueltas: number;
-  cod_cobrado: number; flete: number; spend: number;
-};
+type Sums = { pedidos: number; despachadas: number; entregadas: number; devueltas: number; resueltas: number; cod_cobrado: number; flete: number; spend: number };
 const ZERO: Sums = { pedidos: 0, despachadas: 0, entregadas: 0, devueltas: 0, resueltas: 0, cod_cobrado: 0, flete: 0, spend: 0 };
 const add = (a: Sums, r: AdRow): Sums => ({
   pedidos: a.pedidos + N(r.pedidos), despachadas: a.despachadas + N(r.despachadas),
@@ -40,31 +35,33 @@ const add = (a: Sums, r: AdRow): Sums => ({
 });
 const derive = (g: Sums) => {
   const enCalle = Math.max(g.despachadas - g.resueltas, 0);
-  const tasa = g.despachadas ? g.entregadas / g.despachadas : 0;      // bruta (subestima en cohortes nuevas)
-  const tasaMad = g.resueltas ? g.entregadas / g.resueltas : 0;       // sobre resueltas (robusta a maduración)
+  const tasaMad = g.resueltas ? g.entregadas / g.resueltas : 0;   // robusta a maduración (÷ resueltas, no ÷ despachadas)
   const devRate = g.despachadas ? g.devueltas / g.despachadas : 0;
   const cpa = g.entregadas ? g.spend / g.entregadas : 0;
   const roas = g.spend ? g.cod_cobrado / g.spend : 0;
   const ticket = g.entregadas ? g.cod_cobrado / g.entregadas : 0;
-  const contrib = g.cod_cobrado - g.flete - g.spend;                 // margen logístico neto de ads (sin costo prod / comisión)
-  return { ...g, enCalle, tasa, tasaMad, devRate, cpa, roas, ticket, contrib };
+  const contrib = g.cod_cobrado - g.flete - g.spend;             // margen logístico neto de ads (sin costo prod / comisión)
+  return { ...g, enCalle, tasaMad, devRate, cpa, roas, ticket, contrib };
 };
 type Metric = ReturnType<typeof derive>;
-
-const agrupar = <K extends string>(rows: AdRow[], key: (r: AdRow) => K) =>
-  [...rows.reduce((m, r) => m.set(key(r), add(m.get(key(r)) ?? ZERO, r)), new Map<K, Sums>())]
-    .map(([k, s]) => ({ k, ...derive(s) }));
+const groupSum = <K extends string>(rows: AdRow[], key: (r: AdRow) => K) => {
+  const m = new Map<K, AdRow[]>();
+  for (const r of rows) { const k = key(r); (m.get(k) ?? m.set(k, []).get(k)!).push(r); }
+  return m;
+};
 
 const ORDENES = {
-  entregadas: { label: "Entregadas", fn: (a: Metric, b: Metric) => b.entregadas - a.entregadas },
   contrib: { label: "Contribución", fn: (a: Metric, b: Metric) => b.contrib - a.contrib },
+  entregadas: { label: "Entregadas", fn: (a: Metric, b: Metric) => b.entregadas - a.entregadas },
   cpa: { label: "CPA entregada", fn: (a: Metric, b: Metric) => (a.entregadas ? a.cpa : Infinity) - (b.entregadas ? b.cpa : Infinity) },
-  tasa: { label: "Tasa entrega", fn: (a: Metric, b: Metric) => b.tasaMad - a.tasaMad },
+  tasa: { label: "Tasa", fn: (a: Metric, b: Metric) => b.tasaMad - a.tasaMad },
   roas: { label: "ROAS", fn: (a: Metric, b: Metric) => b.roas - a.roas },
   spend: { label: "Gasto", fn: (a: Metric, b: Metric) => b.spend - a.spend },
-  pedidos: { label: "Pedidos", fn: (a: Metric, b: Metric) => b.pedidos - a.pedidos },
 } as const;
 type Orden = keyof typeof ORDENES;
+
+// una fila = grid de 7 columnas alineado entre header, productos, campañas y anuncios
+const ROW = "grid grid-cols-[minmax(8rem,1fr)_repeat(6,minmax(3.5rem,max-content))] items-center gap-x-3 sm:gap-x-4";
 
 export default async function Anuncios({
   searchParams,
@@ -79,32 +76,45 @@ export default async function Anuncios({
   let from = desde && ISO.test(desde) ? desde : daysAgoIso(30);
   if (from > to) from = to;
   const rangeLabel = `${fmtDate(from)} → ${fmtDate(to)}`;
-  const ord: Orden = (orden && orden in ORDENES ? orden : "entregadas") as Orden;
+  const ord: Orden = (orden && orden in ORDENES ? orden : "contrib") as Orden;
 
   const { data: raw } = await db.rpc("anuncios_pnl", { p_from: from, p_to: to });
   const rows = (raw ?? []) as AdRow[];
-  const atribuidas = rows.filter((r) => r.campaign_name);      // ad_id conocido en ad_spend
-  const bucket = derive(rows.filter((r) => !r.campaign_name).reduce(add, ZERO));  // orgánico + ads fuera de ad_spend
-  const total = derive(rows.reduce(add, ZERO));
-  const glob = derive(atribuidas.reduce(add, ZERO));           // KPIs sobre lo atribuido (el gasto solo existe ahí)
-  const cobertura = total.pedidos ? glob.pedidos / total.pedidos : 0;
+  const attributed = rows.filter((r) => r.campaign_name);
+  const bus = derive(rows.reduce(add, ZERO));                    // NEGOCIO: todo el COD, con o sin atribución
+  const glob = derive(attributed.reduce(add, ZERO));            // ATRIBUIDO: lo que se puede desglosar
+  const bucket = derive(rows.filter((r) => !r.campaign_name).reduce(add, ZERO));
+  const cobertura = bus.pedidos ? glob.pedidos / bus.pedidos : 0;
 
-  const campañas = agrupar(atribuidas, (r) => r.campaign_name!).sort(ORDENES[ord].fn);
-  const conjuntos = agrupar(atribuidas.filter((r) => r.adset_name), (r) => r.adset_name!)
-    .sort((a, b) => b.entregadas - a.entregadas).slice(0, 15);
-  const productos = agrupar(atribuidas, (r) => (r.product ?? "(sin producto)"))
-    .sort((a, b) => b.entregadas - a.entregadas);
-  // anuncios: solo los que movieron algo (pedido o gasto), top 40 por el orden elegido
-  const anuncios = atribuidas
-    .filter((r) => N(r.pedidos) > 0 || N(r.spend) > 0)
-    .map((r) => ({ k: r.ad_id!, ad_name: r.ad_name, campaign_name: r.campaign_name, ...derive(add(ZERO, r)) }))
-    .sort(ORDENES[ord].fn).slice(0, 40);
+  // ¿el rango todavía madura? (guías en la calle sin resolver). Si sí, el ROAS/tasa van a SUBIR.
+  const enCalleRatio = bus.despachadas ? bus.enCalle / bus.despachadas : 0;
+  const maduro = enCalleRatio < 0.15;
+  // proyección de negocio a madurez (conservadora): entregar lo despachado a la tasa madura de hoy
+  const busTicket = bus.entregadas ? bus.cod_cobrado / bus.entregadas : 0;
+  const projCOD = bus.despachadas * bus.tasaMad * busTicket;
+  const projROAS = bus.spend ? projCOD / bus.spend : 0;
+  const atribRota = cobertura < 0.6 && bus.pedidos > 30;        // el form dejó de estampar utm_content
 
-  // campaña de la que viene cada peso vs de la que vienen las entregadas: si no coinciden, hay fuga
-  const topGasto = [...campañas].sort((a, b) => b.spend - a.spend);
-  const gastoSlices: Slice[] = topGasto.slice(0, 7).map((c, i) => ({ label: c.k, value: c.spend, className: PALETA[i].s, dot: PALETA[i].b }));
-  const topEnt = [...campañas].sort((a, b) => b.entregadas - a.entregadas);
-  const entSlices: Slice[] = topEnt.slice(0, 7).map((c, i) => ({ label: c.k, value: c.entregadas, className: PALETA[i].s, dot: PALETA[i].b }));
+  // ---- desglose atribuido: PRODUCTO → campañas (progressive disclosure con <details> nativo) ----
+  const prodKey = (r: AdRow) => r.product ?? campaignLabel(r.campaign_name).producto ?? "(sin producto)";
+  const productos = [...groupSum(attributed, prodKey)].map(([k, rs]) => ({
+    k, ...derive(rs.reduce(add, ZERO)),
+    campañas: [...groupSum(rs, (r) => r.campaign_name!)]
+      .map(([c, crs]) => ({ k: c, ...derive(crs.reduce(add, ZERO)) }))
+      .sort(ORDENES[ord].fn),
+  })).sort((a, b) => b.contrib - a.contrib);                     // ganan arriba, queman abajo (rojo)
+
+  // headline: quién trae los que pagan / quién quema
+  const ganador = productos.filter((p) => p.entregadas >= 10).sort((a, b) => b.contrib - a.contrib)[0];
+  const quema = productos.filter((p) => p.contrib < 0 && p.spend > 0).sort((a, b) => b.spend - a.spend)[0];
+
+  // ---- anuncios: mejores y peores por el orden elegido ----
+  const adRows = attributed.filter((r) => N(r.pedidos) > 0 || N(r.spend) > 0)
+    .map((r) => ({ k: r.ad_id!, name: r.ad_name, campaign: r.campaign_name, ...derive(add(ZERO, r)) }))
+    .sort(ORDENES[ord].fn);
+  const mejores = adRows.slice(0, 5);
+  const mejoresSet = new Set(mejores.map((a) => a.k));
+  const peores = [...adRows].reverse().filter((a) => a.spend > 0 && !mejoresSet.has(a.k)).slice(0, 5);
 
   const [ey, em] = today.slice(0, 7).split("-").map(Number);
   const pmY = em === 1 ? ey - 1 : ey;
@@ -112,14 +122,10 @@ export default async function Anuncios({
   const pm = `${pmY}-${String(pmM).padStart(2, "0")}`;
   const pmLast = new Date(pmY, pmM, 0).getDate();
   const presets: [string, string, string][] = [
-    ["7 días", daysAgoIso(7), today],
-    ["30 días", daysAgoIso(30), today],
-    ["90 días", daysAgoIso(90), today],
-    ["Este mes", `${today.slice(0, 7)}-01`, today],
-    ["Mes pasado", `${pm}-01`, `${pm}-${String(pmLast).padStart(2, "0")}`],
+    ["7 días", daysAgoIso(7), today], ["30 días", daysAgoIso(30), today], ["90 días", daysAgoIso(90), today],
+    ["Este mes", `${today.slice(0, 7)}-01`, today], ["Mes pasado", `${pm}-01`, `${pm}-${String(pmLast).padStart(2, "0")}`],
     ["Máx", "2020-01-01", today],
   ];
-
   const hrefWith = (o: { desde?: string; hasta?: string; orden?: string }) => {
     const dd = o.desde !== undefined ? o.desde : (desde ?? "");
     const hh = o.hasta !== undefined ? o.hasta : (hasta ?? "");
@@ -127,48 +133,38 @@ export default async function Anuncios({
     const q = new URLSearchParams();
     if (dd) q.set("desde", dd);
     if (hh) q.set("hasta", hh);
-    if (oo && oo !== "entregadas") q.set("orden", oo);
+    if (oo && oo !== "contrib") q.set("orden", oo);
     const s = q.toString();
     return s ? `/anuncios?${s}` : "/anuncios";
   };
-
   const chip = (active: boolean) => cn(
     "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-    active ? "bg-foreground text-background shadow-sm hover:shadow"
-           : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+    active ? "bg-foreground text-background shadow-sm hover:shadow" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
   );
 
-  // celdas comunes de las tablas de ranking (campaña / anuncio comparten columnas)
-  const metricCells = (m: Metric) => (
+  // las 6 métricas de decisión de una fila, alineadas al grid ROW (columnas 2..7)
+  const roasColor = (m: Metric) => !m.spend ? "text-muted-foreground/50" : m.roas >= 1 ? "text-emerald-600 dark:text-emerald-400" : maduro ? "text-destructive" : "text-muted-foreground";
+  const cells = (m: Metric, strong = false) => (
     <>
-      <TableCell className="text-right tabular-nums">{m.pedidos.toLocaleString("es-AR")}</TableCell>
-      <TableCell className="text-right font-semibold tabular-nums">{m.entregadas.toLocaleString("es-AR")}</TableCell>
-      <TableCell className={cn("text-right tabular-nums", tasaColor(m.tasaMad))}>
-        <Tip tip={`Entregadas ÷ resueltas (entregadas + devueltas). Robusta a maduración. Bruta (÷ despachadas, subestima con cohortes nuevas): ${fmtPct(m.tasa)}. En la calle sin resolver: ${m.enCalle.toLocaleString("es-AR")}.`}>
-          {fmtPct(m.tasaMad)}
-        </Tip>
-      </TableCell>
-      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(m.devRate)}</TableCell>
-      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(m.spend)}</TableCell>
-      <TableCell className="text-right tabular-nums">{m.entregadas ? fmtMoney(m.cpa) : <span className="text-muted-foreground/50">—</span>}</TableCell>
-      <TableCell className={cn("text-right tabular-nums", m.roas >= 1 ? "text-emerald-600 dark:text-emerald-400" : m.spend ? "text-destructive" : "text-muted-foreground/50")}>{m.spend ? fmtRatio(m.roas) : "—"}</TableCell>
-      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(m.cod_cobrado)}</TableCell>
-      <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(m.contrib))}>{fmtMoney(m.contrib)}</TableCell>
+      <span className={cn("text-right tabular-nums", strong && "font-semibold")}>{m.entregadas.toLocaleString("es-AR")}</span>
+      <Tip tip={`Entregadas ÷ resueltas. ${m.despachadas.toLocaleString("es-AR")} despachadas · ${m.enCalle.toLocaleString("es-AR")} en la calle · ${fmtPct(m.devRate)} devol.`}>
+        <span className={cn("block text-right tabular-nums", tasaColor(m.tasaMad))}>{fmtPct(m.tasaMad)}</span>
+      </Tip>
+      <span className="text-right tabular-nums text-muted-foreground">{m.entregadas ? fmtMoney(m.cpa) : "—"}</span>
+      <span className="text-right tabular-nums text-muted-foreground">{fmtMoney(m.spend)}</span>
+      <Tip tip={`Cobrado ${fmtMoney(m.cod_cobrado)} ÷ gasto ${fmtMoney(m.spend)}.${!maduro ? " El rango todavía madura: va a subir." : ""}`}>
+        <span className={cn("block text-right tabular-nums", roasColor(m))}>{m.spend ? fmtRatio(m.roas) : "—"}{!maduro && m.spend && m.roas < 1 ? " ▲" : ""}</span>
+      </Tip>
+      <span className={cn("text-right font-semibold tabular-nums", pnlColor(m.contrib))}>{fmtMoney(m.contrib)}</span>
     </>
   );
-  const rankHead = (primera: string) => (
-    <TableHeader><TableRow>
-      <TableHead>{primera}</TableHead>
-      <TableHead className="text-right">Pedidos</TableHead>
-      <TableHead className="text-right">Entregadas</TableHead>
-      <TableHead className="text-right">Tasa</TableHead>
-      <TableHead className="text-right">Devol.</TableHead>
-      <TableHead className="text-right">Gasto</TableHead>
-      <TableHead className="text-right">CPA entr.</TableHead>
-      <TableHead className="text-right">ROAS</TableHead>
-      <TableHead className="text-right">Cobrado</TableHead>
-      <TableHead className="text-right text-amber-600 dark:text-amber-500">Contrib.</TableHead>
-    </TableRow></TableHeader>
+  const headRow = (primera: string) => (
+    <div className={cn(ROW, "border-b pb-2 text-[0.7rem] uppercase tracking-wide text-muted-foreground")}>
+      <span>{primera}</span>
+      <span className="text-right">Entr.</span><span className="text-right">Tasa</span>
+      <span className="text-right">CPA</span><span className="text-right">Gasto</span>
+      <span className="text-right">ROAS</span><span className="text-right text-amber-600 dark:text-amber-500">Contrib.</span>
+    </div>
   );
 
   return (
@@ -176,7 +172,7 @@ export default async function Anuncios({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1.5">
           <h1 className="text-xl font-semibold">Anuncios</h1>
-          <Tip tip="Cada venta cruzada con la campaña y el anuncio de Meta que la trajo (utm_content = ad_id, guardado por el form COD), y con su desenlace real de courier. Mide CALIDAD del cliente: no el pedido que entra, sino el COD que se entrega y se cobra. El gasto sale de la pauta de Meta ya sincronizada. Cohortea por día de VENTA; el gasto se suma sobre el mismo rango." />
+          <Tip tip="Cada venta cruzada con la campaña/anuncio de Meta que la trajo (utm_content = ad_id, del form COD) y con su desenlace real de courier. Mide CALIDAD del cliente: COD entregado y cobrado, no el pedido que entra. Dos capas: Negocio (todo el COD ÷ gasto, siempre real) y Atribuido (lo que se puede abrir por campaña). Cohortea por día de venta; el gasto se suma sobre el mismo rango." />
         </div>
         <span className="text-sm tabular-nums text-muted-foreground">{rangeLabel}</span>
       </div>
@@ -184,241 +180,211 @@ export default async function Anuncios({
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <div className="flex flex-wrap items-center gap-1">
           {presets.map(([label, d, h]) => (
-            <Link key={label} href={hrefWith({ desde: d, hasta: h })}
-                  aria-current={from === d && to === h ? "page" : undefined} className={chip(from === d && to === h)}>{label}</Link>
+            <Link key={label} href={hrefWith({ desde: d, hasta: h })} aria-current={from === d && to === h ? "page" : undefined} className={chip(from === d && to === h)}>{label}</Link>
           ))}
         </div>
         <form method="get" className="inline-flex items-center gap-1.5">
           {orden && <input type="hidden" name="orden" value={orden} />}
-          <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
-            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde" className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
           <span className="text-muted-foreground">→</span>
-          <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
-            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+          <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta" className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
           <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent">Aplicar</button>
         </form>
       </div>
 
-      {!atribuidas.length ? (
-        <Card><CardContent className="pt-5 text-sm text-muted-foreground">Sin ventas atribuidas a Meta en el rango elegido.</CardContent></Card>
+      {/* banners de salud: primero atribución (rompe el desglose), después maduración (sube solo) */}
+      {atribRota && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
+          <div className="font-semibold text-destructive">⚠ Atribución incompleta — solo {fmtPct(cobertura)} de los pedidos traen anuncio</div>
+          <p className="mt-1 text-muted-foreground">
+            {bucket.pedidos.toLocaleString("es-AR")} de {bus.pedidos.toLocaleString("es-AR")} pedidos ({fmtMoney(bucket.cod_cobrado)} de COD) entran sin <code className="text-xs">utm_content</code>, así que el desglose por campaña/anuncio de abajo NO los ve. Suele pasar cuando el form/landing COD deja de estampar la campaña en el pedido — hay que arreglarlo upstream. <b className="text-foreground">El ROAS de negocio del KPI sigue siendo real</b> (usa todo el COD); el ROAS por-anuncio, no — está calculado sobre un pedazo chico.
+          </p>
+        </div>
+      )}
+      {!maduro && bus.despachadas > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          <span className="font-semibold text-amber-700 dark:text-amber-500">⏳ Rango en maduración</span>
+          <span className="ml-1 text-muted-foreground">
+            {fmtPct(enCalleRatio)} de las guías todavía en la calle. Tasa y ROAS van a <b className="text-foreground">subir</b> — los números finales se conocen en ~21 días. Proyección de negocio a madurez: ROAS ≈ <b className="text-foreground">{fmtRatio(projROAS)}</b> (conservador).
+          </span>
+        </div>
+      )}
+
+      {!rows.length ? (
+        <Card><CardContent className="pt-5 text-sm text-muted-foreground">Sin ventas en el rango elegido.</CardContent></Card>
       ) : (
       <>
-      {/* 0 · KPIs globales de lo atribuido */}
+      {/* KPIs en dos capas: negocio (real) vs atribuido (desglosable) */}
       <Card>
-        <CardContent className="space-y-3 pt-5">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-              Total atribuido a Meta
-              <Tip tip="Todo sobre los pedidos que cruzan con un anuncio conocido en la pauta (utm_content = ad_id). El resto — orgánico, WhatsApp, directo, o ads viejos fuera del histórico de pauta — queda en el cubo 'sin atribución' más abajo. El gasto, el CPA y el ROAS solo tienen sentido sobre lo atribuido." />
-            </span>
-            <span className="text-xs tabular-nums text-muted-foreground">
-              cobertura {fmtPct(cobertura)} · {glob.pedidos.toLocaleString("es-AR")} de {total.pedidos.toLocaleString("es-AR")} pedidos
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {([
-              { label: "Entregadas", value: glob.entregadas.toLocaleString("es-AR"), sub: `de ${glob.despachadas.toLocaleString("es-AR")} despachadas` },
-              { label: "Tasa de entrega", value: fmtPct(glob.tasaMad), sub: `bruta ${fmtPct(glob.tasa)} · ${glob.enCalle.toLocaleString("es-AR")} en la calle`, cls: tasaColor(glob.tasaMad) },
-              { label: "Gasto Meta", value: fmtMoney(glob.spend), sub: `CPA entregada ${fmtMoney(glob.cpa)}` },
-              { label: "Cobrado (COD)", value: fmtMoney(glob.cod_cobrado), sub: `ticket ${fmtMoney(glob.ticket)}` },
-              { label: "ROAS real", value: fmtRatio(glob.roas), sub: "cobrado ÷ gasto", cls: glob.roas >= 1 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive" },
-              { label: "Contribución", value: fmtMoney(glob.contrib), sub: "cobrado − flete − ads", cls: pnlColor(glob.contrib) },
-              { label: "Devoluciones", value: fmtPct(glob.devRate), sub: `${glob.devueltas.toLocaleString("es-AR")} guías` },
-              { label: "Flete pagado", value: fmtMoney(glob.flete), sub: "sobre toda despachada" },
-            ] as { label: string; value: string; sub: string; cls?: string }[]).map((k) => (
-              <div key={k.label} className="sube rounded-lg bg-muted/40 p-3">
-                <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{k.label}</div>
-                <div className={cn("text-lg font-semibold tabular-nums", k.cls ?? "text-foreground")}>{k.value}</div>
-                <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">{k.sub}</div>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            La tasa de entrega madura en ~21 días: en rangos recientes hay muchas guías en la calle todavía sin resolver, así que la
-            entrega y el ROAS reales van a MEJORAR al madurar. La columna Tasa usa entregadas ÷ resueltas (no ÷ despachadas)
-            justamente para no castigar a las cohortes nuevas. Contribución no descuenta costo de producto ni comisiones — es margen logístico neto de ads.
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* 1 · dónde va el gasto vs de dónde salen las entregadas */}
-      <Card>
-        <CardContent className="space-y-3 pt-5">
-          <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-            Gasto vs entregadas por campaña
-            <Tip tip="Izquierda: cómo se reparte la pauta. Derecha: de qué campañas salen los clientes que efectivamente reciben y pagan. Si una campaña pesa mucho más en gasto que en entregadas, está trayendo volumen de baja calidad — plata que se va en pedidos que vuelven." />
-          </span>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <div className="text-center text-xs font-medium text-muted-foreground">Gasto</div>
-              <Donut slices={gastoSlices} centro={fmtMoney(glob.spend)} subcentro="pauta" />
+        <CardContent className="space-y-4 pt-5">
+          <div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                Negocio · todo el COD del rango
+                <Tip tip="Todos los pedidos, tengan o no ad_id. El ROAS de negocio (COD total ÷ gasto total de Meta) es el número real: no depende de que la atribución funcione. Es el que hay que mirar para saber si Meta rinde." />
+              </span>
+              <span className="text-xs tabular-nums text-muted-foreground">{bus.pedidos.toLocaleString("es-AR")} pedidos</span>
             </div>
-            <div className="space-y-2">
-              <div className="text-center text-xs font-medium text-muted-foreground">Entregadas</div>
-              <Donut slices={entSlices} money={false} centro={glob.entregadas.toLocaleString("es-AR")} subcentro="clientes" />
+            <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                { label: "ROAS negocio", value: fmtRatio(bus.roas), sub: maduro ? "cobrado ÷ gasto" : `proy. ≈ ${fmtRatio(projROAS)}`, cls: bus.roas >= 1 ? "text-emerald-600 dark:text-emerald-400" : maduro ? "text-destructive" : "text-amber-600 dark:text-amber-500" },
+                { label: "Cobrado (COD)", value: fmtMoney(bus.cod_cobrado), sub: `ticket ${fmtMoney(bus.ticket)}` },
+                { label: "Gasto Meta", value: fmtMoney(bus.spend), sub: "toda la pauta del rango" },
+                { label: "Entregadas", value: bus.entregadas.toLocaleString("es-AR"), sub: `tasa ${fmtPct(bus.tasaMad)} · ${bus.enCalle.toLocaleString("es-AR")} en calle` },
+              ].map((k) => (
+                <div key={k.label} className="sube rounded-lg bg-muted/40 p-3">
+                  <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{k.label}</div>
+                  <div className={cn("text-lg font-semibold tabular-nums", k.cls ?? "text-foreground")}>{k.value}</div>
+                  <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">{k.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="border-t pt-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                Atribuido · lo que se abre por anuncio
+                <Tip tip="El subconjunto con ad_id, único que se puede desglosar por campaña/anuncio abajo. Si la cobertura es baja, este pedazo no representa al negocio — miralo con pinzas y arreglá la atribución." />
+              </span>
+              <span className={cn("text-xs tabular-nums", atribRota ? "text-destructive" : "text-muted-foreground")}>cobertura {fmtPct(cobertura)}</span>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                { label: "ROAS atribuido", value: glob.spend ? fmtRatio(glob.roas) : "—", cls: !maduro ? "text-amber-600 dark:text-amber-500" : glob.roas >= 1 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive" },
+                { label: "Entregadas", value: glob.entregadas.toLocaleString("es-AR"), sub: `de ${glob.pedidos.toLocaleString("es-AR")} pedidos` },
+                { label: "CPA entregada", value: glob.entregadas ? fmtMoney(glob.cpa) : "—", sub: "gasto ÷ entregada" },
+                { label: "Contribución", value: fmtMoney(glob.contrib), sub: "cobrado − flete − ads", cls: pnlColor(glob.contrib) },
+              ].map((k) => (
+                <div key={k.label} className="sube rounded-lg bg-muted/40 p-3">
+                  <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{k.label}</div>
+                  <div className={cn("text-lg font-semibold tabular-nums", (k as { cls?: string }).cls ?? "text-foreground")}>{k.value}</div>
+                  <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">{(k as { sub?: string }).sub ?? " "}</div>
+                </div>
+              ))}
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* 2 · ranking de campañas — el titular */}
+      {/* headline: dónde gano, dónde quemo */}
+      {(ganador || quema) && (
+        <Card>
+          <CardContent className="space-y-1.5 pt-5 text-base">
+            {ganador && (
+              <p className="font-medium">
+                <span className="text-emerald-600 dark:text-emerald-400">▲ {ganador.k}</span> trae los que pagan
+                <span className="text-muted-foreground"> — {ganador.entregadas.toLocaleString("es-AR")} entregadas · ROAS {fmtRatio(ganador.roas)} · CPA {fmtMoney(ganador.cpa)} · {fmtMoney(ganador.contrib)}</span>
+              </p>
+            )}
+            {quema && quema.k !== ganador?.k && (
+              <p className="font-medium">
+                <span className="text-destructive">▼ {quema.k}</span> está quemando
+                <span className="text-muted-foreground"> — {fmtMoney(quema.spend)} gastados · ROAS {fmtRatio(quema.roas)} · tasa {fmtPct(quema.tasaMad)} · {fmtMoney(quema.contrib)}</span>
+              </p>
+            )}
+            {atribRota && <p className="text-xs text-muted-foreground">Ojo: con {fmtPct(cobertura)} de cobertura, este veredicto se apoya solo en los pedidos atribuidos del rango.</p>}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* PRODUCTO → campañas (click para expandir). Ordena por contrib: ganan arriba, queman abajo. */}
+      {productos.length > 0 && (
       <Card>
         <CardContent className="space-y-3 pt-5">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-              Campañas
-              <Tip tip="La pregunta del panel: qué campaña trae más clientes de calidad. Tasa = entregadas ÷ resueltas. CPA entr. = gasto ÷ entregadas (el CPA que importa: por cliente que paga, no por pedido que entra). ROAS = cobrado ÷ gasto. Contrib. = cobrado − flete − ads. Volumen no es calidad: mirá tasa y CPA entregada juntas." />
+              Por producto
+              <Tip tip="Clic en un producto para ver sus campañas. Ordenado por contribución: lo que gana arriba, lo que quema (rojo) abajo. Tasa = entregadas ÷ resueltas (robusta a maduración). CPA = gasto ÷ entregada. Contrib = cobrado − flete − ads." />
             </span>
             <div className="flex flex-wrap items-center gap-1 text-xs">
-              <span className="text-muted-foreground">ordenar:</span>
+              <span className="text-muted-foreground">campañas por:</span>
               {(Object.keys(ORDENES) as Orden[]).map((o) => (
                 <Link key={o} href={hrefWith({ orden: o })} aria-current={ord === o ? "page" : undefined} className={chip(ord === o)}>{ORDENES[o].label}</Link>
               ))}
             </div>
           </div>
           <div className="overflow-x-auto">
-          <Table>
-            {rankHead("Campaña")}
-            <TableBody>
-              {campañas.map((c) => (
-                <TableRow key={c.k}>
-                  <TableCell className="max-w-[22rem] truncate font-medium" title={c.k}>{c.k}</TableCell>
-                  {metricCells(c)}
-                </TableRow>
+            <div className="min-w-[34rem]">
+              {headRow("Producto")}
+              {productos.map((p) => (
+                <details key={p.k} className="group border-b last:border-0">
+                  <summary className={cn(ROW, "cursor-pointer list-none py-2.5 hover:bg-muted/40 [&::-webkit-details-marker]:hidden")}>
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span className="text-muted-foreground transition-transform group-open:rotate-90">›</span>
+                      {p.k}
+                      <span className="text-xs font-normal text-muted-foreground">{p.campañas.length}</span>
+                    </span>
+                    {cells(p, true)}
+                  </summary>
+                  <div className="pb-2">
+                    {p.campañas.map((c) => {
+                      const cl = campaignLabel(c.k);
+                      return (
+                        <div key={c.k} className={cn(ROW, "py-1.5 pl-5 text-sm")}>
+                          <span className="flex items-center gap-1.5 truncate text-muted-foreground" title={c.k}>
+                            <span className="truncate">{cl.label}</span>
+                            {cl.tipo && <Badge variant="outline" className="shrink-0 px-1 py-0 text-[0.6rem]">{cl.tipo}</Badge>}
+                          </span>
+                          {cells(c)}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
               ))}
-              {bucket.pedidos > 0 && (
-                <TableRow className="text-muted-foreground">
-                  <TableCell className="italic">
-                    (sin atribución)
-                    <Tip tip="Pedidos sin ad_id que cruce con la pauta: orgánico, WhatsApp, directo, o ads viejos/borrados fuera del histórico de ad_spend. No tienen gasto asociado. Su tasa de entrega suele ser más baja que la de tráfico pago maduro." />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">{bucket.pedidos.toLocaleString("es-AR")}</TableCell>
-                  <TableCell className="text-right tabular-nums">{bucket.entregadas.toLocaleString("es-AR")}</TableCell>
-                  <TableCell className={cn("text-right tabular-nums", tasaColor(bucket.tasaMad))}>{fmtPct(bucket.tasaMad)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtPct(bucket.devRate)}</TableCell>
-                  <TableCell className="text-right tabular-nums">—</TableCell>
-                  <TableCell className="text-right tabular-nums">—</TableCell>
-                  <TableCell className="text-right tabular-nums">—</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtMoney(bucket.cod_cobrado)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtMoney(bucket.cod_cobrado - bucket.flete)}</TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+            </div>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* 3 · ranking de anuncios — las gemas escondidas */}
-      <Card>
-        <CardContent className="space-y-3 pt-5">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-              Anuncios
-              <Tip tip="El mismo cruce a nivel creativo. Acá aparecen las gemas: un anuncio puede entregar muy por encima del promedio de su campaña — ese es el creativo que atrae al cliente que paga. Y al revés: el que gasta con tasa baja. Top 40 por el orden elegido arriba." />
-            </span>
-            <span className="text-xs text-muted-foreground">top 40 · orden: {ORDENES[ord].label}</span>
-          </div>
-          <div className="overflow-x-auto">
-          <Table>
-            {rankHead("Anuncio")}
-            <TableBody>
-              {anuncios.map((a) => (
-                <TableRow key={a.k}>
-                  <TableCell className="max-w-[22rem] truncate font-medium" title={`${a.ad_name ?? a.k}  ·  ${a.campaign_name ?? ""}`}>
-                    {a.ad_name ?? a.k}
-                    {a.campaign_name && <span className="block truncate text-xs font-normal text-muted-foreground">{a.campaign_name}</span>}
-                  </TableCell>
-                  {metricCells(a)}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 4 · por conjunto */}
-      {conjuntos.length > 1 && (
-      <Card>
-        <CardContent className="space-y-3 pt-5">
-          <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-            Conjuntos (adsets)
-            <Tip tip="El nivel intermedio: la segmentación/puja. Top 15 por entregadas. Útil para ver si la calidad se juega en el conjunto (audiencia) más que en el creativo." />
-          </span>
-          <div className="overflow-x-auto">
-          <Table>
-            {rankHead("Conjunto")}
-            <TableBody>
-              {conjuntos.map((c) => (
-                <TableRow key={c.k}>
-                  <TableCell className="max-w-[22rem] truncate font-medium" title={c.k}>{c.k}</TableCell>
-                  {metricCells(c)}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          </div>
+          {bucket.pedidos > 0 && (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium">(sin atribución):</span> {bucket.pedidos.toLocaleString("es-AR")} pedidos · {bucket.entregadas.toLocaleString("es-AR")} entregadas · {fmtMoney(bucket.cod_cobrado)} cobrado — no se pueden asignar a ninguna campaña (pedidos sin ad_id).
+            </p>
+          )}
         </CardContent>
       </Card>
       )}
 
-      {/* 5 · por producto */}
+      {/* anuncios: mejores y peores por el orden elegido */}
+      {adRows.length > 1 && (
       <Card>
         <CardContent className="space-y-3 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-            Por producto
-            <Tip tip="El mismo cruce sumado por producto (el producto se hereda del anuncio, vía match del nombre de la campaña). Dice qué producto atrae mejores clientes desde Meta, y con qué CPA entregada." />
+            Anuncios · mejores y peores
+            <Tip tip="El cruce a nivel creativo, top y bottom por el orden elegido arriba. Acá aparecen las gemas (un ad que entrega muy por encima de su campaña) y las fugas (gasta con tasa baja). El nombre corto sale de la convención; el crudo de Meta está en el hover." />
           </span>
           <div className="overflow-x-auto">
-          <Table>
-            {rankHead("Producto")}
-            <TableBody>
-              {productos.map((p) => (
-                <TableRow key={p.k}>
-                  <TableCell className="font-medium">{p.k}</TableCell>
-                  {metricCells(p)}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 6 · atribuido vs sin atribución */}
-      {bucket.pedidos > 0 && (
-      <Card>
-        <CardContent className="space-y-3 pt-5">
-          <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-            Tráfico pago (Meta) vs sin atribución
-            <Tip tip="Compara la calidad del cliente que llega por pauta atribuida contra el resto (orgánico, WhatsApp, directo, ads sin match). Si el pago entrega bastante mejor, la inversión en Meta está trayendo clientes más firmes que el promedio; si no, hay que mirar qué campañas arrastran." />
-          </span>
-          <Table>
-            <TableHeader><TableRow>
-              <TableHead>Origen</TableHead>
-              <TableHead className="text-right">Pedidos</TableHead>
-              <TableHead className="text-right">Entregadas</TableHead>
-              <TableHead className="text-right">Tasa</TableHead>
-              <TableHead className="text-right">Devol.</TableHead>
-              <TableHead className="text-right">Cobrado</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {[["Meta (atribuido)", glob], ["Sin atribución", bucket]].map(([label, m]) => {
-                const g = m as Metric;
+            <div className="min-w-[34rem]">
+              {headRow("Anuncio")}
+              {mejores.map((a) => {
+                const al = adLabel(a.name ?? a.k);
                 return (
-                  <TableRow key={label as string}>
-                    <TableCell className="font-medium">{label as string}</TableCell>
-                    <TableCell className="text-right tabular-nums">{g.pedidos.toLocaleString("es-AR")}</TableCell>
-                    <TableCell className="text-right tabular-nums">{g.entregadas.toLocaleString("es-AR")}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", tasaColor(g.tasaMad))}>{fmtPct(g.tasaMad)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(g.devRate)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(g.cod_cobrado)}</TableCell>
-                  </TableRow>
+                  <div key={a.k} className={cn(ROW, "border-b py-2 last:border-0")}>
+                    <span className="flex min-w-0 items-center gap-1.5" title={`${a.name ?? a.k}  ·  ${a.campaign ?? ""}`}>
+                      <span className="truncate text-sm font-medium">{al.label}</span>
+                      {al.formato && <Badge variant="outline" className="shrink-0 px-1 py-0 text-[0.6rem]">{al.formato}</Badge>}
+                    </span>
+                    {cells(a)}
+                  </div>
                 );
               })}
-            </TableBody>
-          </Table>
+              {peores.length > 0 && (
+                <>
+                  <div className="pt-3 text-[0.7rem] uppercase tracking-wide text-destructive/80">Peores (gastando)</div>
+                  {peores.map((a) => {
+                    const al = adLabel(a.name ?? a.k);
+                    return (
+                      <div key={a.k} className={cn(ROW, "border-b py-2 last:border-0")}>
+                        <span className="flex min-w-0 items-center gap-1.5" title={`${a.name ?? a.k}  ·  ${a.campaign ?? ""}`}>
+                          <span className="truncate text-sm font-medium">{al.label}</span>
+                          {al.formato && <Badge variant="outline" className="shrink-0 px-1 py-0 text-[0.6rem]">{al.formato}</Badge>}
+                        </span>
+                        {cells(a)}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </div>
         </CardContent>
       </Card>
       )}
