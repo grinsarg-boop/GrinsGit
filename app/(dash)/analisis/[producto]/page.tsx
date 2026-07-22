@@ -6,6 +6,7 @@ import {
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Donut, type Slice } from "@/components/donut";
+import { PackCourierBars } from "@/components/pack-courier-bars";
 import { Delta } from "@/components/delta";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -55,12 +56,18 @@ export default async function AnalisisProducto({ params, searchParams }: {
   const prevTo = new Date(Date.parse(from) - 86400000).toISOString().slice(0, 10);
   const prevFrom = new Date(Date.parse(prevTo) - (largoDias - 1) * 86400000).toISOString().slice(0, 10);
 
-  const [{ data: pnlRaw }, { data: pnlPrevRaw }, { data: packRaw }, { data: cpaRef }, { data: prodsRaw }] = await Promise.all([
+  const [{ data: pnlRaw }, { data: pnlPrevRaw }, { data: packRaw }, { data: cpaRef }, { data: prodsRaw },
+         { data: packUrb }, { data: packFix }, { data: pnlAllRaw }] = await Promise.all([
     db.rpc("analisis_pnl", { p_from: from, p_to: to, p_courier: courierParam }),
     db.rpc("analisis_pnl", { p_from: prevFrom, p_to: prevTo, p_courier: courierParam }),
     db.rpc("analisis_packs", { p_from: from, p_to: to, p_courier: courierParam, p_producto: id, p_min: 1 }),
     db.from("settings").select("value").eq("key", "cpa_referencia").maybeSingle(),
     db.from("products").select("id, name").order("id"),
+    // Contraste pack × courier: siempre los dos COD, sin importar el filtro de arriba (su punto es cruzar couriers).
+    db.rpc("analisis_packs", { p_from: from, p_to: to, p_courier: "urbano", p_producto: id, p_min: 1 }),
+    db.rpc("analisis_packs", { p_from: from, p_to: to, p_courier: "fixy", p_producto: id, p_min: 1 }),
+    // CPA/guía del producto sin filtro de courier (el ads va por producto×día, mismo por celda).
+    courierParam ? db.rpc("analisis_pnl", { p_from: from, p_to: to, p_courier: null }) : Promise.resolve({ data: null }),
   ]);
   const prods = (prodsRaw ?? []) as { id: number; name: string }[];
   const prod = prods.find((p) => p.id === id);
@@ -103,6 +110,21 @@ export default async function AnalisisProducto({ params, searchParams }: {
   const cpaGuia = despCod ? sumOf(rowsCod, "ads") / despCod : 0;
   // la barra escala sobre el FINAL ESTIMADO (el titular, como en todo el dashboard)
   const maxPackM = Math.max(...packs.map((p) => Math.abs(N(p.margen_neto_est) - cpaGuia * p.guias)), 1);
+
+  // Contraste pack × courier (Urbano vs Fixy). El ads/guía es el del PRODUCTO sin filtro (mismo por celda):
+  // cuando hay filtro de courier arriba lo saco de pnlAllRaw; si no, pnlRaw ya es sin-filtro. Excluye ML,
+  // igual que la tabla de packs. total = neto estimado del bucket − cpa×guías; est/guía = total ÷ guías.
+  const allRowsProd = ((courierParam ? pnlAllRaw : pnlRaw) ?? []) as PnlRow[];
+  const codProd = allRowsProd.filter((r) => r.product_id === id && r.courier !== "ml");
+  const despCodProd = sumOf(codProd, "despachadas");
+  const cpaGuiaProd = despCodProd ? sumOf(codProd, "ads") / despCodProd : 0;
+  const packCells = (["urbano", "fixy"] as const).flatMap((courier) =>
+    (((courier === "urbano" ? packUrb : packFix) ?? []) as PackRow[]).map((p) => {
+      const total = N(p.margen_neto_est) - cpaGuiaProd * p.guias;
+      return { pack: p.pack, courier, guias: p.guias, entrega: p.guias ? p.entregadas / p.guias : 0,
+               total, estGuia: p.guias ? total / p.guias : 0 };
+    }),
+  );
 
   // querystring heredable: subpáginas hermanas, presets y volver a /analisis con el mismo estado
   const qs = (o: { courier?: string; desde?: string; hasta?: string } = {}) => {
@@ -308,6 +330,25 @@ export default async function AnalisisProducto({ params, searchParams }: {
           )}
         </CardContent>
       </Card>
+
+      {packCells.length > 0 && (
+      <Card>
+        <CardContent className="space-y-3 pt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+              Profit por pack y courier
+              <Tip tip="El mismo profit del bloque de arriba, pero abierto por courier COD (Urbano vs Fixy) y expresado POR GUÍA — así se compara peral con peral entre packs y couriers, sin que el volumen lo tape. Altura = profit estimado por guía (neto estimado del bucket − CPA del producto, ÷ guías); verde/rojo por signo. El total, las guías y la entrega salen al pasar el mouse. Barras tenues = menos de 40 guías (est/guía ruidoso). ML y Correo no aparecen: no llevan guía COD por pack." />
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">est/guía · Urbano vs Fixy</span>
+          </div>
+          <PackCourierBars data={packCells} />
+          <p className="text-xs text-muted-foreground">
+            Cada barra es un <b>pack en un courier</b>: comparás el mismo pack entre Urbano y Fixy, y los packs entre sí, por su rentabilidad
+            unitaria (independiente del filtro de courier de arriba). Para la plata total de cada pack, mirá la tabla anterior.
+          </p>
+        </CardContent>
+      </Card>
+      )}
 
       {rows.length > 0 && (
       <Card>
