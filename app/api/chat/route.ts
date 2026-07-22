@@ -5,8 +5,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { chatTools } from "@/lib/chat-tools";
 import { buildSystemPrompt } from "@/lib/chat-prompt";
 
-// El tool-loop puede encadenar varias consultas → puede pasar los 10s default de Vercel.
-export const maxDuration = 60;
+// El tool-loop encadena varias consultas → sube el techo de Vercel (Pro; en Hobby capa a 60).
+export const maxDuration = 300;
 
 // El middleware saltea /api → validamos la sesión acá (misma regla que middleware.ts:
 // user logueado + whitelist ALLOWED_EMAILS). Devuelve el email si pasa, null si no.
@@ -124,11 +124,12 @@ export async function POST(req: NextRequest) {
   let reply: string;
   try {
     const client = new Anthropic();
+    // Sonnet 5 por default: interactivo y con techo de timeout → prima la latencia (además es el
+    // modelo del bot de WhatsApp y más barato). Subir a claude-opus-4-8 vía CHAT_MODEL si se quiere
+    // más profundidad. Sin thinking adaptativo: agrega segundos y las tools ya aportan el dato duro.
     const final = await client.beta.messages.toolRunner({
-      model: process.env.CHAT_MODEL || "claude-opus-4-8",
-      max_tokens: 16000,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "medium" },
+      model: process.env.CHAT_MODEL || "claude-sonnet-5",
+      max_tokens: 8000,
       system,
       tools: chatTools,
       messages,
