@@ -17,8 +17,9 @@ export function PackCourierBars({ data }: { data: PC[] }) {
   const [hi, setHi] = useState<number | null>(null);
   if (!data.length) return <div className="py-8 text-center text-sm text-muted-foreground">Sin guías COD para graficar</div>;
 
-  // orden: por pack, y dentro del pack urbano antes que fixy
-  const rows = [...data].sort((a, b) => a.pack - b.pack || a.courier.localeCompare(b.courier));
+  // orden: por pack, y dentro del pack Urbano antes que Fixy (coincide con el rótulo "Urbano vs Fixy")
+  const ORD: Record<string, number> = { urbano: 0, fixy: 1 };
+  const rows = [...data].sort((a, b) => a.pack - b.pack || (ORD[a.courier] ?? 9) - (ORD[b.courier] ?? 9));
   const packs = [...new Set(rows.map((r) => r.pack))];
 
   const H = 260, padT = 16, padB = 40;
