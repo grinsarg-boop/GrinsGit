@@ -130,10 +130,12 @@ export async function POST(req: NextRequest) {
     const final = await client.beta.messages.toolRunner({
       model: process.env.CHAT_MODEL || "claude-sonnet-5",
       max_tokens: 8000,
-      system,
+      // cache_control: el system (glosario + catálogo + baseline) es estable dentro del loop y entre
+      // turnos → se cachea y abarata cada iteración (~10% del costo en cache_read). Latencia neutra.
+      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
       tools: chatTools,
       messages,
-      max_iterations: 6,
+      max_iterations: 5,
     }).done();
     reply = final.content
       .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
