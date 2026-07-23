@@ -78,6 +78,7 @@ try {
                    'supabase/migrations/051_anuncios.sql',
                    'supabase/migrations/052_fixy_codigos_faltantes.sql',
                    'supabase/migrations/053_chat.sql',
+                   'supabase/migrations/054_ad_review.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
@@ -93,7 +94,8 @@ try {
                    'supabase/tests/mp_khalil_check.sql',
                    'supabase/tests/packs_pmin_check.sql',
                    'supabase/tests/anuncios_check.sql',
-                   'supabase/tests/chat_check.sql']) {
+                   'supabase/tests/chat_check.sql',
+                   'supabase/tests/ad_review_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');

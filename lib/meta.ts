@@ -62,3 +62,52 @@ export async function fetchMetaInsights(): Promise<AdSpendRow[]> {
   }
   return rows;
 }
+
+export type AdReviewIssue = {
+  ad_id: string;
+  ad_name: string;
+  adset_name: string;
+  campaign_name: string;
+  effective_status: string;
+};
+
+// Ads con problema de revisión/entrega (DISAPPROVED / WITH_ISSUES) de UNA cuenta. Barato: filtra
+// server-side por effective_status, sólo trae los rotos. accountId con o sin prefijo "act_".
+export async function fetchAdReviewIssues(accountId: string): Promise<AdReviewIssue[]> {
+  const v = process.env.META_API_VERSION ?? "v25.0";
+  const acct = accountId.startsWith("act_") ? accountId : `act_${accountId}`;
+
+  let url: string | undefined =
+    `https://graph.facebook.com/${v}/${acct}/ads?` +
+    new URLSearchParams({
+      fields: "id,name,adset{name},campaign{name},effective_status",
+      effective_status: JSON.stringify(["DISAPPROVED", "WITH_ISSUES"]),
+      limit: "200",
+      access_token: process.env.META_ACCESS_TOKEN!,
+    });
+
+  const out: AdReviewIssue[] = [];
+  while (url) {
+    const res: Response = await fetch(url);
+    const body: {
+      data?: {
+        id: string; name?: string; adset?: { name?: string };
+        campaign?: { name?: string }; effective_status: string;
+      }[];
+      paging?: { next?: string };
+      error?: unknown;
+    } = await res.json();
+    if (!res.ok) throw new Error(`Meta API ${res.status}: ${JSON.stringify(body.error ?? body)}`);
+    for (const a of body.data ?? []) {
+      out.push({
+        ad_id: a.id,
+        ad_name: a.name ?? "",
+        adset_name: a.adset?.name ?? "",
+        campaign_name: a.campaign?.name ?? "",
+        effective_status: a.effective_status,
+      });
+    }
+    url = body.paging?.next;
+  }
+  return out;
+}
