@@ -15,8 +15,16 @@ export async function fetchMemoria(): Promise<string> {
     });
     if (!r.ok) return "";
     const rows = (await r.json()) as { texto?: string }[];
-    return String(rows?.[0]?.texto ?? "").trim();
+    return sinDatosPersonales(String(rows?.[0]?.texto ?? "").trim());
   } catch {
     return "";
   }
+}
+
+// El panel lo puede ver Santi → saco el bloque personal de Pancho ("QUIÉN ES PANCHO: nombre,
+// socios, novia, viaje…") hasta la primera línea en blanco; el resto (negocio) queda intacto.
+// Verificado: todos los términos personales viven solo en ese bloque.
+// ponytail: si el contexto suma info personal en OTRO párrafo, extender este filtro.
+export function sinDatosPersonales(texto: string): string {
+  return texto.replace(/QUI[ÉE]N ES PANCHO:[\s\S]*?(\n\s*\n|$)/i, "").trimStart();
 }
