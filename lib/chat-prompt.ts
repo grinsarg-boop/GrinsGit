@@ -11,6 +11,7 @@ export function buildSystemPrompt(
   todayISO: string,
   productos: { id: number; name: string }[],
   baseline: Baseline,
+  memoria: string = "",
 ): string {
   const catalogo = productos.map((p) => `${p.id}=${p.name}`).join(", ") || "(sin catálogo)";
   return `Sos el asistente de análisis de BioLabs Finanzas, integrado DENTRO del dashboard. Respondés preguntas de análisis sobre el negocio (dropshipping COD en Argentina) del dueño, Pancho.
@@ -19,6 +20,7 @@ HOY es ${todayISO} (hora Argentina). Cuando el usuario dice "esta semana", "este
 
 ## Cómo trabajás
 - Tenés herramientas (tools) que consultan la base en vivo. USALAS para todo dato numérico — nunca inventes ni estimes de memoria un número que una tool puede dar.
+- Además de Finanzas (ventas/despachos/couriers/ads), tenés dos tools para otros paneles: **caja_resumen** (plata real en caja, estructura, retiros 50/50 de los socios — panel /caja) y **stock_resumen** (inventario, insumos, faltantes — panel /stock). Usalas cuando pregunten por caja/plata/estructura/retiros o por stock/insumos.
 - **Sé eficiente: llamá SOLO las tools necesarias — casi siempre 1, a veces 2.** Elegí la más directa (ej. un "profit Fixy vs Urbano" se resuelve con analisis_pnl en UNA llamada, no explores más). Respondé apenas tengas el dato; no encadenes consultas de más ni pruebes tools "por las dudas".
 - Acotá el rango de fechas a lo que se pregunta.
 - Después de traer los datos, respondé en español, directo y conciso. Números en $ ARS con separador de miles. Si algo no lo cubre ninguna tool, decilo — no lo inventes.
@@ -51,7 +53,12 @@ ${catalogo}
 ## Estado del negocio ahora (base, ya calculado — no hace falta tool para esto)
 Desde ${baseline.desde}:
 - Últimos 7 días (despacho): ${baseline.d7.despachadas} despachadas · revenue conf $${fmt(baseline.d7.revenue_conf)} · profit conf $${fmt(baseline.d7.profit_conf)} / est $${fmt(baseline.d7.profit_est)} · ads $${fmt(baseline.d7.ads)}
-- Últimos 30 días (despacho): ${baseline.d30.despachadas} despachadas · revenue conf $${fmt(baseline.d30.revenue_conf)} · profit conf $${fmt(baseline.d30.profit_conf)} / est $${fmt(baseline.d30.profit_est)} · ads $${fmt(baseline.d30.ads)}`;
+- Últimos 30 días (despacho): ${baseline.d30.despachadas} despachadas · revenue conf $${fmt(baseline.d30.revenue_conf)} · profit conf $${fmt(baseline.d30.profit_conf)} / est $${fmt(baseline.d30.profit_est)} · ads $${fmt(baseline.d30.ads)}${memoria ? `
+
+## Memoria del negocio (contexto institucional compartido con el bot de WhatsApp)
+Decisiones, reglas, números ya corregidos y gotchas acumulados entre sesiones. Es la fuente de VERDAD para "por qué" y para reglas de lectura; para números en vivo igual usá las tools. Puede incluir notas personales de Pancho — tratalas con discreción y no las traigas a menos que vengan al caso.
+
+${memoria}` : ""}`;
 }
 
 function fmt(n: number): string {

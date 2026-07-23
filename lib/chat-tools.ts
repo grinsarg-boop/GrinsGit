@@ -1,5 +1,7 @@
 import { betaTool } from "@anthropic-ai/sdk/helpers/beta/json-schema";
 import { supabaseAdmin } from "@/lib/supabase";
+import { fetchCashflow, porMes, saldos, balance5050 } from "@/lib/cashflow";
+import { fetchStock, inventarioSafe } from "@/lib/stock";
 
 // Herramientas del asistente = las RPCs de lectura de Supabase, tal cual.
 // El modelo elige la función y completa los args (p_from/p_to/p_courier/p_producto);
@@ -133,5 +135,48 @@ export const chatTools = [
   rpcTool({
     rpc: "ml_a_liquidar",
     description: "Monto de MercadoLibre pendiente de liquidar. Sin args.",
+  }),
+  rpcTool({
+    rpc: "urbano_sin_guia",
+    description: "Envíos de Urbano despachados que TODAVÍA no tienen número de guía (para reclamar/descubrir). p_since = desde cuándo mirar.",
+    properties: { p_since: DATE, p_limit: { type: "integer", description: "máx filas (default 150)" } },
+    required: ["p_since"],
+  }),
+  // Caja y Stock viven en OTRAS bases (Cashflow / Stock); no son RPCs → run() propio que reusa
+  // las libs de los paneles /caja y /stock. Sin args (devuelven el resumen completo).
+  betaTool({
+    name: "caja_resumen",
+    description: "Estado de la CAJA real (app Cashflow, panel /caja): saldos por caja, por mes (ingresos, estructura, ajustes, retiros, ya_modelado, por categoría) y retiros 50/50 de los socios (Fran/Santi). Usá para plata en mano, estructura, cuánto retiró cada socio, neto real.",
+    inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+    run: async () => {
+      try {
+        const { movs, cajas, cats } = await fetchCashflow();
+        return JSON.stringify({
+          saldos: saldos(movs, cajas).map((s) => ({ caja: s.caja.nombre, saldo: s.saldo })),
+          por_mes: porMes(movs, cats),
+          retiros_socios: balance5050(movs),
+        });
+      } catch (e) {
+        return `Error leyendo caja: ${(e as Error).message}`;
+      }
+    },
+  }),
+  betaTool({
+    name: "stock_resumen",
+    description: "Estado del STOCK/inventario (panel /stock): valor total del inventario, stock por material (con mínimo y alerta de bajo stock) y stock por producto terminado. Usá para insumos, faltantes, valor de inventario.",
+    inputSchema: { type: "object", properties: {}, required: [], additionalProperties: false },
+    run: async () => {
+      try {
+        const { materiales, productos } = await fetchStock();
+        const valor = await inventarioSafe();
+        return JSON.stringify({
+          valor_inventario: valor,
+          materiales: materiales.map((m) => ({ nombre: m.nombre, stock: m.stock, minimo: m.stock_minimo, bajo: Number(m.stock) <= Number(m.stock_minimo) })),
+          productos: productos.map((p) => ({ nombre: p.nombre, stock: p.stock })),
+        });
+      } catch (e) {
+        return `Error leyendo stock: ${(e as Error).message}`;
+      }
+    },
   }),
 ];

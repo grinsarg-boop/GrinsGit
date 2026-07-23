@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabaseAdmin } from "@/lib/supabase";
 import { chatTools } from "@/lib/chat-tools";
 import { buildSystemPrompt } from "@/lib/chat-prompt";
+import { fetchMemoria } from "@/lib/memoria";
 
 // El tool-loop encadena varias consultas → sube el techo de Vercel (Pro; en Hobby capa a 60).
 export const maxDuration = 300;
@@ -110,11 +111,12 @@ export async function POST(req: NextRequest) {
 
   // Contexto en vivo para el system prompt.
   const from30 = isoDaysAgo(30);
-  const [{ data: prods }, base] = await Promise.all([
+  const [{ data: prods }, base, memoria] = await Promise.all([
     sb.from("products").select("id,name").eq("active", true).order("name"),
     baseline(from30),
+    fetchMemoria(),
   ]);
-  const system = buildSystemPrompt(artTodayISO(), (prods ?? []) as { id: number; name: string }[], base);
+  const system = buildSystemPrompt(artTodayISO(), (prods ?? []) as { id: number; name: string }[], base, memoria);
 
   const messages = [
     ...history.map((m) => ({ role: m.role, content: m.content })),
