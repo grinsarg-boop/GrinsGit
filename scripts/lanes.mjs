@@ -19,9 +19,14 @@ const dias = Number(process.argv[2] ?? 3);
 const hasta = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);        // ayer
 const desde = new Date(Date.now() - dias * 86400_000).toISOString().slice(0, 10);
 
-// Margen bruto por orden GENERADA, antes de ads (ventana madura 25/05→25/06, sales_by_product).
-// Difiere por courier porque la tasa de entrega difiere: fixy 67,4% vs urbano 57,6%.
-const MARGEN = { fixy: 19811, urbano: 12797, correo: 12797 };
+// Margen bruto por orden GENERADA, antes de ads. Difiere por courier porque difiere la tasa de
+// entrega (fixy 67,4% vs urbano 57,6%), y las CUOTAS son un tercer caso: en el P&L figuran como
+// courier 'correo' (migración 012 — el tag cuotas_3 no genera guía), son prepago, así que no
+// arrastran riesgo de cobro pero pagan fee de MP. OJO: `orders.courier` NUNCA dice 'correo',
+// guarda el transportista físico; las cuotas se detectan por el tag.
+// fixy/urbano: ventana madura 25/05→25/06. cuotas: 15/06→15/07, la única donde existen (arrancaron
+// el 06/07) — menos madura, revisar cuando haya un mes cerrado.
+const MARGEN = { fixy: 19811, urbano: 12797, cuotas: 15802 };
 const KILL_CPA = 6500;
 
 // RESTO se testea PRIMERO: el lane resto se llama "...-RESTO-AR-sinFixy-...", que también
@@ -52,7 +57,7 @@ for (const acct of cuentas) {
 const client = new pg.Client({ connectionString: env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 await client.connect();
 const { rows } = await client.query(
-  `select o.zip, o.courier, s.id is not null as despachada,
+  `select o.zip, o.courier, o.tags ilike '%cuotas%' as cuotas, s.id is not null as despachada,
           s.status_canonical = 'entregado' as entregada,
           s.status_canonical in ('devuelto', 'rechazado') as devuelta
    from orders o
@@ -68,7 +73,8 @@ for (const o of rows) {
   const l = laneDeCP(o.zip);
   ordenes[l] ??= { n: 0, margen: 0 };
   ordenes[l].n++;
-  ordenes[l].margen += MARGEN[o.courier] ?? MARGEN.urbano;   // el courier real manda sobre el CP
+  // Cuotas manda sobre el courier: es prepago y su margen no depende de quién entregue.
+  ordenes[l].margen += o.cuotas ? MARGEN.cuotas : (MARGEN[o.courier] ?? MARGEN.urbano);
 }
 
 const ars = (n) => '$' + Math.round(n).toLocaleString('es-AR');
@@ -105,7 +111,7 @@ console.log(`\nCorte de la kill-rule: CPA > ${ars(KILL_CPA)} por lane a los 4 d�
 // urbano es la fuga que cuesta ~$4.100 de neto por guía.
 const porCourier = {};
 for (const o of rows) {
-  const k = `${laneDeCP(o.zip)}|${o.courier ?? 'sin courier'}`;
+  const k = `${laneDeCP(o.zip)}|${o.cuotas ? 'cuotas' : (o.courier ?? 'sin courier')}`;
   porCourier[k] ??= { n: 0, desp: 0, ent: 0, dev: 0 };
   porCourier[k].n++;
   if (o.despachada) porCourier[k].desp++;
