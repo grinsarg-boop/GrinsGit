@@ -42,8 +42,9 @@ for (const acct of cuentas) {
   if (body.error) { console.error(`⚠ ${acct}: ${body.error.message}`); continue; }
   for (const r of body.data ?? []) {
     if (!/beevenom/i.test(r.adset_name)) continue;
-    const l = laneDeAdset(r.adset_name);
-    if (!l) { console.error(`⚠ adset sin lane reconocible: ${r.adset_name}`); continue; }
+    // Un adset que no cae en ningún lane (la estructura vieja de R2, o un lane mal nombrado) NO
+    // se descarta: va a un bucket aparte. Descartarlo bajaría el CPA sin que se note.
+    const l = laneDeAdset(r.adset_name) ?? 'SIN LANE';
     gasto[l] = (gasto[l] ?? 0) + parseFloat(r.spend ?? '0');
   }
 }
@@ -51,7 +52,12 @@ for (const acct of cuentas) {
 const client = new pg.Client({ connectionString: env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 await client.connect();
 const { rows } = await client.query(
-  `select o.zip, o.courier from orders o join order_items oi on oi.order_id = o.id
+  `select o.zip, o.courier, s.id is not null as despachada,
+          s.status_canonical = 'entregado' as entregada,
+          s.status_canonical in ('devuelto', 'rechazado') as devuelta
+   from orders o
+   join order_items oi on oi.order_id = o.id
+   left join shipments s on s.order_id = o.id
    where oi.product_id = 4 and o.created_at >= $1 and o.created_at < ($2::date + 1)`,
   [desde, hasta],
 );
@@ -69,9 +75,16 @@ const ars = (n) => '$' + Math.round(n).toLocaleString('es-AR');
 console.log(`\nBeeVenom — P&L por lane, ${desde} → ${hasta} (${dias} días)\n`);
 console.log('lane     gasto        órd    CPA        margen/gen   neto/gen    profit/día   x$ de ads');
 let tg = 0, tp = 0;
-for (const l of ['FIXY', 'RESTO']) {
+for (const l of ['FIXY', 'RESTO', 'SIN LANE']) {
   const g = gasto[l] ?? 0, o = ordenes[l] ?? { n: 0, margen: 0 };
   if (!g && !o.n) continue;
+  if (l === 'SIN LANE') {
+    tg += g;
+    console.log(`${'SIN LANE'.padEnd(8)} ${ars(g).padStart(10)} ${'—'.padStart(6)} ` +
+      `${'—'.padStart(9)}${''.padStart(37)}  ⚠ gasto fuera de los lanes (estructura vieja de R2):`);
+    console.log(`         la ventana mezcla dos estructuras — acortá los días o leelo con esto en cuenta`);
+    continue;
+  }
   const cpa = o.n ? g / o.n : 0;
   const mg = o.n ? o.margen / o.n : 0;
   const profit = o.margen - g;
@@ -85,4 +98,28 @@ for (const l of ['FIXY', 'RESTO']) {
 }
 console.log(`\nTOTAL    ${ars(tg).padStart(10)} ${String(rows.length).padStart(6)} ${ars(tg / rows.length).padStart(9)}` +
   `${''.padStart(24)} ${ars(tp / dias).padStart(13)}`);
-console.log(`\nCorte de la kill-rule: CPA > ${ars(KILL_CPA)} por lane a los 4 días.\n`);
+console.log(`\nCorte de la kill-rule: CPA > ${ars(KILL_CPA)} por lane a los 4 días.`);
+
+// Ventas por courier: a qué transportista terminó yendo cada orden de cada zona. Es el control
+// de que el ruteo hace lo que debe (zona FIXY → fixy); una orden de zona FIXY que sale por
+// urbano es la fuga que cuesta ~$4.100 de neto por guía.
+const porCourier = {};
+for (const o of rows) {
+  const k = `${laneDeCP(o.zip)}|${o.courier ?? 'sin courier'}`;
+  porCourier[k] ??= { n: 0, desp: 0, ent: 0, dev: 0 };
+  porCourier[k].n++;
+  if (o.despachada) porCourier[k].desp++;
+  if (o.entregada) porCourier[k].ent++;
+  if (o.devuelta) porCourier[k].dev++;
+}
+console.log('\nVentas por courier (entrega madura recién a los ~7-10 días, no leer antes):\n');
+console.log('zona     courier      órd   despach   entreg   devuelt');
+for (const [k, v] of Object.entries(porCourier).sort()) {
+  const [zona, courier] = k.split('|');
+  const fuga = zona === 'FIXY' && courier === 'urbano' ? '  ← fuga de ruteo' : '';
+  console.log(
+    `${zona.padEnd(8)} ${courier.padEnd(12)} ${String(v.n).padStart(4)} ${String(v.desp).padStart(9)} ` +
+    `${String(v.ent).padStart(8)} ${String(v.dev).padStart(9)}${fuga}`,
+  );
+}
+console.log();
