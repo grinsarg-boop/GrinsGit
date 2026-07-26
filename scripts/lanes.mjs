@@ -34,12 +34,13 @@ const KILL_CPA = 6500;
 const laneDeAdset = (n) => (/RESTO/i.test(n) ? 'RESTO' : /FIXY/i.test(n) ? 'FIXY' : null);
 const laneDeCP = (zip) => (/^1\d{3}/.test(String(zip ?? '').replace(/\D/g, '')) ? 'FIXY' : 'RESTO');
 
+const PURCHASE = new Set(['purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase']);
 const cuentas = env.META_AD_ACCOUNT_ID.split(',').map((a) => a.trim()).filter(Boolean);
-const gasto = {};
+const gasto = {}, comprasMeta = {};
 for (const acct of cuentas) {
   const url = `https://graph.facebook.com/${env.META_API_VERSION ?? 'v25.0'}/${acct}/insights?` +
     new URLSearchParams({
-      level: 'adset', fields: 'adset_name,spend', limit: '500',
+      level: 'adset', fields: 'adset_name,spend,actions', limit: '500',
       time_range: JSON.stringify({ since: desde, until: hasta }),
       access_token: env.META_ACCESS_TOKEN,
     });
@@ -51,6 +52,9 @@ for (const acct of cuentas) {
     // se descarta: va a un bucket aparte. Descartarlo bajaría el CPA sin que se note.
     const l = laneDeAdset(r.adset_name) ?? 'SIN LANE';
     gasto[l] = (gasto[l] ?? 0) + parseFloat(r.spend ?? '0');
+    comprasMeta[l] = (comprasMeta[l] ?? 0) + (r.actions ?? [])
+      .filter((a) => PURCHASE.has(a.action_type))
+      .reduce((s, a) => s + parseInt(a.value, 10), 0);
   }
 }
 
@@ -118,6 +122,22 @@ for (const o of rows) {
   if (o.entregada) porCourier[k].ent++;
   if (o.devuelta) porCourier[k].dev++;
 }
+// El pixel reporta MÁS compras que las órdenes reales, así que el CPA de Ads Manager subestima.
+// Para decidir ad por ad no hay alternativa a mirar el número de Meta (la atribución por utm cubre
+// ~33%), así que lo que hay que corregir es el UMBRAL: dividir el CPA real objetivo por este factor.
+console.log('\nFactor de corrección del CPA de Meta (el pixel infla las compras):\n');
+console.log('lane     compras Meta   órd reales   factor   umbral en Ads Manager para un CPA real de:');
+console.log('                                              $8.600 (obj)   $16.100 (máx)');
+for (const l of ['FIXY', 'RESTO']) {
+  const cm = comprasMeta[l] ?? 0, or = (ordenes[l] ?? { n: 0 }).n;
+  if (!cm || !or) continue;
+  const f = cm / or;
+  console.log(
+    `${l.padEnd(8)} ${String(cm).padStart(12)} ${String(or).padStart(12)} ${f.toFixed(2).padStart(8)}x   ` +
+    `${ars(8600 / f).padStart(12)}   ${ars(16100 / f).padStart(13)}`,
+  );
+}
+
 console.log('\nVentas por courier (entrega madura recién a los ~7-10 días, no leer antes):\n');
 console.log('zona     courier      órd   despach   entreg   devuelt');
 for (const [k, v] of Object.entries(porCourier).sort()) {
