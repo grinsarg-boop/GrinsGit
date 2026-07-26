@@ -15,9 +15,17 @@ export type AdSpendRow = {
   purchases: number;
 };
 
+// META_AD_ACCOUNT_ID acepta VARIAS cuentas separadas por coma: las cuentas se queman (UNSETTLED)
+// y se rota a la siguiente (R1 → R2 → R3), así que el sync tiene que leer la nueva sin perder el
+// gasto que la vieja siga reportando. Si falta una acá, su gasto queda en $0 y el CPA miente.
 export async function fetchMetaInsights(): Promise<AdSpendRow[]> {
+  const accounts = process.env.META_AD_ACCOUNT_ID!.split(",").map((a) => a.trim()).filter(Boolean);
+  const perAccount = await Promise.all(accounts.map(fetchAccountInsights));
+  return perAccount.flat();
+}
+
+async function fetchAccountInsights(account: string): Promise<AdSpendRow[]> {
   const v = process.env.META_API_VERSION ?? "v25.0";
-  const account = process.env.META_AD_ACCOUNT_ID!;
   const since = new Date(Date.now() - 2 * 86400_000).toISOString().slice(0, 10);
   const until = new Date().toISOString().slice(0, 10);
 
