@@ -1,0 +1,54 @@
+# Backup diario del Supabase de Finanzas (biolabs-finanzas / juptcgptneyadwqlpfbb).
+# El proyecto está en Free Plan: Supabase NO hace ningún backup. Esto es la única copia que existe.
+# Se guarda como artifact (90 días de retención) en vez de commitearse: el dump pesa ~15-30 MB y
+# commitearlo a diario infla el repo para siempre.
+#
+# Restaurar: bajar el artifact → gunzip → psql "$DATABASE_URL" -f backup.sql
+name: backup-db
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC = 03:00 ART, después del recompute nocturno
+  workflow_dispatch: # botón manual en la pestaña Actions
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      # El servidor es PG 17.6 y el runner trae 16 — pg_dump se niega a dumpear un server mayor.
+      - name: Instalar pg_dump 17
+        run: |
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
+
+      - name: Dump del schema public
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          test -n "$DATABASE_URL" || { echo "::error::falta el secret DATABASE_URL"; exit 1; }
+          pg_dump "$DATABASE_URL" --schema=public --no-owner --no-privileges \
+            | gzip -9 > "backup-$(date -u +%Y-%m-%d).sql.gz"
+
+      # Un backup que sale vacío en silencio es peor que no tener backup: falla ruidosa.
+      # Hoy el dump comprimido ronda los 15-30 MB (base de 143 MB); 1 MB es piso de "algo se rompió".
+      - name: Verificar que el dump sirve
+        run: |
+          f=$(ls backup-*.sql.gz)
+          bytes=$(stat -c%s "$f")
+          echo "$f · $((bytes / 1024 / 1024)) MB"
+          [ "$bytes" -gt 1000000 ] || { echo "::error::dump de $bytes bytes — demasiado chico"; exit 1; }
+          gzip -t "$f" || { echo "::error::el .gz está corrupto"; exit 1; }
+          # Las tablas que más importan tienen que estar CON datos, no solo declaradas.
+          for t in orders shipments daily_pnl ad_spend; do
+            gunzip -c "$f" | grep -q "COPY public.$t " \
+              || { echo "::error::falta la tabla $t en el dump"; exit 1; }
+          done
+          echo "✅ dump íntegro"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backup-db
+          path: backup-*.sql.gz
+          retention-days: 90
