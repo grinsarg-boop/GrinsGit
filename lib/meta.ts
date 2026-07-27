@@ -14,15 +14,41 @@ export type AdSpendRow = {
   purchases: number;
 };
 
-// META_AD_ACCOUNT_ID acepta VARIAS cuentas separadas por coma: las cuentas se queman (UNSETTLED)
-// y se rota a la siguiente (R1 → R2 → R3), así que el sync tiene que leer la nueva sin perder el
-// gasto que la vieja siga reportando. Si falta una acá, su gasto queda en $0 y el CPA miente.
-// since/until (YYYY-MM-DD) solo los pasa el backfill: cuando entra una cuenta nueva a la lista, su
-// gasto anterior NO vuelve solo porque el cron mira 2 días. Ver scripts/backfill-meta.mts.
+// Las cuentas se queman (UNSETTLED) y se rota a la siguiente (R1 → R2 → R3 → …). Mantener la lista
+// a mano es el paso que se olvida: el 23/07 R3 arrancó y el panel marcó $0 cuatro días porque la
+// variable de Vercel quedó vieja. Por eso el default es DESCUBRIRLAS: /me/adaccounts devuelve solo
+// las que el token puede leer de verdad, así que la cuenta nueva entra sola y las que no tenemos
+// permiso (R1 → 403) ni aparecen. META_AD_ACCOUNT_ID sigue mandando si está seteada (escape hatch).
+const CUENTAS_RE = /^tienda\s*r/i;
+
+export async function resolveAccounts(): Promise<string[]> {
+  const manual = process.env.META_AD_ACCOUNT_ID?.trim();
+  if (manual) return manual.split(",").map((a) => a.trim()).filter(Boolean);
+
+  const v = process.env.META_API_VERSION ?? "v25.0";
+  const res = await fetch(
+    `https://graph.facebook.com/${v}/me/adaccounts?` +
+      new URLSearchParams({ fields: "id,name", limit: "200", access_token: process.env.META_ACCESS_TOKEN! }),
+  );
+  const body: { data?: { id: string; name?: string }[]; error?: unknown } = await res.json();
+  if (!res.ok) throw new Error(`Meta /me/adaccounts ${res.status}: ${JSON.stringify(body.error ?? body)}`);
+  // Sin filtro traeríamos las cuentas de otros negocios si al token le amplían el alcance.
+  const found = (body.data ?? []).filter((a) => CUENTAS_RE.test(a.name ?? "")).map((a) => a.id);
+  if (!found.length) throw new Error("Meta: /me/adaccounts no devolvió ninguna cuenta 'Tienda R'");
+  return found;
+}
+
+// since/until (YYYY-MM-DD) solo los pasa el backfill: cuando entra una cuenta nueva, su gasto
+// anterior NO vuelve solo porque el cron mira 2 días. Ver scripts/backfill-meta.mts.
 export async function fetchMetaInsights(since?: string, until?: string): Promise<AdSpendRow[]> {
-  const accounts = process.env.META_AD_ACCOUNT_ID!.split(",").map((a) => a.trim()).filter(Boolean);
-  const perAccount = await Promise.all(accounts.map((a) => fetchAccountInsights(a, since, until)));
-  return perAccount.flat();
+  const accounts = await resolveAccounts();
+  // Una cuenta rota no puede tapar a las demás (antes un 403 tiraba TODO el sync), pero si fallan
+  // todas es un problema real (token vencido) y tiene que explotar para que quede en sync_runs.
+  const results = await Promise.allSettled(accounts.map((a) => fetchAccountInsights(a, since, until)));
+  const fallaron = results.filter((r) => r.status === "rejected");
+  if (fallaron.length === accounts.length) throw (fallaron[0] as PromiseRejectedResult).reason;
+  for (const f of fallaron) console.error("meta: cuenta caída,", String((f as PromiseRejectedResult).reason));
+  return results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
 }
 
 async function fetchAccountInsights(account: string, sinceArg?: string, untilArg?: string): Promise<AdSpendRow[]> {

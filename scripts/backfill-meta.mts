@@ -6,7 +6,7 @@
 // gastó mientras estaba fuera de la lista queda invisible para siempre. Esto lo recupera.
 // Idempotente: upsert_ad_spend es on conflict (date, ad_id) y respeta product_locked.
 import { createClient } from "@supabase/supabase-js";
-import { fetchMetaInsights } from "../lib/meta";
+import { fetchMetaInsights, resolveAccounts } from "../lib/meta";
 
 const [since, until] = process.argv.slice(2);
 if (!/^\d{4}-\d{2}-\d{2}$/.test(since ?? "") || !/^\d{4}-\d{2}-\d{2}$/.test(until ?? "")) {
@@ -18,11 +18,12 @@ const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPAB
   auth: { persistSession: false },
 });
 
+const cuentas = await resolveAccounts();
 const rows = await fetchMetaInsights(since, until);
 const total = rows.reduce((s, r) => s + r.spend, 0);
 console.log(
   `${rows.length} filas · ${since} → ${until} · gasto $${Math.round(total).toLocaleString("es-AR")}` +
-    ` · cuentas: ${process.env.META_AD_ACCOUNT_ID}`,
+    ` · cuentas: ${cuentas.join(", ")}`,
 );
 if (!rows.length) {
   console.log("sin filas — nada que hacer");
