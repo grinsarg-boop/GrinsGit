@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Rendiciones de Urbano: PDF -> datos/urbano_rendiciones.csv (una fila por guía cobrada).
+"""Rendiciones de Urbano: PDF / .xls -> datos/urbano_rendiciones.csv (una fila por guía cobrada).
 
-Uso:  python3 scripts/urbano-rendiciones.py <carpeta-con-PDFs> [más carpetas...]
+Uso:  python3 scripts/urbano-rendiciones.py <carpeta-o-archivo> [más...]
 El CSV se MERGEA por (resumen, fecha, guia), así que se puede correr cada vez que llega
 un resumen nuevo sin duplicar nada.
 
@@ -12,28 +12,48 @@ el reclamo. Sin esto no hay forma de saber qué entregó y nunca rindió.
 Dos formatos conviven, ambos son pago (no se solapan nunca dentro del mismo martes):
   A "RESUMEN A PAGAR N° x"  -> guía de 13 dígitos sola + Valor Declarado; trae Total a transferir.
   B "Resumen a pagar numero x" -> guía embebida en QOPQ<ddmm><guía> + monto con separador de miles.
+El `resumen_transferencia_*.xls` es el MISMO formato B pero en HTML (no es un xls de verdad) y
+encima trae fecha de transferencia y N° de comprobante: es el único que PRUEBA que el giro salió.
+Ojo: la fecha del NOMBRE de ese archivo es la de descarga, no la del giro — se usa la de la tabla.
 """
 import csv, glob, os, re, sys
 
 import fitz  # PyMuPDF
 
 DEST = os.path.join(os.path.dirname(__file__), "..", "datos", "urbano_rendiciones.csv")
-COLS = ["resumen", "fecha", "fmt", "guia", "monto", "archivo"]
+COLS = ["resumen", "fecha", "fmt", "guia", "monto", "comprobante", "archivo"]
+plata = lambda s: float(s.replace(".", "").replace(",", "."))       # 1.234.567,89 -> float
 
 
-def parse(path):
+def parse_pdf(path):
     txt = "\n".join(p.get_text() for p in fitz.open(path))
     base = os.path.basename(path)
     m = re.search(r"[Rr]esumen a pagar (?:numero|N°) (\d+)", txt) or re.search(r"N[°º] (\d+)", txt)
     resumen = m.group(1) if m else "?"
-    f = re.search(r"(\d{2})-(\d{2})-(\d{2})", base)          # la fecha vive en el nombre del archivo
+    f = re.search(r"(\d{2})-(\d{2})-(\d{2})", base)          # el PDF no trae fecha adentro: la del nombre
     fecha = f"20{f.group(3)}-{f.group(2)}-{f.group(1)}" if f else "?"
     out = []
     for g, monto in re.findall(r"^(\d{13})\n(\d+(?:\.\d+)?)$", txt, re.M):
-        out.append((resumen, fecha, "A", g, float(monto), base))
+        out.append((resumen, fecha, "A", g, float(monto), "", base))
     for g, monto in re.findall(r"^QOPQ\d{4}(\d{13})\n([\d.]+,\d{2})$", txt, re.M):
-        out.append((resumen, fecha, "B", g, float(monto.replace(".", "").replace(",", ".")), base))
+        out.append((resumen, fecha, "B", g, plata(monto), "", base))
     return out
+
+
+def parse_xls(path):
+    """resumen_transferencia_*.xls — HTML disfrazado de xls."""
+    s = open(path, encoding="latin-1").read()
+    base = os.path.basename(path)
+    cab = re.search(r"<tbody>\s*<tr>\s*<td>(\d+)</td>\s*<td>[A-Z]+</td>\s*<td>(\d{2})-(\d{2})-(\d{4})</td>", s)
+    resumen = cab.group(1) if cab else "?"
+    fecha = f"{cab.group(4)}-{cab.group(3)}-{cab.group(2)}" if cab else "?"
+    comp = re.search(r"Comprobante.*?<td>[\d-]+</td>\s*<td>(\d+)</td>", s, re.S)
+    filas = re.findall(r">QOPQ\d{4}(\d{13})</td><td[^>]*>\d{13}</td>\s*<td[^>]*>([\d.]+,\d{2})</td>", s)
+    return [(resumen, fecha, "B", g, plata(m), comp.group(1) if comp else "", base) for g, m in filas]
+
+
+def parse(path):
+    return parse_xls(path) if path.lower().endswith((".xls", ".html")) else parse_pdf(path)
 
 
 def main(carpetas):
@@ -41,11 +61,12 @@ def main(carpetas):
     if os.path.exists(DEST):
         with open(DEST) as fh:
             for r in csv.DictReader(fh):
-                filas[(r["resumen"], r["fecha"], r["guia"])] = [r[c] for c in COLS]
+                filas[(r["resumen"], r["fecha"], r["guia"])] = [r.get(c, "") for c in COLS]
     previas = len(filas)
 
-    pdfs = [p for c in carpetas for p in sorted(glob.glob(os.path.join(c, "*.pdf")))]
-    for p in pdfs:
+    archivos = sorted({a for x in carpetas for pat in ("*.pdf", "*.xls")
+                       for a in (glob.glob(os.path.join(x, pat)) if os.path.isdir(x) else [x])})
+    for p in archivos:
         rows = parse(p)
         if not rows:
             print(f"⚠️  {os.path.basename(p)}: 0 guías — ¿formato nuevo?")

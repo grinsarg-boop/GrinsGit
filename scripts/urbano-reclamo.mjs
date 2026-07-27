@@ -95,22 +95,36 @@ const raras = await q(`
   [[...pagada.keys()]]);
 await db.end();
 
-// ── 1. plata entregada y nunca rendida ────────────────────────────────────────────────────────
-const sinRendir = entregadas
-  .filter((e) => !pagada.has(e.tracking) && martes.has(giroDe(e.entrega)))
-  .map((e) => ({ ...e, giro: giroDe(e.entrega), firme: completo(giroDe(e.entrega)) }));
-const firmes = sinRendir.filter((e) => e.firme);
-const aConfirmar = sinRendir.filter((e) => !e.firme);
-const suma = (xs) => xs.reduce((s, e) => s + (e.cod ?? 0), 0);
-
-// ── 2. semanas sin resumen: no es faltante probado, es visibilidad que no tenemos ─────────────
+// ── 1. conciliación semana por semana: entregado vs rendido ───────────────────────────────────
+// El faltante de una semana a la que le falta un formato NO es plata robada: es el archivo que no
+// tenemos. Sólo la semana con los DOS formatos permite afirmar que algo no se pagó.
 const porGiro = new Map();
 for (const e of entregadas) {
   const g = giroDe(e.entrega);
-  if (!porGiro.has(g)) porGiro.set(g, { guias: 0, cod: 0 });
+  if (!porGiro.has(g)) porGiro.set(g, { guias: 0, cod: 0, rg: 0, rcod: 0 });
   const x = porGiro.get(g); x.guias++; x.cod += e.cod ?? 0;
 }
-const sinResumen = [...porGiro].filter(([g]) => !martes.has(g) && g <= HOY).sort();
+for (const r of rend) {
+  if (reimpresos.has(`${r.fecha}|${r.resumen}`)) continue;
+  if (!porGiro.has(r.fecha)) porGiro.set(r.fecha, { guias: 0, cod: 0, rg: 0, rcod: 0 });
+  const x = porGiro.get(r.fecha); x.rg++; x.rcod += Number(r.monto);
+  if (r.comprobante) (x.comp ??= new Set()).add(r.comprobante);
+}
+const semanas = [...porGiro].filter(([g]) => g <= HOY).sort();
+
+// ── 2. guías entregadas que no figuran en ningún resumen ──────────────────────────────────────
+// Una guía suelta que no aparece NO prueba nada por sí sola: nuestra fecha de entrega y la de
+// ellos difieren en un día y la guía cae en la semana de al lado. Sólo se reclama como plata
+// faltante si ADEMÁS la semana entera cierra en rojo (nos pagaron menos de lo que entregamos).
+// Si la semana cierra en cero o a favor, es deriva de fecha: se pide en qué resumen se pagó.
+const debe = (g) => (porGiro.get(g)?.cod ?? 0) - (porGiro.get(g)?.rcod ?? 0);
+const sinRendir = entregadas
+  .filter((e) => !pagada.has(e.tracking) && martes.has(giroDe(e.entrega)))
+  .map((e) => ({ ...e, giro: giroDe(e.entrega), firme: completo(giroDe(e.entrega)) && debe(giroDe(e.entrega)) > 0 }));
+const firmes = sinRendir.filter((e) => e.firme);
+const deriva = sinRendir.filter((e) => !e.firme && completo(e.giro));
+const aConfirmar = sinRendir.filter((e) => !e.firme && !completo(e.giro));
+const suma = (xs) => xs.reduce((s, e) => s + (e.cod ?? 0), 0);
 
 // ── 3. ¿se movieron las del reclamo anterior? ─────────────────────────────────────────────────
 mkdirSync(DIR, { recursive: true });
@@ -133,27 +147,45 @@ if (previos.length) {
 
 // ── salida ────────────────────────────────────────────────────────────────────────────────────
 console.log(`\n═══ RECLAMO URBANO ${HOY} ═══\n`);
-console.log(`① PLATA ENTREGADA Y NUNCA RENDIDA (contra los resúmenes que tenemos)`);
-console.log(`   firme:        ${String(firmes.length).padStart(3)} guías  ${$(suma(firmes))}  ` +
-            `(neto −5,547%: ${$(suma(firmes) * (1 - COMISION))})`);
-console.log(`   a confirmar:  ${String(aConfirmar.length).padStart(3)} guías  ${$(suma(aConfirmar))}  ` +
-            `— falta un formato del resumen de ${[...new Set(aConfirmar.map((e) => e.giro))].join(', ')}`);
+console.log(`① CONCILIACIÓN POR MARTES DE GIRO (entregado vs rendido)`);
+console.log(`   ${'giro'.padEnd(11)} ${'formatos'.padEnd(9)} ${'entregas'.padStart(8)} ${'COD entregado'.padStart(14)}` +
+            ` ${'rendidas'.padStart(8)} ${'COD rendido'.padStart(14)} ${'diferencia'.padStart(13)}  comprobante`);
+for (const [g, x] of semanas) {
+  const fmts = martes.get(g) ? [...martes.get(g)].sort().join('+') : '—';
+  const marca = !martes.get(g) ? '⛔' : martes.get(g).size === 2 ? '  ' : '⚠️';
+  console.log(`${marca} ${g.padEnd(11)} ${fmts.padEnd(9)} ${String(x.guias).padStart(8)} ${$(x.cod).padStart(14)}` +
+              ` ${String(x.rg).padStart(8)} ${$(x.rcod).padStart(14)} ${$(x.cod - x.rcod).padStart(13)}` +
+              `  ${x.comp ? [...x.comp].join(',') : '—'}`);
+}
+console.log(`   ⚠️ = falta un formato (A+B es la liquidación completa de la semana) · ⛔ = sin resumen`);
+
+console.log(`\n② GUÍAS ENTREGADAS QUE NO FIGURAN EN NINGÚN RESUMEN`);
+console.log(`   plata faltante (la semana además cierra en rojo): ${String(firmes.length).padStart(3)} guías  ${$(suma(firmes))}` +
+            (firmes.length ? `  (neto −5,547%: ${$(suma(firmes) * (1 - COMISION))})` : ''));
+console.log(`   deriva de fecha (la semana cuadra: pedir en qué resumen se pagaron): ` +
+            `${String(deriva.length).padStart(3)} guías  ${$(suma(deriva))}`);
+console.log(`   sin poder auditar (falta un formato del resumen): ${String(aConfirmar.length).padStart(3)} guías  ` +
+            `${$(suma(aConfirmar))} — martes ${[...new Set(aConfirmar.map((e) => e.giro))].join(', ')}`);
 for (const e of firmes)
-  console.log(`     ${e.tracking}  entregada ${e.entrega}  giro ${e.giro}  ${$(e.cod ?? 0).padStart(10)}` +
+  console.log(`     ⛔ ${e.tracking}  entregada ${e.entrega}  giro ${e.giro}  ${$(e.cod ?? 0).padStart(10)}` +
               `  #${e.order_number} ${e.customer_name} (${e.province})`);
 
-console.log(`\n② SEMANAS SIN RESUMEN (pedirlos: sin el archivo no hay forma de auditar)`);
-for (const [g, x] of sinResumen)
-  console.log(`   giro ${g}: ${String(x.guias).padStart(4)} entregas · ${$(x.cod).padStart(13)} de COD` +
-              ` · neto esperado ${$(x.cod * (1 - COMISION))}`);
-console.log(`   TOTAL sin auditar: ${$(sinResumen.reduce((s, [, x]) => s + x.cod, 0))}`);
+// Una trabada que ya figura en un resumen NO es una trabada: se entregó, la cobramos, y lo único
+// roto es nuestro estado. Reclamarla sería pedir por algo que ya nos pagaron.
+const trabadasCobradas = trabados.filter((t) => pagada.has(t.tracking));
+const trabadasReales = trabados.filter((t) => !pagada.has(t.tracking));
 
-console.log(`\n③ PIEZAS TRABADAS HOY: ${trabados.length} · ${$(suma(trabados.map((t) => ({ cod: +t.cod_amount }))))}`);
+console.log(`\n③ PIEZAS TRABADAS HOY: ${trabadasReales.length} · ${$(suma(trabadasReales.map((t) => ({ cod: +t.cod_amount }))))}` +
+            (trabadasCobradas.length
+              ? `   (+${trabadasCobradas.length} que figuran trabadas pero YA COBRAMOS — no se reclaman, se corrige el estado)`
+              : ''));
+for (const t of trabadasCobradas)
+  console.log(`     ✓ ${t.tracking} ${t.status_raw} ${t.dias}d · ${$(+t.cod_amount)} · rendida ${pagada.get(t.tracking)} · #${t.order_number} (${t.province})`);
 if (mov) {
   console.log(`   vs reclamo del ${mov.desde}:  se movieron ${mov.movidas.length}  ·  ` +
               `SIGUEN CLAVADAS ${mov.quietas.length}  ·  nuevas ${mov.nuevas.length}`);
   for (const g of mov.quietas) {
-    const t = trabados.find((x) => x.tracking === g);
+    const t = trabadasReales.find((x) => x.tracking === g);
     if (t) console.log(`     ⛔ ${g} ${t.status_raw} ${t.dias}d sin moverse · ${$(+t.cod_amount)} · ` +
                        `#${t.order_number} ${t.customer_name} (${t.province}) — ESCALAR`);
   }
@@ -166,9 +198,10 @@ for (const r of raras)
 
 const filas = [
   ['bloque', 'guia', 'pedido', 'cliente', 'provincia', 'cod', 'fecha', 'estado', 'detalle'],
-  ...firmes.map((e) => ['NO RENDIDA', e.tracking, e.order_number, e.customer_name, e.province, e.cod, e.entrega, 'entregada', `giro esperado ${e.giro}`]),
-  ...aConfirmar.map((e) => ['NO RENDIDA (a confirmar)', e.tracking, e.order_number, e.customer_name, e.province, e.cod, e.entrega, 'entregada', `giro esperado ${e.giro}`]),
-  ...trabados.map((t) => ['TRABADA', t.tracking, t.order_number, t.customer_name, t.province, t.cod_amount, String(t.dispatched_at).slice(0, 10), t.status_raw, `${t.dias} días sin movimiento`]),
+  ...firmes.map((e) => ['NO RENDIDA (semana en rojo)', e.tracking, e.order_number, e.customer_name, e.province, e.cod, e.entrega, 'entregada', `giro esperado ${e.giro}`]),
+  ...deriva.map((e) => ['NO FIGURA EN NINGÚN RESUMEN', e.tracking, e.order_number, e.customer_name, e.province, e.cod, e.entrega, 'entregada', `giro esperado ${e.giro} — pedir en qué resumen se pagó`]),
+  ...aConfirmar.map((e) => ['SIN AUDITAR (falta formato A)', e.tracking, e.order_number, e.customer_name, e.province, e.cod, e.entrega, 'entregada', `giro esperado ${e.giro}`]),
+  ...trabadasReales.map((t) => ['TRABADA', t.tracking, t.order_number, t.customer_name, t.province, t.cod_amount, String(t.dispatched_at).slice(0, 10), t.status_raw, `${t.dias} días sin movimiento`]),
   ...raras.map((r) => ['ESTADO EN CONFLICTO', r.tracking, r.order_number, '', r.province, r.cod, pagada.get(r.tracking), r.status_raw, 'rendida pero no figura entregada']),
 ];
 const csvOut = filas.map((f) => f.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -176,7 +209,7 @@ if (!dry) {
   writeFileSync(join(DIR, `${HOY}-urbano.csv`), '﻿' + csvOut);
   writeFileSync(join(DIR, `${HOY}.json`), JSON.stringify({
     fecha: HOY, piezas: foto,
-    plata: { firme: suma(firmes), a_confirmar: suma(aConfirmar), sin_resumen: sinResumen.reduce((s, [, x]) => s + x.cod, 0) },
+    plata: { faltante: suma(firmes), deriva: suma(deriva), sin_auditar: suma(aConfirmar) },
   }, null, 1));
   console.log(`\n→ datos/reclamos/${HOY}-urbano.csv  (${filas.length - 1} filas para mandar)`);
 } else console.log('\n(--dry: no escribí nada)');
