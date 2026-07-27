@@ -80,7 +80,8 @@ try {
                    'supabase/migrations/053_chat.sql',
                    'supabase/migrations/054_ad_review.sql',
                    'supabase/migrations/055_urbano_ei_entregado.sql',
-                   'supabase/migrations/056_salud_sistema.sql',
+                                      'supabase/migrations/056_salud_sistema.sql',
+                   'supabase/migrations/057_devoluciones_viejas.sql',
                    'supabase/tests/salud_check.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
@@ -99,7 +100,8 @@ try {
                    'supabase/tests/anuncios_check.sql',
                    'supabase/tests/chat_check.sql',
                    'supabase/tests/ad_review_check.sql',
-                   'supabase/tests/urbano_ei_check.sql']) {
+                   'supabase/tests/urbano_ei_check.sql',
+                   'supabase/tests/devoluciones_viejas_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');
