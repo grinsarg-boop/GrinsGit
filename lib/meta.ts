@@ -1,9 +1,8 @@
 // Meta Insights → contrato de upsert_ad_spend (§5.3). Sin cálculo: normaliza y listo.
-const PURCHASE_TYPES = new Set([
-  "purchase",
-  "omni_purchase",
-  "offsite_conversion.fb_pixel_purchase",
-]);
+// UN SOLO action_type: Meta devuelve el MISMO número bajo 8 etiquetas (purchase, omni_purchase,
+// offsite_conversion.fb_pixel_purchase, onsite_web_purchase, web_in_store_purchase, …). Sumar tres
+// multiplicaba `purchases` por 3 en toda la historia. Mismo criterio que scripts/lanes.mjs.
+const PURCHASE_TYPES = new Set(["omni_purchase"]);
 
 export type AdSpendRow = {
   date: string;
@@ -18,16 +17,18 @@ export type AdSpendRow = {
 // META_AD_ACCOUNT_ID acepta VARIAS cuentas separadas por coma: las cuentas se queman (UNSETTLED)
 // y se rota a la siguiente (R1 → R2 → R3), así que el sync tiene que leer la nueva sin perder el
 // gasto que la vieja siga reportando. Si falta una acá, su gasto queda en $0 y el CPA miente.
-export async function fetchMetaInsights(): Promise<AdSpendRow[]> {
+// since/until (YYYY-MM-DD) solo los pasa el backfill: cuando entra una cuenta nueva a la lista, su
+// gasto anterior NO vuelve solo porque el cron mira 2 días. Ver scripts/backfill-meta.mts.
+export async function fetchMetaInsights(since?: string, until?: string): Promise<AdSpendRow[]> {
   const accounts = process.env.META_AD_ACCOUNT_ID!.split(",").map((a) => a.trim()).filter(Boolean);
-  const perAccount = await Promise.all(accounts.map(fetchAccountInsights));
+  const perAccount = await Promise.all(accounts.map((a) => fetchAccountInsights(a, since, until)));
   return perAccount.flat();
 }
 
-async function fetchAccountInsights(account: string): Promise<AdSpendRow[]> {
+async function fetchAccountInsights(account: string, sinceArg?: string, untilArg?: string): Promise<AdSpendRow[]> {
   const v = process.env.META_API_VERSION ?? "v25.0";
-  const since = new Date(Date.now() - 2 * 86400_000).toISOString().slice(0, 10);
-  const until = new Date().toISOString().slice(0, 10);
+  const since = sinceArg ?? new Date(Date.now() - 2 * 86400_000).toISOString().slice(0, 10);
+  const until = untilArg ?? new Date().toISOString().slice(0, 10);
 
   // level=ad explícito SIEMPRE — sin eso agrega a nivel campaña (§5.3)
   let url: string | undefined =
