@@ -3,11 +3,17 @@
 // GEOGRAFÍA (los lanes están partidos por CP, así que el CP de la orden dice de qué lane vino).
 // Uso: node scripts/lanes.mjs [dias]   (default 3; excluye el día de hoy, que está incompleto)
 //
-// Kill-rule: el CPA por lane se mide acá, no en Meta — el pixel de esta cuenta reporta 2-3,7x
-// más compras que las órdenes reales. Corte sugerido: CPA > $6.500 a los 4 días → apagar lane.
+// Kill-rule: el CPA por lane se mide acá, no en Meta. Corte sugerido: CPA > $6.500 a los 4 días.
+// (El "2-3,7x de inflado del pixel" que decía acá era el bug de sumar 3 action_types — ver abajo.
+//  Medido bien, el pixel va ~1:1 con la base.)
 //
 // LÍMITE: mientras los lanes se separen solo por geo esto los distingue al 100%. Si se abren
 // lanes por EDAD dentro de la misma geo, el CP ya no alcanza y hace falta utm_content por ad.
+//
+// ponytail: compara TODAS las órdenes de la geo contra el gasto de la ventana entera. Un lane
+// pausado a mitad de camino cobra órdenes que no generó (veinguard-FIXY, 24/07: 27 h de vida
+// leídas contra 4 días de órdenes → CPA $11.409 en vez de $17.114). Si vuelve a pasar, acortar
+// `dias` a la vida del lane; cruzar por ventana viva de cada adset recién si se hace costumbre.
 import pg from 'pg';
 import { readFileSync } from 'node:fs';
 
@@ -34,7 +40,9 @@ const KILL_CPA = 6500;
 const laneDeAdset = (n) => (/RESTO/i.test(n) ? 'RESTO' : /FIXY/i.test(n) ? 'FIXY' : null);
 const laneDeCP = (zip) => (/^1\d{3}/.test(String(zip ?? '').replace(/\D/g, '')) ? 'FIXY' : 'RESTO');
 
-const PURCHASE = new Set(['purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase']);
+// UN SOLO action_type: Meta devuelve el MISMO número bajo 8 etiquetas (purchase, omni_purchase,
+// offsite_conversion.fb_pixel_purchase, onsite_web_purchase, …). Sumar tres multiplicaba x3.
+const PURCHASE = new Set(['omni_purchase']);
 const cuentas = env.META_AD_ACCOUNT_ID.split(',').map((a) => a.trim()).filter(Boolean);
 const gasto = {}, comprasMeta = {};
 for (const acct of cuentas) {
@@ -125,7 +133,7 @@ for (const o of rows) {
 // El pixel reporta MÁS compras que las órdenes reales, así que el CPA de Ads Manager subestima.
 // Para decidir ad por ad no hay alternativa a mirar el número de Meta (la atribución por utm cubre
 // ~33%), así que lo que hay que corregir es el UMBRAL: dividir el CPA real objetivo por este factor.
-console.log('\nFactor de corrección del CPA de Meta (el pixel infla las compras):\n');
+console.log('\nFactor de corrección del CPA de Meta (compras del pixel ÷ órdenes reales; >1 infla, <1 sub-reporta):\n');
 console.log('lane     compras Meta   órd reales   factor   umbral en Ads Manager para un CPA real de:');
 console.log('                                              $8.600 (obj)   $16.100 (máx)');
 for (const l of ['FIXY', 'RESTO']) {
