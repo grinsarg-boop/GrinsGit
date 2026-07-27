@@ -21,14 +21,18 @@ jobs:
           sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
           curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-17
-          pg_dump --version
+          # Instalar el paquete NO alcanza: /usr/bin/pg_dump es la 16 y gana en el PATH.
+          /usr/lib/postgresql/17/bin/pg_dump --version
 
       - name: Dump del schema public
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
+          # pipefail: sin esto un pg_dump que falla igual devuelve 0 (gana gzip) y el paso
+          # "pasa" dejando un .gz vacío de 20 bytes. Que falle donde falla, con su error.
+          set -o pipefail
           test -n "$DATABASE_URL" || { echo "::error::falta el secret DATABASE_URL"; exit 1; }
-          pg_dump "$DATABASE_URL" --schema=public --no-owner --no-privileges \
+          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" --schema=public --no-owner --no-privileges \
             | gzip -9 > "backup-$(date -u +%Y-%m-%d).sql.gz"
 
       # Un backup que sale vacío en silencio es peor que no tener backup: falla ruidosa.
