@@ -1,25 +1,31 @@
 -- 057 — Una devolución que lleva +30 días sin cerrar se da por DEVUELTA.
 --
--- El problema: `RM` ("Rendido a Matriz") y `DV`/`RV` son estados de devolución EN CURSO, y la
--- devolución recién termina en `RC` ("Conformes y devoluciones rendidos al remitente"). Cuando
--- Urbano nunca emite el `RC`, la guía queda en `en_devolucion` para siempre: no es entregada, no es
--- devuelta, **no resuelve**. La cohorte de ese día nunca llega a 100% y no aparece en /trabados
--- (el predicado de la 038 excluye `en_devolucion` a propósito, porque una devolución en curso no es
--- una pieza trabada). Resultado: cohortes de junio clavadas en 93-99% por 61 guías en RM + 8 en DV.
+-- `RM` ("Rendido a Matriz") y `DV`/`RV` son estados de devolución EN CURSO; la devolución recién
+-- termina en `RC` ("Conformes y devoluciones rendidos al remitente"). Cuando Urbano nunca emite el
+-- `RC`, la guía se queda ahí para siempre. Decisión de Pancho (27/07/2026): a los 30 días el
+-- desenlace comercial ya ocurrió — la venta se perdió — así que corresponde llamarla `devuelto`.
 --
--- La decisión (Pancho, 27/07/2026): a los 30 días el desenlace comercial ya ocurrió — la venta se
--- perdió. Contarla como `devuelto` cierra la cohorte y dice la verdad del negocio.
+-- ⚠️ LO QUE ESTA MIGRACIÓN **NO** HACE, y la primera versión de este comentario decía que sí:
+-- **no mueve la madurez de ninguna cohorte y no cambia un solo número de ningún panel.** El
+-- diagnóstico original ("las cohortes de junio están clavadas por 61 guías en RM") era falso:
+--   · `sales_days` (030, línea 84) ya cuenta `en_devolucion` DENTRO de `resueltas`:
+--       filter (where st in ('entregado','rehusado','en_devolucion','devuelto','siniestro'))
+--   · `analisis_zonas` (035/036) agrupa `en_devolucion` junto a `devuelto` en `devueltas`.
+--   Comprobado en prod: los mismos días de junio dan idénticos antes y después de aplicar esto
+--   (13/06 94/93 · 24/06 93/91 · 29/06 122/121 · 30/06 141/132).
 --
--- Es P&L-NEUTRO por construcción: `devuelto` y `en_devolucion` pagan igual (flete completo, sin
--- imputar costo de producto — el costo va solo en entregado+siniestro, migr 036). Lo que SÍ cambia
--- es el ESTIMADO: la proyección dejaba de contar esas guías como "todavía pueden entregarse", así
--- que el revenue_estimado de esos días baja y se acerca al confirmado. Es el punto.
+-- Entonces esto vale sólo por la SEMÁNTICA (que el estado diga la verdad del negocio), y tiene un
+-- costo real que se asume a conciencia: `devuelto` es TERMINAL para el sync (`TERMINALES` en
+-- lib/couriers/sync.ts) → estas 39 guías dejan de consultarse, y justo le pedimos a Urbano por mail
+-- que cierre esas devoluciones. Si las cierra, no lo vamos a ver. Si eso molesta, revertir es
+-- devolverlas a `en_devolucion` filtrando por `status_raw='RM' and status_canonical='devuelto'`.
 --
--- Se resuelve con datos, no con un remap en la consulta, porque el remap de edad (el de `PI` +7d de
--- la 018) está copiado en ~19 funciones y meter una segunda regla ahí sería multiplicar el mismo
--- error. Y es estable: `devuelto` es TERMINAL para el sync (lib/couriers/sync.ts) → una vez marcada,
--- no se vuelve a consultar y ningún re-sync la pisa. `status_raw` queda intacto ('RM'), así que
--- siempre se puede auditar cuáles se cerraron por esta regla:
+-- Es P&L-neutro: `devuelto` y `en_devolucion` pagan igual (flete completo, sin imputar costo de
+-- producto — el costo va sólo en entregado+siniestro, migr 036).
+--
+-- Se resuelve con datos y no con un remap en la consulta porque el remap de edad de la 018
+-- (`PI` +7d → no_despachado) está copiado en ~19 funciones y una segunda regla ahí multiplicaría el
+-- mismo problema. `status_raw` queda intacto ('RM'): es la evidencia de por qué se cerró.
 --   select * from shipments where status_raw = 'RM' and status_canonical = 'devuelto';
 
 create or replace function cerrar_devoluciones_viejas(p_dias int default 30) returns int
