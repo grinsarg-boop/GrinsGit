@@ -80,6 +80,8 @@ try {
                    'supabase/migrations/053_chat.sql',
                    'supabase/migrations/054_ad_review.sql',
                    'supabase/migrations/055_urbano_ei_entregado.sql',
+                   'supabase/migrations/056_salud_sistema.sql',
+                   'supabase/tests/salud_check.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
