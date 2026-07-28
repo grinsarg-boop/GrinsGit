@@ -82,6 +82,7 @@ try {
                    'supabase/migrations/055_urbano_ei_entregado.sql',
                                       'supabase/migrations/056_salud_sistema.sql',
                    'supabase/migrations/057_devoluciones_viejas.sql',
+                   'supabase/migrations/058_rls_schema_migrations.sql',
                    'supabase/tests/salud_check.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',

@@ -19,10 +19,15 @@ if (!files.length) { console.error('uso: node scripts/db-apply.mjs [--force] <ar
 const client = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
 await client.connect();
 try {
+  // RLS + revoke van acá, no solo en la 058: Supabase le da CRUD completo a `anon` sobre CUALQUIER
+  // tabla nueva de `public`, así que crearla pelada abre un endpoint de escritura sin autenticar
+  // (fue una alerta CRITICAL el 26/07). Idempotente: si ya está, no hace nada.
   await client.query(`create table if not exists schema_migrations (
     filename text primary key,
     applied_at timestamptz not null default now()
   )`);
+  await client.query('alter table schema_migrations enable row level security');
+  await client.query('revoke all on table schema_migrations from anon, authenticated');
   for (const f of files) {
     const name = basename(f);
     process.stdout.write(`→ ${f} ... `);
