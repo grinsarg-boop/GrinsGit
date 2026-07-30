@@ -1,4 +1,5 @@
-# Dead-man's switch del sistema. Corre salud_sistema() (migración 056) cada hora.
+# Dead-man's switch del sistema. Corre salud_sistema() (migración 056) cada hora,
+# más el vigía de cajas de catálogo ML (/api/salud/cajas — guerra de catálogo 29/07).
 #
 # El canal de alerta es la propia corrida: si hay algo ROJO el job FALLA y GitHub manda el mail.
 # Sin infra nueva, sin n8n, sin webhooks — reusa el secret DATABASE_URL del backup.
@@ -46,5 +47,27 @@ jobs:
             grep '^ROJO|' salud.txt | while IFS='|' read -r _ area det; do
               echo "::error title=$area::$det"
             done
+            exit 1
+          fi
+
+      # Corre aunque el paso anterior haya fallado: un rojo de DB no debe tapar una caja perdida.
+      - name: Vigía cajas de catálogo ML
+        if: always()
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET" || { echo "::error::falta el secret CRON_SECRET"; exit 1; }
+          resp=$(curl -sf --max-time 60 -H "Authorization: Bearer $CRON_SECRET" \
+            "https://biolabs-finanzas.vercel.app/api/salud/cajas") \
+            || { echo "::error title=cajas-ml::/api/salud/cajas no respondió"; exit 1; }
+          echo "$resp"
+
+          {
+            echo "## Cajas de catálogo ML"
+            echo "$resp" | jq -r '.cajas[] | "- \(if .ok then "🟢" else "🔴" end) **\(.caja)** — \(.estados | to_entries | map("\(.key): \(.value)") | join(" · "))"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$(echo "$resp" | jq -r .rojo)" = "true" ]; then
+            echo "$resp" | jq -r '.cajas[] | select(.ok | not) | "::error title=caja \(.caja) perdida::\(.estados | tojson)"'
             exit 1
           fi
