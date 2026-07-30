@@ -71,3 +71,46 @@ jobs:
             echo "$resp" | jq -r '.cajas[] | select(.ok | not) | "::error title=caja \(.caja) perdida::\(.estados | tojson)"'
             exit 1
           fi
+
+      # La corrida HORARIA del monitor de rechazos vive acá: Vercel Hobby no permite crons
+      # más frecuentes que diarios (el "0 * * * *" en vercel.json volteaba TODOS los deploys).
+      - name: Monitor ad-review Meta
+        if: always()
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          resp=$(curl -sf --max-time 90 -X POST -H "Authorization: Bearer $CRON_SECRET" \
+            "https://biolabs-finanzas.vercel.app/api/monitor/ad-review") \
+            || { echo "::error title=ad-review::/api/monitor/ad-review falló"; exit 1; }
+          echo "$resp"
+
+      # Monitor de rechazos de Meta CADA HORA (ítem P0 del vault: a 1×/día un rechazo
+      # de las 10:05 se atendía al día siguiente). Va acá y no en vercel.json porque el
+      # plan Hobby de Vercel rechaza crons de frecuencia mayor a diaria — el deploy
+      # entero fallaba. Un ad rechazado NUEVO falla el job → GitHub manda el mail.
+      - name: Monitor de rechazos de ads (Meta)
+        if: always()
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET" || { echo "::error::falta el secret CRON_SECRET"; exit 1; }
+          resp=$(curl -sf --max-time 90 -H "Authorization: Bearer $CRON_SECRET" \
+            "https://biolabs-finanzas.vercel.app/api/monitor/ad-review") \
+            || { echo "::error title=ad-review::/api/monitor/ad-review no respondió"; exit 1; }
+          echo "$resp" | jq -c '{accounts, open, warnings}'
+
+          abiertos=$(echo "$resp" | jq -r '.open // 0')
+          {
+            echo "## Rechazos de ads (Meta)"
+            if [ "$abiertos" = "0" ]; then echo "✅ Sin ads rechazados abiertos."; else
+              echo "$resp" | jq -r '.issues[] | "- 🔴 **\(.ad_name)** · \(.campaign_name) · \(.effective_status) · desde \(.first_seen_at)"'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Solo fallan los rechazos NUEVOS de esta última hora — un issue viejo ya
+          # avisado no puede mandar un mail por hora hasta que alguien lo resuelva.
+          nuevos=$(echo "$resp" | jq -r '[.issues[] | select((.first_seen_at | fromdateiso8601? // 0) > (now - 3900))] | length')
+          if [ "${nuevos:-0}" -gt 0 ]; then
+            echo "$resp" | jq -r '.issues[] | select((.first_seen_at | fromdateiso8601? // 0) > (now - 3900)) | "::error title=ad rechazado \(.ad_name)::\(.campaign_name) · \(.effective_status)"'
+            exit 1
+          fi
