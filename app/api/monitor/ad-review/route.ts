@@ -1,4 +1,4 @@
-import { fetchAdReviewIssues } from "@/lib/meta";
+import { fetchAdReviewIssues, resolveAccounts } from "@/lib/meta";
 import { badCronAuth, logSyncRun, supabaseAdmin } from "@/lib/supabase";
 
 export const maxDuration = 60;
@@ -14,18 +14,18 @@ type OpenIssue = {
 
 // Polling del estado de revisión de ads (keep-alive). Vuelca DISAPPROVED/WITH_ISSUES de cada cuenta a
 // ad_review_issues (§054); el panel/bot leen los abiertos (resolved_at is null). Cuentas:
-// META_MONITOR_ACCOUNTS (csv) o R2 + R3 por defecto. Una cuenta que falle (p.ej. token sin acceso a R3)
+// META_MONITOR_ACCOUNTS (csv) o descubiertas con resolveAccounts(). Una cuenta que falle
 // queda en warnings sin voltear al resto.
 export async function POST(req: Request) {
   const unauth = badCronAuth(req);
   if (unauth) return unauth;
 
-  const accounts = (
-    process.env.META_MONITOR_ACCOUNTS ?? `${process.env.META_AD_ACCOUNT_ID},act_1569698667101520`
-  )
-    .split(",")
-    .map((a) => a.trim())
-    .filter(Boolean);
+  // Mismas cuentas que el sync de gasto: descubiertas por resolveAccounts() (la lista a mano se
+  // pudre con cada rotación — el default viejo con META_AD_ACCOUNT_ID quedó "act_undefined" y
+  // logueó error diario desde el 28/07). META_MONITOR_ACCOUNTS (csv) sigue como override.
+  const accounts = process.env.META_MONITOR_ACCOUNTS
+    ? process.env.META_MONITOR_ACCOUNTS.split(",").map((a) => a.trim()).filter(Boolean)
+    : await resolveAccounts();
 
   const db = supabaseAdmin();
   const warnings: unknown[] = [];
