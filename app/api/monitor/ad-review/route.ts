@@ -8,12 +8,15 @@ type OpenIssue = {
   ad_name: string;
   campaign_name: string;
   effective_status: string;
+  familia: string; // CONTENIDO = reescribir el creativo · ENTIDAD = recrear igual (§060)
+  motivo: string | null; // la política citada, cuando la familia es CONTENIDO
   first_seen_at: string;
   account_id: string;
 };
 
 // Polling del estado de revisión de ads (keep-alive). Vuelca DISAPPROVED/WITH_ISSUES de cada cuenta a
-// ad_review_issues (§054); el panel/bot leen los abiertos (resolved_at is null). Cuentas:
+// ad_review_issues (§054) con su familia CONTENIDO/ENTIDAD (§060, así nadie tiene que ir al Graph a
+// mano a ver cuál es cuál); el panel/bot leen los abiertos (resolved_at is null). Cuentas:
 // META_MONITOR_ACCOUNTS (csv) o descubiertas con resolveAccounts(). Una cuenta que falle
 // queda en warnings sin voltear al resto.
 export async function POST(req: Request) {

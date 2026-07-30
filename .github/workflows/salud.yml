@@ -1,5 +1,6 @@
-# Dead-man's switch del sistema. Corre salud_sistema() (migración 056) cada hora,
-# más el vigía de cajas de catálogo ML (/api/salud/cajas — guerra de catálogo 29/07).
+# Dead-man's switch del sistema. Corre salud_sistema() (migración 056/059) cada hora, más los tres
+# vigías que no entran en vercel.json: cajas de catálogo ML (/api/salud/cajas), rechazos de ads
+# (/api/monitor/ad-review) y estado de las cuentas de Meta (/api/salud/cuentas).
 #
 # El canal de alerta es la propia corrida: si hay algo ROJO el job FALLA y GitHub manda el mail.
 # Sin infra nueva, sin n8n, sin webhooks — reusa el secret DATABASE_URL del backup.
@@ -87,11 +88,14 @@ jobs:
             || { echo "::error title=ad-review::/api/monitor/ad-review no respondió"; exit 1; }
           echo "$resp" | jq -c '{accounts, open, warnings}'
 
+          # familia (§060) = el veredicto que antes había que ir a buscar al Graph a mano:
+          # CONTENIDO → reescribir el creativo (motivo = la política citada).
+          # ENTIDAD   → el mismo creativo está ACTIVE en otro adset: recrear y listo.
           abiertos=$(echo "$resp" | jq -r '.open // 0')
           {
             echo "## Rechazos de ads (Meta)"
             if [ "$abiertos" = "0" ]; then echo "✅ Sin ads rechazados abiertos."; else
-              echo "$resp" | jq -r '.issues[] | "- 🔴 **\(.ad_name)** · \(.campaign_name) · \(.effective_status) · desde \(.first_seen_at)"'
+              echo "$resp" | jq -r '.issues[] | "- 🔴 **\(.ad_name)** · \(.campaign_name) · \(.effective_status) · **\(.familia)**\(if .motivo then " — " + .motivo else "" end) · desde \(.first_seen_at)"'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -99,6 +103,33 @@ jobs:
           # avisado no puede mandar un mail por hora hasta que alguien lo resuelva.
           nuevos=$(echo "$resp" | jq -r '[.issues[] | select((.first_seen_at | fromdateiso8601? // 0) > (now - 3900))] | length')
           if [ "${nuevos:-0}" -gt 0 ]; then
-            echo "$resp" | jq -r '.issues[] | select((.first_seen_at | fromdateiso8601? // 0) > (now - 3900)) | "::error title=ad rechazado \(.ad_name)::\(.campaign_name) · \(.effective_status)"'
+            echo "$resp" | jq -r '.issues[] | select((.first_seen_at | fromdateiso8601? // 0) > (now - 3900)) | "::error title=\(.familia) · ad rechazado \(.ad_name)::\(.campaign_name) · \(.effective_status) · \(.motivo // "sin issues_info → mismo creativo vivo en otro adset, recrear como entidad nueva")"'
+            exit 1
+          fi
+
+      # Vigía del account_status de las cuentas de Meta (§061). No existía: "la mejora pendiente más
+      # útil" del Playbook-Contingencia §6. Al 30/07, de 54 cuentas visibles 11 están UNSETTLED y 10
+      # DISABLED, y toda la operación cuelga de UNA sola ACTIVE. Acá y no en vercel.json por lo mismo
+      # que el paso de arriba: Hobby rechaza los crons no diarios y voltea el deploy entero.
+      - name: Estado de las cuentas de Meta
+        if: always()
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET" || { echo "::error::falta el secret CRON_SECRET"; exit 1; }
+          resp=$(curl -sf --max-time 60 -X POST -H "Authorization: Bearer $CRON_SECRET" \
+            "https://biolabs-finanzas.vercel.app/api/salud/cuentas") \
+            || { echo "::error title=cuentas-meta::/api/salud/cuentas no respondió"; exit 1; }
+          echo "$resp" | jq -c '{rojo, cambios}'
+
+          {
+            echo "## Cuentas de Meta"
+            echo "$resp" | jq -r '.cuentas[] | "- \(if .status == "ACTIVE" then "🟢" else "🔴" end) **\(.name)** `\(.account_id)` — \(.status)\(if .prev_status then " · antes " + .prev_status else "" end)"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Falla solo la TRANSICIÓN a no-ACTIVE (la ruta lo calcula con prev_status + changed_at):
+          # una cuenta que ya está caída hace días no puede mandar un mail por hora.
+          if [ "$(echo "$resp" | jq -r .rojo)" = "true" ]; then
+            echo "$resp" | jq -r '.cambios[] | select(.status != "ACTIVE") | "::error title=cuenta \(.name) \(.status)::pasó de \(.prev_status) a \(.status)\(if .status == "UNSETTLED" then " — saldo impago, NO es sanción: se paga y vuelve, no quemes una cuenta de respaldo" else " — baneo real: rotar a la de respaldo (env en Vercel + backfill del período ciego + redeploy)" end)"'
             exit 1
           fi

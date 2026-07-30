@@ -23,12 +23,20 @@ do $$ begin
 end $$;
 update sync_runs set started_at = now() - interval '2 minutes' where connector = 'urbano';
 
--- 2. Sync con error.
+-- 2. Sync cuya ÚLTIMA corrida falló (059: antes era cualquier error en 6 h).
 insert into sync_runs (connector, started_at, status, error)
-values ('fixy', now() - interval '10 minutes', 'error', 'boom');
+values ('fixy', now() - interval '1 minute', 'error', 'boom');
 do $$ begin
   assert (select count(*) from salud_sistema() where area = 'sync:fixy' and severidad = 'ROJO') = 1,
     'sync con error tiene que salir en ROJO';
+end $$;
+
+-- ...y se apaga solo cuando el conector vuelve a correr bien: sin esto eran ~6 mails rojos por hora
+-- de un problema ya resuelto, que es la fatiga de alerta que 059 vino a matar.
+insert into sync_runs (connector, started_at, status) values ('fixy', now(), 'ok');
+do $$ begin
+  assert (select count(*) from salud_sistema() where area = 'sync:fixy') = 0,
+    'un sync arreglado no puede seguir en ROJO';
 end $$;
 delete from sync_runs where status = 'error';
 

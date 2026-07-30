@@ -2,7 +2,7 @@
 // Uso: node scripts/db-test.mjs
 // (contra Supabase real alcanza: psql $DATABASE_URL -f supabase/tests/pnl_check.sql)
 import EmbeddedPostgres from 'embedded-postgres';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -26,63 +26,12 @@ try {
   const client = pg.getPgClient('app');
   await client.connect();
   await client.query(bootstrap);
-  for (const f of ['supabase/migrations/001_init.sql', 'supabase/migrations/002_rpcs.sql',
-                   'supabase/migrations/003_matching_shopify_id.sql',
-                   'supabase/migrations/004_fixy_status_map.sql',
-                   'supabase/migrations/005_urbano_status_map.sql',
-                   'supabase/migrations/006_pack_quantity.sql',
-                   'supabase/migrations/007_dashboard_agg.sql',
-                   'supabase/migrations/008_fixy_api_status.sql',
-                   'supabase/migrations/009_estimated_pnl.sql',
-                   'supabase/migrations/010_urbano_ra_rv_map.sql',
-                   'supabase/migrations/011_ads_period_alloc.sql',
-                   'supabase/migrations/012_canal_cuotas_correo.sql',
-                   'supabase/migrations/013_dispatch_from_tag.sql',
-                   'supabase/migrations/014_fixy_api_link.sql',
-                   'supabase/migrations/015_correo_sin_proyeccion.sql',
-                   'supabase/migrations/016_correo_cohorte_art.sql',
-                   'supabase/migrations/017_ads_adset.sql',
-                   'supabase/migrations/018_no_despachado.sql',
-                   'supabase/migrations/019_urbano_estado_autoritativo.sql',
-                   'supabase/migrations/020_ml_orders.sql',
-                   'supabase/migrations/021_ml_flete_pack.sql',
-                   'supabase/migrations/022_pnl_canal_ml.sql',
-                   'supabase/migrations/023_bot_pnl.sql',
-                   'supabase/migrations/024_producto_override.sql',
-                   'supabase/migrations/025_flex_estimado.sql',
-                   'supabase/migrations/026_ml_ads.sql',
-                   'supabase/migrations/027_producto_m3.sql',
-                   'supabase/migrations/028_sales_pnl.sql',
-                   'supabase/migrations/029_urbano_discover.sql',
-                   'supabase/migrations/030_sales_trabadas.sql',
-                   'supabase/migrations/031_sales_by_product.sql',
-                   'supabase/migrations/032_desglose_costos.sql',
-                   'supabase/migrations/033_urbano_cobranza.sql',
-                   'supabase/migrations/034_analisis.sql',
-                   'supabase/migrations/035_analisis_v2.sql',
-                   'supabase/migrations/036_margen_neto.sql',
-                   'supabase/migrations/037_sin_cohorte_sin_ml.sql',
-                   'supabase/migrations/038_trabados_list.sql',
-                   'supabase/migrations/039_urbano_codigos_faltantes.sql',
-                   'supabase/migrations/040_fixy_codigos_faltantes.sql',
-                   'supabase/migrations/041_fixy_cobranza.sql',
-                   'supabase/migrations/042_courier_tiempos.sql',
-                   'supabase/migrations/043_ml_retenciones.sql',
-                   'supabase/migrations/044_ml_liquidacion.sql',
-                   'supabase/migrations/045_ml_flex_bonif.sql',
-                   'supabase/migrations/046_ml_percepciones.sql',
-                   'supabase/migrations/047_percepciones_columna.sql',
-                   'supabase/migrations/048_mp_khalil_fee.sql',
-                   'supabase/migrations/049_packs_pmin.sql',
-                   'supabase/migrations/050_packs_estimado.sql',
-                   'supabase/migrations/051_anuncios.sql',
-                   'supabase/migrations/052_fixy_codigos_faltantes.sql',
-                   'supabase/migrations/053_chat.sql',
-                   'supabase/migrations/054_ad_review.sql',
-                   'supabase/migrations/055_urbano_ei_entregado.sql',
-                                      'supabase/migrations/056_salud_sistema.sql',
-                   'supabase/migrations/057_devoluciones_viejas.sql',
-                   'supabase/migrations/058_rls_schema_migrations.sql',
+  // Las migraciones se descubren solas: el prefijo numérico ES el orden. La lista a mano se
+  // olvidaba — 059 nunca entró y salud_check corría contra la versión vieja de salud_sistema().
+  const migraciones = readdirSync('supabase/migrations').filter((f) => f.endsWith('.sql')).sort()
+    .map((f) => `supabase/migrations/${f}`);
+
+  for (const f of [...migraciones,
                    'supabase/tests/salud_check.sql',
                    'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
                    'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
@@ -101,6 +50,7 @@ try {
                    'supabase/tests/anuncios_check.sql',
                    'supabase/tests/chat_check.sql',
                    'supabase/tests/ad_review_check.sql',
+                   'supabase/tests/account_status_check.sql',
                    'supabase/tests/urbano_ei_check.sql',
                    'supabase/tests/devoluciones_viejas_check.sql']) {
     process.stdout.write(`→ ${f} ... `);

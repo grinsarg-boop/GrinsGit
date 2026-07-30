@@ -98,12 +98,23 @@ async function fetchAccountInsights(account: string, sinceArg?: string, untilArg
   return rows;
 }
 
+type IssueInfo = { error_code?: number; error_summary?: string; error_message?: string; level?: string };
+
+// `issues_info` + `ad_review_feedback` son lo que separa las DOS familias de rechazo (Learnings 28/07):
+//   CONTENIDO — viene con issues_info citando la política → hay que reescribir el creativo.
+//   ENTIDAD   — sin issues_info: el MISMO creativo está ACTIVE en otro adset. No hay nada que
+//               arreglar, se recrea como entidad nueva.
+// Sin estos dos campos el monitor decía "hay 20 problemas" y alguien tenía que pegarle a mano al
+// Graph API para saber cuál era cuál (pasó el 27/07). La clasificación la hace la columna generada
+// `familia` de ad_review_issues (§060), no el TS: quien lea la tabla la tiene gratis.
 export type AdReviewIssue = {
   ad_id: string;
   ad_name: string;
   adset_name: string;
   campaign_name: string;
   effective_status: string;
+  issues_info: IssueInfo[] | null;
+  ad_review_feedback: unknown | null;
 };
 
 // Ads con problema de revisión/entrega (DISAPPROVED / WITH_ISSUES) de UNA cuenta. Barato: filtra
@@ -115,7 +126,7 @@ export async function fetchAdReviewIssues(accountId: string): Promise<AdReviewIs
   let url: string | undefined =
     `https://graph.facebook.com/${v}/${acct}/ads?` +
     new URLSearchParams({
-      fields: "id,name,adset{name},campaign{name},effective_status",
+      fields: "id,name,adset{name},campaign{name},effective_status,issues_info,ad_review_feedback",
       effective_status: JSON.stringify(["DISAPPROVED", "WITH_ISSUES"]),
       limit: "200",
       access_token: process.env.META_ACCESS_TOKEN!,
@@ -128,6 +139,7 @@ export async function fetchAdReviewIssues(accountId: string): Promise<AdReviewIs
       data?: {
         id: string; name?: string; adset?: { name?: string };
         campaign?: { name?: string }; effective_status: string;
+        issues_info?: IssueInfo[]; ad_review_feedback?: unknown;
       }[];
       paging?: { next?: string };
       error?: unknown;
@@ -140,9 +152,53 @@ export async function fetchAdReviewIssues(accountId: string): Promise<AdReviewIs
         adset_name: a.adset?.name ?? "",
         campaign_name: a.campaign?.name ?? "",
         effective_status: a.effective_status,
+        // Array.isArray: la familia se decide por "hay issues_info o no", así que un shape raro
+        // tiene que caer en null (= ENTIDAD) y no colarse como objeto vacío.
+        issues_info: Array.isArray(a.issues_info) ? a.issues_info : null,
+        ad_review_feedback: a.ad_review_feedback ?? null,
       });
     }
     url = body.paging?.next;
   }
   return out;
+}
+
+// account_status de Meta. La distinción que importa: UNSETTLED es saldo impago (NO es sanción: se
+// paga y la cuenta vuelve), DISABLED es baneo de verdad. Entrar en pánico por un UNSETTLED y quemar
+// una cuenta de respaldo es el error caro (Playbook-Contingencia §6).
+const ACCOUNT_STATUS: Record<number, string> = {
+  1: "ACTIVE", 2: "DISABLED", 3: "UNSETTLED", 7: "PENDING_RISK_REVIEW", 8: "PENDING_SETTLEMENT",
+  9: "IN_GRACE_PERIOD", 100: "PENDING_CLOSURE", 101: "CLOSED", 201: "ANY_ACTIVE", 202: "ANY_CLOSED",
+};
+
+export type AccountStatus = { account_id: string; name: string; status: string; status_code: number };
+
+// Estado de las cuentas que ve resolveAccounts(). Una sola llamada batch (?ids=): si falla, falla
+// entera, y eso también es alerta (queda error en sync_runs → salud_sistema ROJO). Una cuenta que
+// Graph no devuelve queda en DESCONOCIDO_0, que como cambio de estado también avisa.
+// ponytail: el batch de Graph topea en 50 ids; el filtro "Tienda R" deja un puñado.
+export async function fetchAccountStatuses(): Promise<AccountStatus[]> {
+  const accounts = await resolveAccounts();
+  const v = process.env.META_API_VERSION ?? "v25.0";
+  const res = await fetch(
+    `https://graph.facebook.com/${v}/?` +
+      new URLSearchParams({
+        ids: accounts.join(","),
+        fields: "name,account_status",
+        access_token: process.env.META_ACCESS_TOKEN!,
+      }),
+  );
+  const body: Record<string, { name?: string; account_status?: number } | undefined> & { error?: unknown } =
+    await res.json();
+  if (!res.ok) throw new Error(`Meta account_status ${res.status}: ${JSON.stringify(body.error ?? body)}`);
+
+  return accounts.map((id) => {
+    const code = body[id]?.account_status ?? 0;
+    return {
+      account_id: id,
+      name: body[id]?.name ?? "",
+      status: ACCOUNT_STATUS[code] ?? `DESCONOCIDO_${code}`,
+      status_code: code,
+    };
+  });
 }
