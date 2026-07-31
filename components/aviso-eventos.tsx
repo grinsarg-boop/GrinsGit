@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { fmtDate } from "@/lib/format";
-import { enRango, esFranja, type Evento } from "@/lib/eventos";
+import { SELECT_EVENTOS, enRango, esFranja, type Evento } from "@/lib/eventos";
 import { supabaseAdmin } from "@/lib/supabase";
 
 // Aviso de "dato no comparable" arriba de las tablas cuyo rango cruza una FRANJA (migración 065).
@@ -13,7 +13,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 // query falla y no se dibuja nada. Nunca puede tirar la página.
 export async function AvisoEventos({ from, to }: { from: string; to: string }) {
   const { data } = await supabaseAdmin().from("eventos")
-    .select("id, fecha, fecha_fin, texto").lte("fecha", to).order("fecha", { ascending: false });
+    .select(SELECT_EVENTOS).lte("fecha", to).order("fecha", { ascending: false });
   const evs = enRango((data ?? []) as Evento[], from, to);
   if (!evs.length) return null;
 

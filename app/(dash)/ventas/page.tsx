@@ -11,7 +11,7 @@ import { ProfitBars } from "@/components/profit-bars";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { breakEven } from "@/lib/breakeven";
 import { claseSemaforo, nivel, percentil } from "@/lib/semaforo";
-import { type Evento } from "@/lib/eventos";
+import { SELECT_EVENTOS, type Evento } from "@/lib/eventos";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -79,7 +79,7 @@ export default async function Ventas({
     db.rpc("sales_days", { p_from: baseFrom, p_courier: courierParam }),
     db.rpc("sales_by_product", { p_from: from, p_to: to, p_courier: courierParam }),
     db.rpc("entrega_semanal", { p_desde: daysAgoIso(7 * 13) }),   // 13 semanas, sin filtro de courier
-    db.from("eventos").select("id, fecha, fecha_fin, texto").lte("fecha", to),
+    db.from("eventos").select(SELECT_EVENTOS).lte("fecha", to),
   ]);
   const eventos = (evRaw ?? []) as Evento[];
   const todos: Day[] = ((rows ?? []) as Row[])
@@ -196,20 +196,24 @@ export default async function Ventas({
   // La entrega madura ~21 días, así que las 3 últimas semanas van huecas: van a SUBIR solas. El número
   // grande de cada card es la última semana ya firme.
   const semanasEnt = [...new Set(((entRaw ?? []) as SemanaEnt[]).map((r) => r.semana))].sort().slice(1); // la 1ª viene cortada
-  const entPorCourier = ["urbano", "fixy", "correo", "ml"].map((c) => {
+  const entTodos = ["urbano", "fixy", "correo", "ml"].map((c) => {
     const porSemana = new Map(((entRaw ?? []) as SemanaEnt[]).filter((r) => r.courier === c).map((r) => [r.semana, r]));
-    // Un courier que no despachó alguna semana del rango queda afuera: dibujar el hueco como si fuera
-    // un punto más correría el eje del tiempo y la forma sería falsa.
+    // Un courier que no despachó alguna semana del rango queda afuera de la grilla: dibujar el hueco
+    // como si fuera un punto más correría el eje del tiempo y las cards dejarían de ser comparables
+    // entre sí, que es lo único que justifica compartir escala. Se dice cuál quedó afuera y por qué.
     const pts = semanasEnt.map((s) => porSemana.get(s));
-    if (pts.some((p) => !p || p.despachadas < 1)) return null;
+    if (pts.length < 3 || pts.some((p) => !p || p.despachadas < 1)) return { courier: c, serie: null };
     const serie = pts.map((p, i) => ({ x: semanasEnt[i], v: p!.entregadas / p!.despachadas }));
     const iFirme = Math.max(serie.length - 1 - MADURA_SEMANAS, 0);
     return {
       courier: c, serie,
-      firme: serie[iFirme]?.v ?? NaN, previa: serie[iFirme - 1]?.v ?? NaN,
+      firme: serie[iFirme].v, previa: serie[iFirme - 1]?.v ?? NaN,
       guiasFirme: pts[iFirme]!.despachadas,
+      semanas: porSemana.size,
     };
-  }).filter((x): x is NonNullable<typeof x> => x !== null && x.serie.length >= 3);
+  });
+  const entPorCourier = entTodos.filter((x): x is Extract<typeof x, { serie: { x: string; v: number }[] }> => x.serie !== null);
+  const entFuera = entTodos.filter((x) => x.serie === null);
 
   return (
     <main className="space-y-6">
@@ -452,6 +456,13 @@ export default async function Ventas({
                 </div>
               ))}
             </div>
+            {entFuera.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Sin card: {entFuera.map((e) => COURIER_NOMBRE[e.courier] ?? e.courier).join(" · ")} — no
+                despacharon todas las {semanasEnt.length} semanas del rango, y una serie con huecos no es
+                comparable contra las otras.
+              </p>
+            )}
           </CardContent>
         </Card>
       )}

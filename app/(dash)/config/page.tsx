@@ -75,8 +75,12 @@ async function saveEvento(formData: FormData) {
   const texto = String(formData.get("texto") ?? "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !texto) return;
   if (fin && (!/^\d{4}-\d{2}-\d{2}$/.test(fin) || fin < fecha)) return;
+  // en_graficos: si el evento afecta lo que las curvas PLOTEAN se dibuja encima; si solo afecta datos
+  // de terceros (Meta, AppAds) alcanza con el aviso de texto, que sí puede matizar cuál número está
+  // tocado y cuál no. Una trama sobre la serie dice "no compares esto" y no sabe matizar.
   await supabaseAdmin().from("eventos").upsert(
-    { fecha, fecha_fin: fin || null, texto }, { onConflict: "fecha,texto" });
+    { fecha, fecha_fin: fin || null, texto, en_graficos: formData.get("en_graficos") !== null },
+    { onConflict: "fecha,texto" });
   revalidatePath("/config"); revalidatePath("/"); revalidatePath("/tendencias");
 }
 
@@ -96,9 +100,9 @@ export default async function ConfigPage() {
     db.from("settings").select("key, value").order("key"),
     db.from("product_costs").select("product_id, pack, unit_cost, is_estimated"),
     db.from("products").select("id, name").eq("active", true).order("name"),
-    db.from("eventos").select("id, fecha, fecha_fin, texto").order("fecha", { ascending: false }),
+    db.from("eventos").select("id, fecha, fecha_fin, texto, en_graficos").order("fecha", { ascending: false }),
   ]);
-  const eventoRows = (eventos ?? []) as { id: number; fecha: string; fecha_fin: string | null; texto: string }[];
+  const eventoRows = (eventos ?? []) as { id: number; fecha: string; fecha_fin: string | null; texto: string; en_graficos: boolean }[];
   const pname = new Map((products ?? []).map((p) => [p.id, p.name as string]));
   const costRows = ((costs ?? []) as { product_id: number; pack: number; unit_cost: number; is_estimated: boolean }[])
     .sort((a, b) => (pname.get(a.product_id) ?? "").localeCompare(pname.get(b.product_id) ?? "") || a.pack - b.pack);
@@ -171,6 +175,11 @@ export default async function ConfigPage() {
               <TableHead className="w-28">Desde</TableHead>
               <TableHead className="w-28">Hasta</TableHead>
               <TableHead>Qué pasó</TableHead>
+              <TableHead className="w-24 text-center">
+                <span className="inline-flex items-center gap-1">Gráficos
+                  <Tip tip="Si está, el evento se dibuja sobre las curvas además de avisarse. Dejalo apagado cuando el evento no afecta lo que el panel PLOTEA sino un dato de terceros (Meta, AppAds): una franja sobre la serie dice 'no compares esto' y ahí sería falso." />
+                </span>
+              </TableHead>
               <TableHead className="w-16" />
             </TableRow>
           </TableHeader>
@@ -180,6 +189,7 @@ export default async function ConfigPage() {
                 <TableCell className="tabular-nums">{e.fecha}</TableCell>
                 <TableCell className="tabular-nums text-muted-foreground">{e.fecha_fin ?? "—"}</TableCell>
                 <TableCell className="text-sm">{e.texto}</TableCell>
+                <TableCell className="text-center text-muted-foreground">{e.en_graficos ? "sí" : "—"}</TableCell>
                 <TableCell>
                   <form action={borrarEvento}>
                     <input type="hidden" name="id" value={e.id} />
@@ -189,7 +199,7 @@ export default async function ConfigPage() {
               </TableRow>
             ))}
             {!eventoRows.length && (
-              <TableRow><TableCell colSpan={4} className="text-sm text-muted-foreground">Sin eventos cargados</TableCell></TableRow>
+              <TableRow><TableCell colSpan={5} className="text-sm text-muted-foreground">Sin eventos cargados</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
@@ -197,6 +207,10 @@ export default async function ConfigPage() {
           <input type="date" name="fecha" required aria-label="Desde" className="rounded border bg-background px-2 py-1 text-sm" />
           <input type="date" name="fecha_fin" aria-label="Hasta (opcional, para una franja)" className="rounded border bg-background px-2 py-1 text-sm" />
           <input type="text" name="texto" required placeholder="qué pasó ese día" className="min-w-0 flex-1 rounded border bg-background px-2 py-1 text-sm" />
+          <label className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+            <input type="checkbox" name="en_graficos" defaultChecked className="size-3.5 accent-foreground" />
+            dibujar en los gráficos
+          </label>
           <SaveButton>Agregar</SaveButton>
         </form>
       </section>
