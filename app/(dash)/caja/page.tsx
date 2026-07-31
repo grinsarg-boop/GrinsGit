@@ -5,6 +5,7 @@ import {
 } from "@/components/ui/table";
 import { CajaFlujo } from "@/components/caja-flujo";
 import { CajaPendiente } from "@/components/caja-pendiente";
+import { Cobranzas } from "@/components/cobranzas";
 import { Panel } from "@/components/panel";
 import { daysAgoIso, fmtDate, fmtMoney } from "@/lib/format";
 import {
@@ -34,13 +35,18 @@ export default async function Caja() {
   try {
     cf = await fetchCashflow();
   } catch (e) {
+    // La caja caída no puede llevarse puestos los bloques de cobranza: esos salen de nuestra base y
+    // desde que dejaron el Resumen (F1-15) esta es la única pantalla donde viven.
     return (
-      <Card>
-        <CardContent className="py-8 text-sm text-muted-foreground">
-          No pude leer la app Cashflow ({e instanceof Error ? e.message : "error"}). Reintentá en un rato;
-          si persiste, revisar CASHFLOW_ANON_KEY.
-        </CardContent>
-      </Card>
+      <div className="space-y-6">
+        <Card>
+          <CardContent className="py-8 text-sm text-muted-foreground">
+            No pude leer la app Cashflow ({e instanceof Error ? e.message : "error"}). Reintentá en un rato;
+            si persiste, revisar CASHFLOW_ANON_KEY.
+          </CardContent>
+        </Card>
+        <Cobranzas />
+      </div>
     );
   }
 
@@ -170,6 +176,17 @@ export default async function Caja() {
           </div>
         </Panel>
       )}
+
+      {/* Conciliación de cobranza: qué falta cobrar y qué falta pagar, por ciclo de cada canal.
+          Estaban en el Resumen, que arrancaba con ocho preocupaciones; son percibido, viven acá. */}
+      <div className="space-y-1">
+        <h2 className="text-sm font-semibold">Qué falta cobrar y pagar</h2>
+        <p className="text-sm text-muted-foreground">
+          Los cuatro ciclos de cobranza, cada uno con su calendario propio — no siguen ningún rango:
+          el flete que le debemos a Urbano, el COD que Urbano nos debe, los sobres de Fixy y lo que ML retiene.
+        </p>
+      </div>
+      <Cobranzas />
 
       {/* Flujo de movimientos */}
       <Panel

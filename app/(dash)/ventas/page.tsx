@@ -6,6 +6,8 @@ import {
 import Link from "next/link";
 import { ProfitBars } from "@/components/profit-bars";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
+import { breakEven } from "@/lib/breakeven";
+import { claseSemaforo, nivel, percentil } from "@/lib/semaforo";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -17,12 +19,12 @@ export const revalidate = 60;
 // despacho. Responde: cada día que vendés, ¿cuánto vas a ganar con esas ventas y cuánto te costó generarlas?
 type Day = {
   date: string; generadas: number; despachadas: number; entregadas: number; resueltas: number;
-  revenueConf: number; revenueEst: number; profitConf: number; profitEst: number; ads: number; adsSinCohorte: number;
+  revenueConf: number; revenueEst: number; profitConf: number; profitEst: number; ads: number; adsMl: number; adsSinCohorte: number;
   trabadas: number; flete: number; comisiones: number; percepciones: number;
 };
 type MonthAgg = {
   month: string; generadas: number; despachadas: number; entregadas: number;
-  revenueEst: number; profitConf: number; profitEst: number; ads: number;
+  revenueEst: number; profitConf: number; profitEst: number; ads: number; adsMl: number;
   flete: number; comisiones: number; percepciones: number;
 };
 
@@ -51,7 +53,7 @@ export default async function Ventas({
   type Row = {
     sale_date: string; generadas: number; despachadas: number; entregadas: number; resueltas: number;
     trabadas: number; revenue_confirmado: number; revenue_estimado: number; profit_confirmado: number;
-    profit_estimado: number; flete: number; comisiones: number; ads: number; ads_sin_cohorte: number; percepciones: number;
+    profit_estimado: number; flete: number; comisiones: number; ads: number; ads_sin_cohorte: number; percepciones: number; ads_ml: number;
   };
   type ProdRow = {
     courier: string; product_id: number | null; product: string;
@@ -59,28 +61,35 @@ export default async function Ventas({
     revenue_estimado: number; profit_confirmado: number; profit_estimado: number;
     flete: number; comisiones: number; ads: number; percepciones: number;
   };
+  // Se pide desde el más viejo entre el rango elegido y 90 días atrás: una sola llamada trae las filas
+  // del panel Y la base del semáforo (F1-09), que se mide siempre sobre 90 días — el umbral no puede
+  // depender del preset que estés mirando.
+  const baseFrom = from < daysAgoIso(90) ? from : daysAgoIso(90);
   const [{ data: rows }, { data: prodRows }] = await Promise.all([
-    db.rpc("sales_days", { p_from: from, p_courier: courierParam }),
+    db.rpc("sales_days", { p_from: baseFrom, p_courier: courierParam }),
     db.rpc("sales_by_product", { p_from: from, p_to: to, p_courier: courierParam }),
   ]);
-  const list: Day[] = ((rows ?? []) as Row[])
+  const todos: Day[] = ((rows ?? []) as Row[])
     .map((r): Day => ({
       date: r.sale_date, generadas: r.generadas, despachadas: r.despachadas, entregadas: r.entregadas,
       resueltas: r.resueltas, revenueConf: Number(r.revenue_confirmado), revenueEst: Number(r.revenue_estimado),
       profitConf: Number(r.profit_confirmado), profitEst: Number(r.profit_estimado),
-      ads: Number(r.ads), adsSinCohorte: Number(r.ads_sin_cohorte), trabadas: r.trabadas ?? 0,
+      ads: Number(r.ads), adsMl: Number(r.ads_ml ?? 0), adsSinCohorte: Number(r.ads_sin_cohorte), trabadas: r.trabadas ?? 0,
       flete: Number(r.flete), comisiones: Number(r.comisiones), percepciones: Number(r.percepciones),
-    }))
-    .filter((d) => d.date <= to);
+    }));
+  const list: Day[] = todos.filter((d) => d.date >= from && d.date <= to);
+  // p25 del CPA diario de 90 días: en CPA mejorar es bajar, así que el cuartil BUENO es el de abajo.
+  const p25Cpa = percentil(
+    todos.filter((d) => d.date >= daysAgoIso(90) && d.generadas > 0 && d.ads > 0).map((d) => d.ads / d.generadas), 0.25);
 
   let meses: MonthAgg[] = [];
   if (vista === "meses") {
     const m = new Map<string, MonthAgg>();
     for (const d of list) {
       const k = d.date.slice(0, 7);
-      const a = m.get(k) ?? { month: k, generadas: 0, despachadas: 0, entregadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, flete: 0, comisiones: 0, percepciones: 0 };
+      const a = m.get(k) ?? { month: k, generadas: 0, despachadas: 0, entregadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, adsMl: 0, flete: 0, comisiones: 0, percepciones: 0 };
       a.generadas += d.generadas; a.despachadas += d.despachadas; a.entregadas += d.entregadas;
-      a.revenueEst += d.revenueEst; a.profitConf += d.profitConf; a.profitEst += d.profitEst; a.ads += d.ads;
+      a.revenueEst += d.revenueEst; a.profitConf += d.profitConf; a.profitEst += d.profitEst; a.ads += d.ads; a.adsMl += d.adsMl;
       a.flete += d.flete; a.comisiones += d.comisiones; a.percepciones += d.percepciones;
       m.set(k, a);
     }
@@ -146,15 +155,27 @@ export default async function Ventas({
   const rango = list.reduce((acc, d) => {
     acc.generadas += d.generadas; acc.despachadas += d.despachadas;
     acc.revenueEst += d.revenueEst; acc.profitConf += d.profitConf; acc.profitEst += d.profitEst;
-    acc.ads += d.ads; acc.adsSinCohorte += d.adsSinCohorte;
+    acc.ads += d.ads; acc.adsMl += d.adsMl; acc.adsSinCohorte += d.adsSinCohorte;
     return acc;
-  }, { generadas: 0, despachadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, adsSinCohorte: 0 });
+  }, { generadas: 0, despachadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, adsMl: 0, adsSinCohorte: 0 });
   const rProfitEst = rango.profitEst - rango.adsSinCohorte;
   const rProfitConf = rango.profitConf - rango.adsSinCohorte;
   const rEnCamino = rProfitEst - rProfitConf;
   const adsTot = rango.ads + rango.adsSinCohorte;
   const cpa = rango.generadas ? adsTot / rango.generadas : 0;   // costo de adquisición por venta generada
   const roas = adsTot > 0 ? rango.revenueEst / adsTot : 0;
+
+  // Break-even CPA del rango (Playbook-Faris §8): arriba de eso cada venta nueva destruye plata. Es el
+  // corte rojo del semáforo del CPA diario; el verde es el p25 de 90 días.
+  const be = breakEven(list.map((d) => ({ generadas: d.generadas, revenueEst: d.revenueEst, ads: d.ads, profitEst: d.profitEst })));
+  const cortesCpa: [number, number] = [be.cpa, p25Cpa];
+
+  // Ads por FUENTE (F1-11): los Product Ads de ML son la parte de `ads` de las filas courier='ml';
+  // todo el resto —incluida la pauta sin cohorte, que sale de ad_spend— es Meta. Suman el total exacto.
+  // El split en las tablas solo aporta en "Todos": con filtro de courier es todo Meta o todo ML.
+  const adsMl = rango.adsMl;
+  const adsMeta = adsTot - adsMl;
+  const splitAds = !courierParam;
 
   return (
     <main className="space-y-6">
@@ -293,6 +314,11 @@ export default async function Ventas({
                 <Tip tip="Gasto total en Ads del rango (incluido el que no ancló a ninguna venta) dividido las ventas generadas. Cuánto te costó generar cada venta." />
               </div>
               <div className="text-base font-semibold tabular-nums">{cpa > 0 ? fmtMoney(cpa) : "—"}</div>
+              {adsTot > 0 && (
+                <div className="pt-0.5 text-[0.7rem] tabular-nums text-muted-foreground">
+                  Meta {fmtMoney(adsMeta)} · ML {fmtMoney(adsMl)}
+                </div>
+              )}
             </div>
             <div>
               <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">ROAS est.</div>
@@ -394,10 +420,26 @@ export default async function Ventas({
             <TableHead className="text-right">Envío <Tip tip={TIP_FLETE} /></TableHead>
             <TableHead className="text-right">Comis. <Tip tip={TIP_COMIS} /></TableHead>
             <TableHead className="text-right">Percep. <Tip tip={TIP_PERCEP} /></TableHead>
-            <TableHead className="text-right">Ads</TableHead>
+            {splitAds ? (
+              <>
+                <TableHead className="text-right">Ads Meta</TableHead>
+                <TableHead className="text-right">
+                  <span className="inline-flex items-center gap-1">Ads ML
+                    <Tip tip="Product Ads de MercadoLibre (con IVA), imputados a la publicación real desde la 062. Es una pauta con otra economía: se puja por publicación y no pasa por ad_spend, así que nunca cae en 'sin cohorte'." />
+                  </span>
+                </TableHead>
+              </>
+            ) : (
+              <TableHead className="text-right">Ads</TableHead>
+            )}
             <TableHead className="text-right">
               <span className="inline-flex items-center gap-1">CPA
-                <Tip tip="Gasto en Ads del día dividido las ventas generadas ese día. El costo de adquisición real por venta." />
+                <Tip tip={`Gasto en Ads del día dividido las ventas generadas ese día. El costo de adquisición real por venta.${
+                  isFinite(be.cpa)
+                    ? ` El color es contra umbrales MEDIDOS, no inventados: rojo arriba del break-even del rango (${fmtMoney(be.cpa)} — ahí cada venta nueva destruye plata)${
+                        isFinite(p25Cpa) ? `, verde debajo de ${fmtMoney(p25Cpa)}, que es el percentil 25 de tus propios días de los últimos 90` : ""}. El break-even se mueve con la tasa de entrega mucho más que con la puja, por eso se calcula sobre el rango y no es una constante.`
+                    : ""
+                }`} />
               </span>
             </TableHead>
           </TableRow>
@@ -455,14 +497,25 @@ export default async function Ventas({
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.flete ? fmtMoney(d.flete) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.comisiones ? fmtMoney(d.comisiones) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.percepciones ? fmtMoney(d.percepciones) : "—"}</TableCell>
-                <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads ? fmtMoney(d.ads) : "—"}</TableCell>
-                <TableCell className="text-right tabular-nums text-muted-foreground">{cpaDia > 0 ? fmtMoney(cpaDia) : "—"}</TableCell>
+                {splitAds ? (
+                  <>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads - d.adsMl ? fmtMoney(d.ads - d.adsMl) : "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{d.adsMl ? fmtMoney(d.adsMl) : "—"}</TableCell>
+                  </>
+                ) : (
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads ? fmtMoney(d.ads) : "—"}</TableCell>
+                )}
+                {/* Semáforo contra umbral medido (F1-09). El CPA queda firme el mismo día —no madura—
+                    así que acá sí se pinta siempre que haya ventas y pauta. */}
+                <TableCell className={cn("text-right tabular-nums", cpaDia > 0 ? claseSemaforo(nivel(cpaDia, cortesCpa, "baja")) : "text-muted-foreground")}>
+                  {cpaDia > 0 ? fmtMoney(cpaDia) : "—"}
+                </TableCell>
               </TableRow>
             );
           })}
           {!list.length && (
             <TableRow>
-              <TableCell colSpan={9} className="text-center text-muted-foreground">Sin ventas en el rango elegido</TableCell>
+              <TableCell colSpan={splitAds ? 11 : 10} className="text-center text-muted-foreground">Sin ventas en el rango elegido</TableCell>
             </TableRow>
           )}
         </TableBody>
@@ -479,7 +532,18 @@ export default async function Ventas({
             <TableHead className="text-right">Envío <Tip tip={TIP_FLETE} /></TableHead>
             <TableHead className="text-right">Comis. <Tip tip={TIP_COMIS} /></TableHead>
             <TableHead className="text-right">Percep. <Tip tip={TIP_PERCEP} /></TableHead>
-            <TableHead className="text-right">Ads</TableHead>
+            {splitAds ? (
+              <>
+                <TableHead className="text-right">Ads Meta</TableHead>
+                <TableHead className="text-right">
+                  <span className="inline-flex items-center gap-1">Ads ML
+                    <Tip tip="Product Ads de MercadoLibre (con IVA), imputados a la publicación real desde la 062. Es una pauta con otra economía: se puja por publicación y no pasa por ad_spend, así que nunca cae en 'sin cohorte'." />
+                  </span>
+                </TableHead>
+              </>
+            ) : (
+              <TableHead className="text-right">Ads</TableHead>
+            )}
             <TableHead className="text-right">CPA</TableHead>
           </TableRow>
         </TableHeader>
@@ -496,14 +560,21 @@ export default async function Ventas({
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.flete ? fmtMoney(m.flete) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.comisiones ? fmtMoney(m.comisiones) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.percepciones ? fmtMoney(m.percepciones) : "—"}</TableCell>
-                <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads ? fmtMoney(m.ads) : "—"}</TableCell>
+                {splitAds ? (
+                  <>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads - m.adsMl ? fmtMoney(m.ads - m.adsMl) : "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{m.adsMl ? fmtMoney(m.adsMl) : "—"}</TableCell>
+                  </>
+                ) : (
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads ? fmtMoney(m.ads) : "—"}</TableCell>
+                )}
                 <TableCell className="text-right tabular-nums text-muted-foreground">{cpaMes > 0 ? fmtMoney(cpaMes) : "—"}</TableCell>
               </TableRow>
             );
           })}
           {!meses.length && (
             <TableRow>
-              <TableCell colSpan={9} className="text-center text-muted-foreground">Sin datos históricos</TableCell>
+              <TableCell colSpan={splitAds ? 11 : 10} className="text-center text-muted-foreground">Sin datos históricos</TableCell>
             </TableRow>
           )}
         </TableBody>

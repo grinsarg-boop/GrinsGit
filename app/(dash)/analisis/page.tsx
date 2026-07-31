@@ -10,6 +10,7 @@ import { Waterfall } from "@/components/waterfall";
 import { Curva, type Punto } from "@/components/curva";
 import { Delta } from "@/components/delta";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
+import { claseSemaforo, nivel, percentil } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -202,6 +203,20 @@ export default async function Analisis({
 
   const maxMargen = Math.max(...zonas.map((z) => Math.abs(N(z.margen_neto))), 1);
   const maxPackM = Math.max(...packs.map((p) => Math.abs(N(p.margen_neto))), 1);
+
+  // Cortes de la tasa de entrega (F1-09). Antes eran 0,35 / 0,45 hardcodeados: números de nadie, que
+  // no se movían cuando el negocio se movía y marcaban en rojo cosas sanas (Fixy AMBA entrega 63%,
+  // Urbano nacional 39% — el mismo corte no puede juzgar a los dos). Ahora cada tabla se juzga contra
+  // el cuartil de SUS PROPIAS filas: mal = peor que el 25% de abajo, bien = mejor que el 75%. Solo
+  // filas con ≥15 guías entran a la muestra, que es el mismo piso de ruido que ya usa la matriz.
+  const cortes = (vals: number[]): [number, number] => [percentil(vals, 0.25), percentil(vals, 0.75)];
+  const MIN_N = 15;
+  const cortesPacks = cortes(packs.filter((p) => p.guias >= MIN_N).map((p) => p.entregadas / p.guias));
+  const cortesZonas = cortes(zonas.filter((z) => z.guias >= MIN_N).map((z) => z.entregadas / z.guias));
+  const cortesMatriz = cortes(pnl.filter((r) => r.despachadas >= MIN_N).map((r) => r.entregadas / r.despachadas));
+  const explicaCortes = (c: [number, number]) => isFinite(c[0])
+    ? ` El color no usa umbrales inventados: rojo debajo de ${fmtPct(c[0])} y verde arriba de ${fmtPct(c[1])}, que son el percentil 25 y 75 de las propias filas de esta tabla en el rango elegido (solo las de ${MIN_N}+ guías, abajo de eso la tasa es ruido).`
+    : ` Sin color: hacen falta al menos 5 filas de ${MIN_N}+ guías para que un cuartil signifique algo.`;
 
   const chip = (active: boolean) => cn(
     "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
@@ -398,7 +413,7 @@ export default async function Analisis({
         <CardContent className="space-y-3 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
             Por tamaño de pack
-            <Tip tip="Solo pedidos de una línea (con carrito mixto el pack no está definido). La tasa de entrega suele subir con el tamaño del pack. Margen bruto = cobrado − flete. Neto s/Ads = bruto − comisiones − costo de producto; lo único que falta ahí son los Ads, que van por producto y día y no se pueden repartir por pack sin inventar." />
+            <Tip tip={`Solo pedidos de una línea (con carrito mixto el pack no está definido). La tasa de entrega suele subir con el tamaño del pack. Margen bruto = cobrado − flete. Neto s/Ads = bruto − comisiones − costo de producto; lo único que falta ahí son los Ads, que van por producto y día y no se pueden repartir por pack sin inventar.${explicaCortes(cortesPacks)}`} />
           </span>
           <Table>
             <TableHeader><TableRow>
@@ -416,7 +431,7 @@ export default async function Analisis({
                   <TableRow key={p.pack}>
                     <TableCell className="font-medium">×{p.pack}</TableCell>
                     <TableCell className="text-right tabular-nums">{p.guias.toLocaleString("es-AR")}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-emerald-600 dark:text-emerald-400")}>{fmtPct(t)}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", claseSemaforo(p.guias >= MIN_N ? nivel(t, cortesPacks) : null))}>{fmtPct(t)}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtPct(dev)}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(p.margen_bruto))}</TableCell>
                     <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
@@ -436,7 +451,7 @@ export default async function Analisis({
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               Zonas
-              <Tip tip="Margen bruto = COD cobrado − flete de TODAS las guías de la provincia. Neto s/Ads = bruto − comisiones − costo de producto, con las mismas reglas del P&L (comisión solo sobre entregadas, costo en entregado y siniestro). Lo único que falta es los Ads, que van por producto y día y no se reparten por zona sin inventar. De peor a mejor NETO: arriba es donde se va la plata." />
+              <Tip tip={`Margen bruto = COD cobrado − flete de TODAS las guías de la provincia. Neto s/Ads = bruto − comisiones − costo de producto, con las mismas reglas del P&L (comisión solo sobre entregadas, costo en entregado y siniestro). Lo único que falta es los Ads, que van por producto y día y no se reparten por zona sin inventar. De peor a mejor NETO: arriba es donde se va la plata.${explicaCortes(cortesZonas)}`} />
             </span>
             <span className="text-xs text-muted-foreground">{zonas.length} provincias · de peor a mejor</span>
           </div>
@@ -455,7 +470,7 @@ export default async function Analisis({
                   <TableRow key={z.province}>
                     <TableCell className="font-medium">{z.province}</TableCell>
                     <TableCell className="text-right tabular-nums">{z.guias.toLocaleString("es-AR")}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-muted-foreground")}>{fmtPct(t)}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", claseSemaforo(z.guias >= MIN_N ? nivel(t, cortesZonas) : null))}>{fmtPct(t)}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.cod_cobrado))}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.flete))}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(z.margen_bruto))}</TableCell>
@@ -542,7 +557,7 @@ export default async function Analisis({
         <CardContent className="space-y-3 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
             Tasa de entrega · producto × canal
-            <Tip tip="Contrasta si la entrega depende más del producto que del courier. Celdas con menos de 15 despachos quedan vacías: con ese volumen la tasa es ruido." />
+            <Tip tip={`Contrasta si la entrega depende más del producto que del courier. Celdas con menos de ${MIN_N} despachos quedan vacías: con ese volumen la tasa es ruido.${explicaCortes(cortesMatriz)}`} />
           </span>
           <Table>
             <TableHeader><TableRow>
@@ -558,7 +573,7 @@ export default async function Analisis({
                     return (
                       <TableCell key={c} className="text-right tabular-nums">
                         {v ? (
-                          <span className={cn(v.tasa < 0.35 ? "text-destructive" : v.tasa < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-foreground")}>
+                          <span className={claseSemaforo(nivel(v.tasa, cortesMatriz), "text-foreground")}>
                             {fmtPct(v.tasa)}<span className="ml-1 text-[0.65rem] text-muted-foreground">({v.n})</span>
                           </span>
                         ) : <span className="text-muted-foreground/40">—</span>}
