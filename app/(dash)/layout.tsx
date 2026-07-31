@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Nav } from "@/components/nav-link";
-import { SyncAlert } from "@/components/sync-alert";
+import { SaludBanner } from "@/components/salud-banner";
 import { ChatWidget } from "@/components/chat-widget";
 
 export default function DashLayout({ children }: { children: React.ReactNode }) {
@@ -10,7 +10,7 @@ export default function DashLayout({ children }: { children: React.ReactNode }) 
       <Suspense>
         <Nav />
       </Suspense>
-      <SyncAlert />
+      <SaludBanner />
       {children}
       <ChatWidget />
     </div>
