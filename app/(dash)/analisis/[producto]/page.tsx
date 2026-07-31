@@ -6,7 +6,7 @@ import {
 } from "@/components/ui/table";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Donut, type Slice } from "@/components/donut";
+import { Waterfall } from "@/components/waterfall";
 import { PackCourierBars } from "@/components/pack-courier-bars";
 import { ChannelBars } from "@/components/channel-bars";
 import { Delta } from "@/components/delta";
@@ -94,14 +94,14 @@ export default async function AnalisisProducto({ params, searchParams }: {
   const ref = cpaObj[prod.name];
   const cpaEstado = !ref || !cpa ? null : cpa <= ref.objetivo ? "ok" : cpa <= ref.maximo ? "vig" : "mal";
 
-  const composicion: Slice[] = [
-    { label: "Flete", value: flete, className: "stroke-rose-500", dot: "bg-rose-500" },
-    { label: "Ads", value: ads, className: "stroke-amber-500", dot: "bg-amber-500" },
-    { label: "Comisiones", value: comis, className: "stroke-slate-400", dot: "bg-slate-400" },
-    { label: "Percepciones ML", value: percep, className: "stroke-sky-400", dot: "bg-sky-400" },
-    { label: "Costo de producto", value: costo, className: "stroke-violet-400", dot: "bg-violet-400" },
-    { label: "Profit confirmado", value: Math.max(profitConf, 0), className: "stroke-emerald-500", dot: "bg-emerald-500" },
-  ].filter((s) => s.value > 0);
+  // Mismo escalonado que /analisis: el orden es el del P&L (§4.7) y la identidad cierra al peso.
+  const composicion = [
+    { label: "Flete", monto: flete },
+    { label: "Comisiones", monto: comis },
+    { label: "Percepciones ML", monto: percep },
+    { label: "Costo de producto", monto: costo },
+    { label: "Ads", monto: ads },
+  ].filter((p) => p.monto > 0);
 
   const totalPackGuias = packs.reduce((s, p) => s + p.guias, 0);
   // Ads por guía: los ads van por producto×día — el pack lo elige el cliente en el checkout — así que
@@ -371,12 +371,12 @@ export default async function AnalisisProducto({ params, searchParams }: {
         <CardContent className="space-y-3 pt-5">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-              A dónde va cada peso de {prod.name}
-              <Tip tip="Sobre el COD efectivamente cobrado del producto en el período. El flete es hundido: se paga por toda guía despachada, entregue o no. Percepciones ML solo si el producto vende por ese canal." />
+              De lo cobrado al profit · {prod.name}
+              <Tip tip="Sobre el COD efectivamente cobrado del producto en el período, restando un costo por escalón en el orden del P&L. El flete es hundido: se paga por toda guía despachada, entregue o no. Percepciones ML solo si el producto vende por ese canal." />
             </span>
             <span className="text-xs tabular-nums text-muted-foreground">cobrado {fmtMoney(revenue)}</span>
           </div>
-          <Donut slices={composicion} centro={fmtPct(profitConf / (revenue || 1))} subcentro="queda" />
+          <Waterfall inicio={{ label: "Cobrado", monto: revenue }} pasos={composicion} />
           {profitConf < 0 && <p className="text-xs text-destructive">Profit confirmado negativo en el período: los costos ya pagados superan lo cobrado hasta ahora. Con cohortes recientes es esperable — mirá el estimado.</p>}
         </CardContent>
       </Card>

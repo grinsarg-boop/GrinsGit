@@ -6,6 +6,7 @@ import {
 } from "@/components/ui/table";
 import Link from "next/link";
 import { Donut, PALETA, type Slice } from "@/components/donut";
+import { Waterfall } from "@/components/waterfall";
 import { Curva, type Punto } from "@/components/curva";
 import { Delta } from "@/components/delta";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
@@ -108,15 +109,16 @@ export default async function Analisis({
   const tasa = despachos ? entregas / despachos : 0;
   const pTasa = pDesp ? pEnt / pDesp : 0;
 
-  // 1 · composición del peso
-  const composicion: Slice[] = [
-    { label: "Flete", value: flete, className: "stroke-rose-500", dot: "bg-rose-500" },
-    { label: "Ads", value: ads, className: "stroke-amber-500", dot: "bg-amber-500" },
-    { label: "Comisiones", value: comis, className: "stroke-slate-400", dot: "bg-slate-400" },
-    { label: "Percepciones ML", value: percep, className: "stroke-sky-400", dot: "bg-sky-400" },
-    { label: "Costo de producto", value: costo, className: "stroke-violet-400", dot: "bg-violet-400" },
-    { label: "Profit confirmado", value: Math.max(profitConf, 0), className: "stroke-emerald-500", dot: "bg-emerald-500" },
-  ].filter((s) => s.value > 0);
+  // 1 · de lo cobrado al profit, un costo por escalón. El orden es el del P&L (§4.7 del SPEC) y la
+  // identidad cierra al peso: cobrado − flete − comisiones − percepciones − costo − ads = profit_conf
+  // (verificado contra prod el 30/07: residuo 6e-8 sobre $164M, ruido de punto flotante).
+  const composicion = [
+    { label: "Flete", monto: flete },
+    { label: "Comisiones", monto: comis },
+    { label: "Percepciones ML", monto: percep },
+    { label: "Costo de producto", monto: costo },
+    { label: "Ads", monto: ads },
+  ].filter((p) => p.monto > 0);
 
   const agrupar = <K extends string>(rows: PnlRow[], key: (r: PnlRow) => K) =>
     [...rows.reduce((m, r) => {
@@ -288,12 +290,12 @@ export default async function Analisis({
         <CardContent className="space-y-3 pt-5">
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-              A dónde va cada peso que cobrás
-              <Tip tip="Sobre el COD efectivamente cobrado del período. El flete es hundido: se paga por toda guía despachada, entregue o no, por eso pesa más de lo que uno espera. Percepciones ML = IVA/IIBB que MercadoLibre factura sobre sus servicios (solo canal ML): estimadas por día al ~18% calibrado contra la factura real; el Reporte_Facturacion mensual (en /sync) las pisa con el valor exacto." />
+              De lo cobrado al profit
+              <Tip tip="Sobre el COD efectivamente cobrado del período, restando un costo por escalón en el orden del P&L. El flete es hundido: se paga por toda guía despachada, entregue o no, por eso pesa más de lo que uno espera. Percepciones ML = IVA/IIBB que MercadoLibre factura sobre sus servicios (solo canal ML): estimadas por día al ~18% calibrado contra la factura real; el Reporte_Facturacion mensual (en /sync) las pisa con el valor exacto." />
             </span>
             <span className="text-xs tabular-nums text-muted-foreground">cobrado {fmtMoney(revenue)}</span>
           </div>
-          <Donut slices={composicion} centro={fmtPct(profitConf / (revenue || 1))} subcentro="queda" />
+          <Waterfall inicio={{ label: "Cobrado", monto: revenue }} pasos={composicion} />
           {profitConf < 0 && <p className="text-xs text-destructive">Profit confirmado negativo en el período: los costos ya pagados superan lo cobrado hasta ahora. Con cohortes recientes es esperable — mirá el estimado.</p>}
         </CardContent>
       </Card>
