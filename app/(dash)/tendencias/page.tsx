@@ -213,9 +213,15 @@ export default async function Tendencias({
 
   return (
     <main className="space-y-6">
+      <div className="space-y-1">
+      {/* Todo este panel cohortea por día de VENTA, igual que /ventas y a diferencia del Resumen. */}
+      <h1 className="text-xl font-semibold">
+        Tendencias <span className="font-normal text-muted-foreground">· por día de <span className="font-semibold text-foreground">venta</span></span>
+      </h1>
       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <span><b className="text-foreground">Proyecciones y tendencias</b> — hacia dónde va el mes y hacia dónde van las curvas.</span>
         <Tip tip="Mismos números que /ventas, mirados en el tiempo: TODO el panel cohortea por día de VENTA (cuándo se generó el pedido), no de despacho. La media móvil de 7 días es la tendencia (el valor diario es ruido) y el cierre de mes se proyecta al ritmo de los días ya maduros. Conservador a propósito: no se le da crédito a mejoras que todavía no se midieron." />
+      </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-sm">

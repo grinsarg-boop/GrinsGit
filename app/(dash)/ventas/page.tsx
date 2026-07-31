@@ -158,12 +158,19 @@ export default async function Ventas({
 
   return (
     <main className="space-y-6">
+      <div className="space-y-1">
+      {/* El eje va en el título: el Resumen cohortea por día de DESPACHO y este panel por día de
+          VENTA. Estaba solo en el tooltip, que ya no necesita gastar su primera mitad en decirlo. */}
+      <h1 className="text-xl font-semibold">
+        Ventas <span className="font-normal text-muted-foreground">· por día de <span className="font-semibold text-foreground">venta</span></span>
+      </h1>
       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <span><b className="text-foreground">Profit por día de venta</b> — lo que vas a ganar con las ventas que generaste cada día.</span>
         <Tip
-          label="En qué se diferencia del Resumen"
-          tip="El Resumen agrupa por día de DESPACHO (la cohorte que sale a la calle). Acá agrupamos por día de VENTA (cuándo se generó la orden). Sirve para medir el costo de adquisición: gastaste $X en Ads el día D y generaste N ventas. El profit de una venta COD se materializa cuando la guía se despacha y entrega, así que los días de venta muy recientes maduran a medida que despachás — mirá la barra de despacho."
+          label="Para qué sirve mirarlo por día de venta"
+          tip="Sirve para medir el costo de adquisición: gastaste $X en Ads el día D y generaste N ventas. El profit de una venta COD se materializa cuando la guía se despacha y entrega, así que los días de venta muy recientes maduran a medida que despachás — mirá la barra de despacho."
         />
+      </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-sm">

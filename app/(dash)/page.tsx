@@ -264,6 +264,12 @@ export default async function Resumen({
 
   return (
     <main className="space-y-6">
+      <div className="space-y-1">
+      {/* El eje temporal en el título: este panel cohortea por día de DESPACHO y /ventas por día de
+          VENTA. Vivía solo en tooltips, y confundir los dos ejes es el error caro de leer el panel. */}
+      <h1 className="text-xl font-semibold">
+        Resumen <span className="font-normal text-muted-foreground">· por día de <span className="font-semibold text-foreground">despacho</span></span>
+      </h1>
       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <span><b className="text-foreground">Profit estimado</b> — lo que vas a ganar con lo ya despachado.</span>
         <Tip
@@ -276,6 +282,7 @@ export default async function Resumen({
               : "Es el confirmado (profit ya cerrado, neto de envío, comisiones, producto y Ads) más una proyección de las guías que siguen en la calle, usando tu tasa de entrega histórica por zona y producto. Por eso el número puede moverse hasta que todas las guías cierren."
           }
         />
+      </div>
       </div>
 
       {stale.length > 0 && (
