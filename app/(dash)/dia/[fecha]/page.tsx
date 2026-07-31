@@ -1,5 +1,5 @@
-import { Card, CardContent } from "@/components/ui/card";
 import { Tip } from "@/components/ui/tooltip";
+import { Kpis } from "@/components/kpis";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -222,26 +222,14 @@ export default async function Dia({ params, searchParams }: {
       </div>
 
       {/* Totales del día */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        {[
-          { label: "Profit estimado", value: fmtMoney(tot.profitEst), color: pnlColor(tot.profitEst), tip: TIP_ESTIMADO },
-          { label: "Confirmado", value: fmtMoney(tot.profitConf), color: tot.profitConf < 0 ? "text-destructive/80" : "text-foreground", tip: TIP_CONFIRMADO },
-          { label: "Revenue estimado", value: fmtMoney(tot.revenueEst), color: "text-foreground", tip: null },
-          { label: "Gasto en Ads", value: fmtMoney(tot.ads), color: "text-foreground", tip: courierParam
-              ? `Pauta atribuida a los despachos de ${COURIER[courierParam]} (repartida por el P&L). El gasto crudo total de Meta del día está en la sección de abajo.`
-              : "Pauta atribuida a los despachos del día (repartida por el P&L). El gasto crudo de Meta está en la sección de abajo." },
-        ].map((k) => (
-          <Card key={k.label}>
-            <CardContent className="pt-5">
-              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
-                {k.label}
-                {k.tip && <Tip tip={k.tip} />}
-              </div>
-              <div className={cn("text-2xl font-bold tabular-nums tracking-tight", k.color)}>{k.value}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <Kpis items={[
+        { label: "Profit estimado", value: fmtMoney(tot.profitEst), color: pnlColor(tot.profitEst), tip: TIP_ESTIMADO },
+        { label: "Confirmado", value: fmtMoney(tot.profitConf), color: tot.profitConf < 0 ? "text-destructive/80" : undefined, tip: TIP_CONFIRMADO },
+        { label: "Revenue estimado", value: fmtMoney(tot.revenueEst) },
+        { label: "Gasto en Ads", value: fmtMoney(tot.ads), tip: courierParam
+            ? `Pauta atribuida a los despachos de ${COURIER[courierParam]} (repartida por el P&L). El gasto crudo total de Meta del día está en la sección de abajo.`
+            : "Pauta atribuida a los despachos del día (repartida por el P&L). El gasto crudo de Meta está en la sección de abajo." },
+      ]} />
 
       {/* P&L por producto */}
       <section className="space-y-2">

@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Tip } from "@/components/ui/tooltip";
+import { Kpis } from "@/components/kpis";
 import Link from "next/link";
 import { Chispa } from "@/components/chispa";
 import { Delta } from "@/components/delta";
@@ -250,40 +251,24 @@ export default async function Tendencias({
             Cierre proyectado de {mesLabel}
             <Tip tip={`Acumulado real hasta AYER + (hoy y los días que faltan × ritmo diario). Hoy no se cuenta a medias: el día incompleto se proyecta entero, a ritmo. El ritmo es el promedio de los días de hace 18 a hace 5: los últimos quedan afuera porque sus ventas todavía no despacharon y subestimarían. El acumulado igual tiende a ser piso, no techo — los días recientes siguen madurando para arriba. El profit del canal ML ya viene neto de percepciones IVA/IIBB (estimadas al ~18% hasta que el Reporte_Facturacion del mes las confirme en /sync).`} />
           </span>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div className="sube rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Cierre proyectado
-                <Tip tip={`Acumulado hasta ayer + (hoy y los ${diasMes - dom} días que faltan) × ritmo. Es margen de contribución: NO incluye costos fijos (sueldos, estructura, packaging) — no es el bottom line del mes.`} />
-              </div>
-              <div className={cn("text-lg font-semibold tabular-nums", pnlColor(cierre))}>{fmtMoney(cierre)}</div>
-              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">ritmo {fmtMoney(ritmo)}/día
+          <Kpis items={[
+            { label: "Cierre proyectado", value: fmtMoney(cierre), color: pnlColor(cierre),
+              tip: `Acumulado hasta ayer + (hoy y los ${diasMes - dom} días que faltan) × ritmo. Es margen de contribución: NO incluye costos fijos (sueldos, estructura, packaging) — no es el bottom line del mes.`,
+              pie: <>ritmo {fmtMoney(ritmo)}/día
                 <Tip tip="Promedio diario del profit estimado de los días de hace 18 a hace 5 — ya maduros. Si el ritmo real de esta semana es mejor, la proyección se queda corta (conservadora a propósito)." />
-              </div>
-            </div>
-            <div className="sube rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Acumulado hasta ayer
-                <Tip tip="Profit ESTIMADO de las ventas del mes hasta ayer inclusive, neto de la pauta sin cohorte. Los días recientes todavía maduran para arriba: este número es piso, no techo." />
-              </div>
-              <div className={cn("text-lg font-semibold tabular-nums", pnlColor(acumAyer))}>{fmtMoney(acumAyer)}</div>
-              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">confirmado {fmtMoney(acumConf)}
+              </> },
+            { label: "Acumulado hasta ayer", value: fmtMoney(acumAyer), color: pnlColor(acumAyer),
+              tip: "Profit ESTIMADO de las ventas del mes hasta ayer inclusive, neto de la pauta sin cohorte. Los días recientes todavía maduran para arriba: este número es piso, no techo.",
+              pie: <>confirmado {fmtMoney(acumConf)}
                 <Tip tip="La parte del acumulado que ya es plata firme (guías resueltas). El resto del estimado converge hacia acá a medida que las cohortes maduran." />
-              </div>
-            </div>
-            <div className="sube rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{prevLabel} a esta altura
-                <Tip tip={`Los mismos días completos (1 al ${dom - 1}) de ${prevLabel}, que ya están asentados. Ojo con el Δ: ${prevLabel} es número final, el mes en curso todavía es estimado y tiende a quedarse corto — si da verde apenas, en realidad va mejor.`} />
-              </div>
-              <div className="text-lg font-semibold tabular-nums">{fmtMoney(prevMismaAltura)}</div>
-              <div className="pt-0.5"><Delta actual={acumAyer} previo={prevMismaAltura} /></div>
-            </div>
-            <div className="sube rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{prevLabel} cerró
-                <Tip tip={`Total de ${prevLabel} con la misma definición (margen de contribución, sin costos fijos). El Δ compara el CIERRE PROYECTADO contra ese total: cómo viene el mes contra el anterior si se sostiene el ritmo.`} />
-              </div>
-              <div className="text-lg font-semibold tabular-nums">{fmtMoney(prevTotal)}</div>
-              <div className="pt-0.5"><Delta actual={cierre} previo={prevTotal} /></div>
-            </div>
-          </div>
+              </> },
+            { label: `${prevLabel} a esta altura`, value: fmtMoney(prevMismaAltura),
+              tip: `Los mismos días completos (1 al ${dom - 1}) de ${prevLabel}, que ya están asentados. Ojo con el Δ: ${prevLabel} es número final, el mes en curso todavía es estimado y tiende a quedarse corto — si da verde apenas, en realidad va mejor.`,
+              delta: <Delta actual={acumAyer} previo={prevMismaAltura} /> },
+            { label: `${prevLabel} cerró`, value: fmtMoney(prevTotal),
+              tip: `Total de ${prevLabel} con la misma definición (margen de contribución, sin costos fijos). El Δ compara el CIERRE PROYECTADO contra ese total: cómo viene el mes contra el anterior si se sostiene el ritmo.`,
+              delta: <Delta actual={cierre} previo={prevTotal} /> },
+          ]} />
           <ProyeccionMes actual={curvaActual} proyeccion={curvaProy} previo={curvaPrevio}
                          diasMes={diasMes} mesLabel={mesLabel} prevLabel={prevLabel} />
         </CardContent>

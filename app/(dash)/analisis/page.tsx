@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Tip } from "@/components/ui/tooltip";
+import { Kpis } from "@/components/kpis";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -272,23 +273,13 @@ export default async function Analisis({
             </span>
             <span className="text-xs tabular-nums text-muted-foreground">vs {fmtDate(prevFrom)} → {fmtDate(prevTo)}</span>
           </div>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {[
-              { label: "Profit estimado", value: fmtMoney(profitEst), node: <Delta actual={profitEst} previo={pProfitEst} /> },
-              { label: "Cobrado", value: fmtMoney(revenue), node: <Delta actual={revenue} previo={pRev} /> },
-              { label: "Despachos", value: despachos.toLocaleString("es-AR"), node: <Delta actual={despachos} previo={pDesp} tipo="num" /> },
-              { label: "Tasa de entrega", value: fmtPct(tasa), node: <Delta actual={tasa} previo={pTasa} tipo="pct" /> },
-            ].map((k) => (
-              <div key={k.label} className="sube rounded-lg bg-muted/40 p-3">
-                <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{k.label}</div>
-                <div className={cn("text-lg font-semibold tabular-nums", k.label === "Profit estimado" ? pnlColor(profitEst) : "text-foreground")}>{k.value}</div>
-                <div className="pt-0.5">{k.node}</div>
-                {k.label === "Profit estimado" && (
-                  <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">confirmado {fmtMoney(profitConf)}</div>
-                )}
-              </div>
-            ))}
-          </div>
+          <Kpis items={[
+            { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst),
+              delta: <Delta actual={profitEst} previo={pProfitEst} />, pie: `confirmado ${fmtMoney(profitConf)}` },
+            { label: "Cobrado", value: fmtMoney(revenue), delta: <Delta actual={revenue} previo={pRev} /> },
+            { label: "Despachos", value: despachos.toLocaleString("es-AR"), delta: <Delta actual={despachos} previo={pDesp} tipo="num" /> },
+            { label: "Tasa de entrega", value: fmtPct(tasa), delta: <Delta actual={tasa} previo={pTasa} tipo="pct" /> },
+          ]} />
         </CardContent>
       </Card>
 

@@ -1,5 +1,5 @@
-import { Card, CardContent } from "@/components/ui/card";
 import { Tip } from "@/components/ui/tooltip";
+import { Kpis } from "@/components/kpis";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fmtDate, fmtMoney, fmtPct } from "@/lib/format";
@@ -223,21 +223,12 @@ export default async function VentaDia({ params, searchParams }: {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        {[
-          { label: "Generadas", value: String(generadas), color: "text-foreground", tip: "Ventas generadas ese día en el canal filtrado (idéntico al panel). En Correo/ML son las ventas del día." },
-          { label: "Despachadas", value: `${despachadas} · ${fmtPct(pctDesp)}`, color: "text-foreground", tip: "Cuántas de esas ventas ya salieron a la calle. En Correo es la confirmación; en ML, entregadas por ML." },
-          { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst), tip: TIP_ESTIMADO },
-          { label: "Cerrado", value: fmtMoney(profitConf), color: profitConf < 0 ? "text-destructive/80" : "text-foreground", tip: TIP_CONFIRMADO },
-        ].map((k) => (
-          <Card key={k.label}>
-            <CardContent className="pt-5">
-              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">{k.label}<Tip tip={k.tip} /></div>
-              <div className={cn("text-2xl font-bold tabular-nums tracking-tight", k.color)}>{k.value}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <Kpis items={[
+        { label: "Generadas", value: String(generadas), tip: "Ventas generadas ese día en el canal filtrado (idéntico al panel). En Correo/ML son las ventas del día." },
+        { label: "Despachadas", value: `${despachadas} · ${fmtPct(pctDesp)}`, tip: "Cuántas de esas ventas ya salieron a la calle. En Correo es la confirmación; en ML, entregadas por ML." },
+        { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst), tip: TIP_ESTIMADO },
+        { label: "Cerrado", value: fmtMoney(profitConf), color: profitConf < 0 ? "text-destructive/80" : undefined, tip: TIP_CONFIRMADO },
+      ]} />
 
       {porProdCourier.length > 0 && (
         <section className="space-y-2">

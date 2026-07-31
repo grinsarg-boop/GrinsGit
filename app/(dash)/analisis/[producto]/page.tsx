@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Tip } from "@/components/ui/tooltip";
+import { Kpis } from "@/components/kpis";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -240,40 +241,19 @@ export default async function AnalisisProducto({ params, searchParams }: {
             </span>
             <span className="text-xs tabular-nums text-muted-foreground">vs {fmtDate(prevFrom)} → {fmtDate(prevTo)}</span>
           </div>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div className="rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Profit estimado</div>
-              <div className={cn("text-lg font-semibold tabular-nums", pnlColor(profitEst))}>{fmtMoney(profitEst)}</div>
-              <div className="pt-0.5"><Delta actual={profitEst} previo={pProfitEst} /></div>
-              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">confirmado {fmtMoney(profitConf)}</div>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Cobrado</div>
-              <div className="text-lg font-semibold tabular-nums text-foreground">{fmtMoney(revenue)}</div>
-              <div className="pt-0.5"><Delta actual={revenue} previo={pRev} /></div>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Despachos</div>
-              <div className="text-lg font-semibold tabular-nums text-foreground">{despachos.toLocaleString("es-AR")}</div>
-              <div className="pt-0.5"><Delta actual={despachos} previo={pDesp} tipo="num" /></div>
-              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">
-                entrega {fmtPct(tasa)} <Delta actual={tasa} previo={pTasa} tipo="pct" className="ml-1" />
-              </div>
-            </div>
-            <div className="rounded-lg bg-muted/40 p-3">
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">CPA (ads ÷ despachos)</div>
-              <div className={cn("text-lg font-semibold tabular-nums",
-                cpaEstado === "ok" ? "text-emerald-600 dark:text-emerald-400"
-                : cpaEstado === "vig" ? "text-amber-600 dark:text-amber-500"
-                : cpaEstado === "mal" ? "text-destructive" : "text-foreground")}>
-                {cpa ? fmtMoney(cpa) : "—"}
-              </div>
-              <div className="pt-0.5"><Delta actual={cpa} previo={prevCpa} bueno="baja" /></div>
-              <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">
-                {ref ? <>objetivo {fmtMoney(ref.objetivo)} · máx {fmtMoney(ref.maximo)}</> : "sin referencia en el vault"}
-              </div>
-            </div>
-          </div>
+          <Kpis items={[
+            { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst),
+              delta: <Delta actual={profitEst} previo={pProfitEst} />, pie: `confirmado ${fmtMoney(profitConf)}` },
+            { label: "Cobrado", value: fmtMoney(revenue), delta: <Delta actual={revenue} previo={pRev} /> },
+            { label: "Despachos", value: despachos.toLocaleString("es-AR"), delta: <Delta actual={despachos} previo={pDesp} tipo="num" />,
+              pie: <>entrega {fmtPct(tasa)} <Delta actual={tasa} previo={pTasa} tipo="pct" className="ml-1" /></> },
+            { label: "CPA (ads ÷ despachos)", value: cpa ? fmtMoney(cpa) : "—",
+              color: cpaEstado === "ok" ? "text-emerald-600 dark:text-emerald-400"
+                   : cpaEstado === "vig" ? "text-amber-600 dark:text-amber-500"
+                   : cpaEstado === "mal" ? "text-destructive" : undefined,
+              delta: <Delta actual={cpa} previo={prevCpa} bueno="baja" />,
+              pie: ref ? `objetivo ${fmtMoney(ref.objetivo)} · máx ${fmtMoney(ref.maximo)}` : "sin referencia en el vault" },
+          ]} />
         </CardContent>
       </Card>
       )}
