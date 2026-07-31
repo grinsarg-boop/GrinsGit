@@ -329,30 +329,49 @@ async function getMlAdvertiserId(token: string): Promise<number | null> {
   return j.advertisers?.[0]?.advertiser_id ?? null;
 }
 
-// Gasto diario de Product Ads de ML → ml_ad_spend. El endpoint da métricas agregadas por rango, así que
-// se pide día por día (concurrencia acotada). El recompute lo reparte entre los productos por revenue.
+// Gasto de Product Ads de ML: total del día (campaigns/search → ml_ad_spend, el número que factura ML,
+// conciliado contra la factura en la 046) y detalle por publicación (ads/search → ml_ad_spend_item),
+// que el recompute imputa al producto dueño del item en vez de prorratear por revenue (062).
+// Los endpoints dan métricas agregadas por rango → se pide día por día, con concurrencia acotada.
 export async function syncMlAdSpend(days = 60, db: Db = supabaseAdmin()): Promise<{ days: number; total: number }> {
   const token = await getMlAccessToken(db);
   const adv = await getMlAdvertiserId(token);
   if (!adv) return { days: 0, total: 0 };
+  const base = `${API}/marketplace/advertising/${ADS_SITE}/advertisers/${adv}/product_ads`;
+  const headers = { authorization: `Bearer ${token}`, "api-version": "2" };
   const fechas: string[] = [];
   for (let i = 0; i < days; i++) fechas.push(new Date(Date.now() - i * 86400_000).toISOString().slice(0, 10));
   const rows: { date: string; cost: number }[] = [];
+  const items: { date: string; item_id: string; cost: number }[] = [];
   const CONC = 6;
   for (let i = 0; i < fechas.length; i += CONC) {
     await Promise.all(fechas.slice(i, i + CONC).map(async (d) => {
       try {
-        const url = `${API}/marketplace/advertising/${ADS_SITE}/advertisers/${adv}/product_ads/campaigns/search`
-          + `?date_from=${d}&date_to=${d}&metrics=cost&limit=100`;
-        const res = await fetch(url, { headers: { authorization: `Bearer ${token}`, "api-version": "2" } });
+        const res = await fetch(`${base}/campaigns/search?date_from=${d}&date_to=${d}&metrics=cost&limit=100`, { headers });
         if (!res.ok) return;
         const j = await res.json();
         const cost = ((j.results ?? []) as { metrics?: { cost?: number } }[]).reduce((s, c) => s + (c.metrics?.cost ?? 0), 0);
         rows.push({ date: d, cost });
       } catch { /* se saltea */ }
+      try {
+        // ads/search repite el mismo item en cada campaña/ad group con las MISMAS métricas: sin
+        // deduplicar por item_id el gasto sale ~36% inflado. campaign_id no filtra ahí (devuelve
+        // todos los anuncios del advertiser) → una sola llamada, nunca iterar campañas.
+        // ponytail: una página de 200 (hoy son 45 anuncios). Si algún día se pasa, lo que quede
+        // afuera cae en el resto sin imputar del recompute y se prorratea — no se pierde plata.
+        const res = await fetch(`${base}/ads/search?date_from=${d}&date_to=${d}&metrics=cost&limit=200`, { headers });
+        if (!res.ok) return;
+        const j = await res.json();
+        const seen = new Map<string, number>();
+        for (const a of (j.results ?? []) as { item_id?: string; metrics?: { cost?: number } }[]) {
+          if (a.item_id && !seen.has(a.item_id)) seen.set(a.item_id, a.metrics?.cost ?? 0);
+        }
+        for (const [item_id, cost] of seen) if (cost > 0) items.push({ date: d, item_id, cost });
+      } catch { /* se saltea */ }
     }));
   }
   if (rows.length) await db.from("ml_ad_spend").upsert(rows, { onConflict: "date" });
+  if (items.length) await db.from("ml_ad_spend_item").upsert(items, { onConflict: "date,item_id" });
   return { days: rows.length, total: rows.reduce((s, r) => s + r.cost, 0) };
 }
 

@@ -38,6 +38,7 @@ try {
                    'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
                    'supabase/tests/bot_pnl_check.sql', 'supabase/tests/override_check.sql',
                    'supabase/tests/flex_estimado_check.sql', 'supabase/tests/ml_ads_check.sql',
+                   'supabase/tests/ml_ads_item_check.sql',
                    'supabase/tests/sales_check.sql',
                    'supabase/tests/urbano_discover_check.sql',
                    'supabase/tests/trabados_check.sql',
