@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { fmtDate, fmtMoney, fmtMoneyCompact, fmtPct, fmtRatio } from "@/lib/format";
 import { mediaMovil } from "@/lib/tendencias";
+import { marcas, type Evento } from "@/lib/eventos";
 import { cn } from "@/lib/utils";
 
 // Gráfico de tendencia: valor diario (línea finita gris) + media móvil (línea gruesa de color) — la
@@ -26,6 +27,7 @@ const EJE: Record<Kind, (v: number) => string> = {
 
 export function Tendencia({
   puntos, kind, ma = 7, sombra = 0, trazo = "stroke-emerald-500", punto = "bg-emerald-500", label, umbral,
+  eventos = [],
 }: {
   puntos: PuntoT[];
   kind: Kind;
@@ -37,6 +39,9 @@ export function Tendencia({
   // Línea de referencia punteada y anotada (break-even). Sin esto había que saberse el umbral de
   // memoria para leer si un día estuvo bien o mal — que es la diferencia entre un gráfico y un dato.
   umbral?: { v: number; texto: string };
+  // Blackouts y cambios de régimen (migración 065): un pozo sin marcar es un misterio dentro de tres
+  // meses. Puntual = línea punteada vertical; con fecha_fin = franja rayada sobre el período.
+  eventos?: Evento[];
 }) {
   const [hi, setHi] = useState<number | null>(null);
   if (puntos.length < Math.max(3, ma)) {
@@ -72,6 +77,7 @@ export function Tendencia({
   const step = n > 90 ? 30 : n > 45 ? 14 : n > 20 ? 7 : n > 10 ? 3 : 1;
   const colW = plotW / (n - 1);
   const hd = hi !== null ? puntos[hi] : null;
+  const evs = marcas(puntos.map((p) => p.x), eventos);
 
   return (
     <div className="overflow-x-auto">
@@ -108,6 +114,28 @@ export function Tendencia({
                     className="fill-foreground/70 text-[9px]">{umbral!.texto}</text>
             </g>
           )}
+          {/* Eventos: van DEBAJO de las líneas para no taparlas. La franja se pinta con un patrón
+              rayado y no con relleno sólido, para que no se confunda con la sombra de inmadurez —
+              son dos cosas distintas: una dice "va a subir", la otra "no compares". */}
+          {evs.length > 0 && (
+            <defs>
+              <pattern id="ev-rayas" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <line x1="0" y1="0" x2="0" y2="6" className="stroke-foreground/15" strokeWidth="2" />
+              </pattern>
+            </defs>
+          )}
+          {evs.map(({ ev, i, iFin }) => (
+            <g key={ev.id}>
+              <title>{`${fmtDate(ev.fecha)}${ev.fecha_fin && ev.fecha_fin !== ev.fecha ? ` → ${fmtDate(ev.fecha_fin)}` : ""} · ${ev.texto}`}</title>
+              {iFin > i ? (
+                <rect x={x(i)} y={PAD.t} width={Math.max(x(iFin) - x(i), 1)} height={plotH} fill="url(#ev-rayas)" />
+              ) : (
+                <line x1={x(i)} x2={x(i)} y1={PAD.t} y2={PAD.t + plotH}
+                      className="stroke-foreground/35" strokeWidth="1" strokeDasharray="3 3" />
+              )}
+              <text x={x(i) + 3} y={PAD.t + plotH - 4} className="fill-foreground/50 text-[8px]">⚑</text>
+            </g>
+          ))}
           <path d={linea((i) => puntos[i].v)} fill="none" strokeWidth="1.5" className="stroke-muted-foreground/40" />
           <path d={linea((i) => medias[i])} fill="none" strokeWidth="2.25" strokeLinecap="round" className={trazo} />
           {puntos.map((p, i) => {

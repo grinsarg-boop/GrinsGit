@@ -4,12 +4,14 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import Link from "next/link";
+import { AvisoEventos } from "@/components/aviso-eventos";
 import { Chispa } from "@/components/chispa";
 import { Delta } from "@/components/delta";
 import { ProfitBars } from "@/components/profit-bars";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { breakEven } from "@/lib/breakeven";
 import { claseSemaforo, nivel, percentil } from "@/lib/semaforo";
+import { type Evento } from "@/lib/eventos";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -73,11 +75,13 @@ export default async function Ventas({
   // del panel Y la base del semáforo (F1-09), que se mide siempre sobre 90 días — el umbral no puede
   // depender del preset que estés mirando.
   const baseFrom = from < daysAgoIso(90) ? from : daysAgoIso(90);
-  const [{ data: rows }, { data: prodRows }, { data: entRaw }] = await Promise.all([
+  const [{ data: rows }, { data: prodRows }, { data: entRaw }, { data: evRaw }] = await Promise.all([
     db.rpc("sales_days", { p_from: baseFrom, p_courier: courierParam }),
     db.rpc("sales_by_product", { p_from: from, p_to: to, p_courier: courierParam }),
     db.rpc("entrega_semanal", { p_desde: daysAgoIso(7 * 13) }),   // 13 semanas, sin filtro de courier
+    db.from("eventos").select("id, fecha, fecha_fin, texto").lte("fecha", to),
   ]);
+  const eventos = (evRaw ?? []) as Evento[];
   const todos: Day[] = ((rows ?? []) as Row[])
     .map((r): Day => ({
       date: r.sale_date, generadas: r.generadas, despachadas: r.despachadas, entregadas: r.entregadas,
@@ -226,6 +230,8 @@ export default async function Ventas({
       </div>
       </div>
 
+      <AvisoEventos from={from} to={to} />
+
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
           {presets.map(([label, d, h]) => {
@@ -303,7 +309,7 @@ export default async function Ventas({
                 <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-0.5 bg-muted-foreground/60" /> estimado</span>
               </span>
             </div>
-            <ProfitBars data={chartData} />
+            <ProfitBars data={chartData} eventos={eventos} />
             <p className="text-xs text-muted-foreground">La barra es el profit ya <b className="text-foreground">cerrado</b> (cobrado) de las ventas de ese día; la vela gris llega hasta el <b className="text-foreground">estimado</b>. Tocá un día para ver el detalle.</p>
           </CardContent>
         </Card>

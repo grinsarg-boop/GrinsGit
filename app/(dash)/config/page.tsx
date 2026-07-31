@@ -65,15 +65,40 @@ async function saveSetting(formData: FormData) {
   revalidatePath("/config"); revalidatePath("/");
 }
 
+// Eventos anotados sobre las series (065). No tocan el P&L: son contexto para leerlo, así que no
+// disparan recompute. Un evento con "hasta" es una FRANJA de dato no comparable y además avisa arriba
+// de las tablas cuyo rango la cruza; sin "hasta" es una marca puntual en los gráficos.
+async function saveEvento(formData: FormData) {
+  "use server";
+  const fecha = String(formData.get("fecha") ?? "");
+  const fin = String(formData.get("fecha_fin") ?? "").trim();
+  const texto = String(formData.get("texto") ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !texto) return;
+  if (fin && (!/^\d{4}-\d{2}-\d{2}$/.test(fin) || fin < fecha)) return;
+  await supabaseAdmin().from("eventos").upsert(
+    { fecha, fecha_fin: fin || null, texto }, { onConflict: "fecha,texto" });
+  revalidatePath("/config"); revalidatePath("/"); revalidatePath("/tendencias");
+}
+
+async function borrarEvento(formData: FormData) {
+  "use server";
+  const id = Number(formData.get("id"));
+  if (!id) return;
+  await supabaseAdmin().from("eventos").delete().eq("id", id);
+  revalidatePath("/config"); revalidatePath("/"); revalidatePath("/tendencias");
+}
+
 const fmtVal = (v: unknown) => (v !== null && typeof v === "object" ? JSON.stringify(v, null, 2) : JSON.stringify(v));
 
 export default async function ConfigPage() {
   const db = supabaseAdmin();
-  const [{ data: settings }, { data: costs }, { data: products }] = await Promise.all([
+  const [{ data: settings }, { data: costs }, { data: products }, { data: eventos }] = await Promise.all([
     db.from("settings").select("key, value").order("key"),
     db.from("product_costs").select("product_id, pack, unit_cost, is_estimated"),
     db.from("products").select("id, name").eq("active", true).order("name"),
+    db.from("eventos").select("id, fecha, fecha_fin, texto").order("fecha", { ascending: false }),
   ]);
+  const eventoRows = (eventos ?? []) as { id: number; fecha: string; fecha_fin: string | null; texto: string }[];
   const pname = new Map((products ?? []).map((p) => [p.id, p.name as string]));
   const costRows = ((costs ?? []) as { product_id: number; pack: number; unit_cost: number; is_estimated: boolean }[])
     .sort((a, b) => (pname.get(a.product_id) ?? "").localeCompare(pname.get(b.product_id) ?? "") || a.pack - b.pack);
@@ -133,6 +158,47 @@ export default async function ConfigPage() {
             <SaveButton>Agregar</SaveButton>
           </form>
         </details>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+          Eventos
+          <Tip tip="Blackouts y cambios de régimen anotados sobre las curvas. Sin 'hasta' es una marca punteada en los gráficos ('acá pasó algo'); con 'hasta' es una FRANJA de dato no comparable, que además avisa arriba de las tablas cuyo rango la cruza. No tocan el P&L: son contexto para leerlo, así que no recalculan nada." />
+        </h2>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-28">Desde</TableHead>
+              <TableHead className="w-28">Hasta</TableHead>
+              <TableHead>Qué pasó</TableHead>
+              <TableHead className="w-16" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {eventoRows.map((e) => (
+              <TableRow key={e.id}>
+                <TableCell className="tabular-nums">{e.fecha}</TableCell>
+                <TableCell className="tabular-nums text-muted-foreground">{e.fecha_fin ?? "—"}</TableCell>
+                <TableCell className="text-sm">{e.texto}</TableCell>
+                <TableCell>
+                  <form action={borrarEvento}>
+                    <input type="hidden" name="id" value={e.id} />
+                    <button type="submit" className="text-xs text-muted-foreground underline underline-offset-2 hover:text-destructive">borrar</button>
+                  </form>
+                </TableCell>
+              </TableRow>
+            ))}
+            {!eventoRows.length && (
+              <TableRow><TableCell colSpan={4} className="text-sm text-muted-foreground">Sin eventos cargados</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+        <form action={saveEvento} className="flex flex-wrap items-center gap-2">
+          <input type="date" name="fecha" required aria-label="Desde" className="rounded border bg-background px-2 py-1 text-sm" />
+          <input type="date" name="fecha_fin" aria-label="Hasta (opcional, para una franja)" className="rounded border bg-background px-2 py-1 text-sm" />
+          <input type="text" name="texto" required placeholder="qué pasó ese día" className="min-w-0 flex-1 rounded border bg-background px-2 py-1 text-sm" />
+          <SaveButton>Agregar</SaveButton>
+        </form>
       </section>
 
       <section className="space-y-2">

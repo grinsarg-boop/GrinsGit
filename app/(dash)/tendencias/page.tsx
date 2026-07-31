@@ -9,6 +9,8 @@ import { Tendencia, type PuntoT } from "@/components/tendencia";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { mediaMovil } from "@/lib/tendencias";
 import { breakEven } from "@/lib/breakeven";
+import { type Evento } from "@/lib/eventos";
+import { AvisoEventos } from "@/components/aviso-eventos";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -70,10 +72,13 @@ export default async function Tendencias({
     return { from: daysAgoIso(7 * (i + 1)), to: daysAgoIso(7 * i + 1) };
   });
 
-  const [{ data: sdRaw }, ...weekly] = await Promise.all([
+  const [{ data: sdRaw }, { data: evRaw }, ...weekly] = await Promise.all([
     db.rpc("sales_days", { p_from: pFrom, p_courier: courierParam }),
+    db.from("eventos").select("id, fecha, fecha_fin, texto").lte("fecha", today),
     ...semanas.map((w) => db.rpc("sales_by_product", { p_from: w.from, p_to: w.to, p_courier: courierParam })),
   ]);
+  // Blackouts anotados (065): las curvas los dibujan como marca, no como performance.
+  const eventos = (evRaw ?? []) as Evento[];
 
   // neto = profit estimado − ads sin cohorte (mismo criterio que los totales de /ventas: esa pauta es
   // plata real gastada aunque no ancle a ninguna venta; con filtro de courier viene en 0 desde la RPC).
@@ -252,6 +257,8 @@ export default async function Tendencias({
         </div>
       </div>
 
+      <AvisoEventos from={rangoFrom} to={today} />
+
       {!sd.length ? (
         <Card><CardContent className="pt-5 text-sm text-muted-foreground">Sin datos todavía.</CardContent></Card>
       ) : (
@@ -361,7 +368,7 @@ export default async function Tendencias({
                 )}
               </div>
               <Tendencia puntos={b.pts} kind={b.kind} sombra={b.sombra} trazo={b.trazo} punto={b.punto}
-                         umbral={b.umbral} label={`${b.titulo}, últimos ${nDias} días`} />
+                         umbral={b.umbral} eventos={eventos} label={`${b.titulo}, últimos ${nDias} días`} />
             </CardContent>
           </Card>
         );

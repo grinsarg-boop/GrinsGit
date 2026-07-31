@@ -2,6 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tip } from "@/components/ui/tooltip";
 import Link from "next/link";
+import { AvisoEventos } from "@/components/aviso-eventos";
 import { adLabel, campaignLabel } from "@/lib/ad-label";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -191,6 +192,8 @@ export default async function Anuncios({
           <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent">Aplicar</button>
         </form>
       </div>
+
+      <AvisoEventos from={from} to={to} />
 
       {/* banners de salud: primero atribución (rompe el desglose), después maduración (sube solo) */}
       {atribRota && (

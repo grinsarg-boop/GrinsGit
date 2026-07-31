@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { fmtDate, fmtMoney } from "@/lib/format";
+import { marcas, type Evento } from "@/lib/eventos";
 
 // Gráfico de barras del profit por fecha: barra de color = profit CERRADO (confirmado, verde/rojo),
 // vela gris = profit ESTIMADO (proyección de lo que falta madurar) en el mismo día. SVG puro, sin libs.
@@ -9,7 +10,7 @@ import { fmtDate, fmtMoney } from "@/lib/format";
 // href se pre-construye en el server (no se puede pasar una función a un client component).
 type Bar = { date: string; confirmado: number; estimado: number; href?: string };
 
-export function ProfitBars({ data }: { data: Bar[] }) {
+export function ProfitBars({ data, eventos = [] }: { data: Bar[]; eventos?: Evento[] }) {
   const [hi, setHi] = useState<number | null>(null);
   if (!data.length) return <div className="py-8 text-center text-sm text-muted-foreground">Sin datos para graficar</div>;
 
@@ -25,12 +26,33 @@ export function ProfitBars({ data }: { data: Bar[] }) {
   const barW = Math.min(colW * 0.5, 14);
   const step = data.length > 45 ? 14 : data.length > 20 ? 7 : data.length > 10 ? 3 : 1;
   const hd = hi !== null ? data[hi] : null;
+  const evs = marcas(data.map((d) => d.date), eventos);
 
   return (
     <div className="overflow-x-auto">
       <div className="relative" style={{ width: W, height: H }}>
         <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="max-w-none" role="img"
              aria-label="Profit cerrado (barras de color) y estimado (velas grises) por fecha">
+          {/* Blackouts y cambios de régimen (065), debajo de las barras: un pozo sin marcar se lee
+              como performance. Mismo tratamiento que en tendencia.tsx. */}
+          {evs.length > 0 && (
+            <defs>
+              <pattern id="pb-ev-rayas" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <line x1="0" y1="0" x2="0" y2="6" className="stroke-foreground/15" strokeWidth="2" />
+              </pattern>
+            </defs>
+          )}
+          {evs.map(({ ev, i, iFin }) => (
+            <g key={ev.id}>
+              <title>{`${fmtDate(ev.fecha)}${ev.fecha_fin && ev.fecha_fin !== ev.fecha ? ` → ${fmtDate(ev.fecha_fin)}` : ""} · ${ev.texto}`}</title>
+              {iFin > i ? (
+                <rect x={colW * i} y={padT} width={colW * (iFin - i + 1)} height={plotH} fill="url(#pb-ev-rayas)" />
+              ) : (
+                <line x1={colW * i + colW / 2} x2={colW * i + colW / 2} y1={padT} y2={padT + plotH}
+                      className="stroke-foreground/35" strokeWidth={1} strokeDasharray="3 3" />
+              )}
+            </g>
+          ))}
           <line x1={0} y1={y0} x2={W} y2={y0} className="stroke-border" strokeWidth={1} />
           {data.map((d, i) => {
             const cx = colW * i + colW / 2;

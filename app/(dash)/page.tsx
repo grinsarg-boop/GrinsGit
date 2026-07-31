@@ -7,6 +7,7 @@ import Link from "next/link";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { breakEven } from "@/lib/breakeven";
 import { claseSemaforo, nivel, percentil } from "@/lib/semaforo";
+import { AvisoEventos } from "@/components/aviso-eventos";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -250,6 +251,8 @@ export default async function Resumen({
           );
         })}
       </div>
+
+      <AvisoEventos from={from} to={to} />
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
