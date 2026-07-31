@@ -4,6 +4,8 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import Link from "next/link";
+import { Chispa } from "@/components/chispa";
+import { Delta } from "@/components/delta";
 import { ProfitBars } from "@/components/profit-bars";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { breakEven } from "@/lib/breakeven";
@@ -33,6 +35,12 @@ const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-40
 
 const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const monthLabel = (ym: string) => { const [y, m] = ym.split("-"); return `${MES[+m - 1]} ${y}`; };
+
+// Tasa de entrega semanal por courier (RPC entrega_semanal, 064). La entrega tarda ~21 días en
+// resolverse, así que las 3 últimas semanas todavía maduran.
+type SemanaEnt = { semana: string; courier: string; despachadas: number; entregadas: number };
+const MADURA_SEMANAS = 3;
+const COURIER_NOMBRE: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML" };
 
 export default async function Ventas({
   searchParams,
@@ -65,9 +73,10 @@ export default async function Ventas({
   // del panel Y la base del semáforo (F1-09), que se mide siempre sobre 90 días — el umbral no puede
   // depender del preset que estés mirando.
   const baseFrom = from < daysAgoIso(90) ? from : daysAgoIso(90);
-  const [{ data: rows }, { data: prodRows }] = await Promise.all([
+  const [{ data: rows }, { data: prodRows }, { data: entRaw }] = await Promise.all([
     db.rpc("sales_days", { p_from: baseFrom, p_courier: courierParam }),
     db.rpc("sales_by_product", { p_from: from, p_to: to, p_courier: courierParam }),
+    db.rpc("entrega_semanal", { p_desde: daysAgoIso(7 * 13) }),   // 13 semanas, sin filtro de courier
   ]);
   const todos: Day[] = ((rows ?? []) as Row[])
     .map((r): Day => ({
@@ -176,6 +185,29 @@ export default async function Ventas({
   const adsMl = rango.adsMl;
   const adsMeta = adsTot - adsMl;
   const splitAds = !courierParam;
+
+  // F1-13 · small multiples de la tasa de entrega por courier, ESCALA COMPARTIDA 0-100%. Acá compartir
+  // eje sí corresponde —es la misma métrica en el mismo rango— y es justamente lo que hay que ver: la
+  // tasa "global" del panel sube cuando crece la parte de ML (~100%) sin que Urbano haya mejorado.
+  // Con eje propio cada card mentiría diciendo que todos se mueven parecido.
+  //
+  // La entrega madura ~21 días, así que las 3 últimas semanas van huecas: van a SUBIR solas. El número
+  // grande de cada card es la última semana ya firme.
+  const semanasEnt = [...new Set(((entRaw ?? []) as SemanaEnt[]).map((r) => r.semana))].sort().slice(1); // la 1ª viene cortada
+  const entPorCourier = ["urbano", "fixy", "correo", "ml"].map((c) => {
+    const porSemana = new Map(((entRaw ?? []) as SemanaEnt[]).filter((r) => r.courier === c).map((r) => [r.semana, r]));
+    // Un courier que no despachó alguna semana del rango queda afuera: dibujar el hueco como si fuera
+    // un punto más correría el eje del tiempo y la forma sería falsa.
+    const pts = semanasEnt.map((s) => porSemana.get(s));
+    if (pts.some((p) => !p || p.despachadas < 1)) return null;
+    const serie = pts.map((p, i) => ({ x: semanasEnt[i], v: p!.entregadas / p!.despachadas }));
+    const iFirme = Math.max(serie.length - 1 - MADURA_SEMANAS, 0);
+    return {
+      courier: c, serie,
+      firme: serie[iFirme]?.v ?? NaN, previa: serie[iFirme - 1]?.v ?? NaN,
+      guiasFirme: pts[iFirme]!.despachadas,
+    };
+  }).filter((x): x is NonNullable<typeof x> => x !== null && x.serie.length >= 3);
 
   return (
     <main className="space-y-6">
@@ -385,6 +417,37 @@ export default async function Ventas({
                 })}
               </TableBody>
             </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* F1-13 · tasa de entrega por courier, small multiples con EJE COMPARTIDO 0-100% */}
+      {entPorCourier.length > 1 && (
+        <Card>
+          <CardContent className="space-y-3 pt-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+                Tasa de entrega por courier
+                <Tip tip={`Entregadas ÷ despachadas por semana de VENTA, ${semanasEnt.length} semanas. Los cuatro gráficos comparten el eje 0-100% a propósito: son la misma métrica en el mismo rango, y la comparación de NIVEL es el punto — la tasa "global" del panel sube cuando crece la parte de ML (entrega ~100%) o Correo sin que Urbano haya mejorado un punto. Como el eje es compartido, el movimiento semana a semana de Urbano y Fixy se ve chico: para eso está el Δ al lado del número. Los ${MADURA_SEMANAS} últimos puntos van huecos — la entrega tarda ~21 días en resolverse, así que van a SUBIR solos. El número grande es la última semana ya firme.`} />
+              </span>
+              <span className="text-xs text-muted-foreground">eje compartido 0-100% · última semana firme</span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {entPorCourier.map((e) => (
+                <div key={e.courier} className="sube space-y-1.5 rounded-lg bg-muted/40 p-3">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-sm font-medium">{COURIER_NOMBRE[e.courier] ?? e.courier}</span>
+                    <span className="text-sm font-semibold tabular-nums">{fmtPct(e.firme)}</span>
+                  </div>
+                  <div className="flex items-baseline gap-2 text-xs">
+                    <Delta actual={e.firme} previo={e.previa} tipo="pct" />
+                    <span className="tabular-nums text-muted-foreground">{e.guiasFirme.toLocaleString("es-AR")} guías</span>
+                  </div>
+                  <Chispa puntos={e.serie} positivo min={0} max={1} pendientes={MADURA_SEMANAS}
+                          fmt={fmtPct} unidad={`Tasa de entrega ${COURIER_NOMBRE[e.courier] ?? e.courier}`} />
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}

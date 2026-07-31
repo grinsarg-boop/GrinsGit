@@ -8,7 +8,7 @@ import Link from "next/link";
 import { Donut, PALETA, type Slice } from "@/components/donut";
 import { Waterfall } from "@/components/waterfall";
 import { Curva, type Punto } from "@/components/curva";
-import { Delta } from "@/components/delta";
+import { Delta, DeltaExplicado } from "@/components/delta";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { claseSemaforo, nivel, percentil } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -297,6 +297,11 @@ export default async function Analisis({
             { label: "Despachos", value: despachos.toLocaleString("es-AR"), delta: <Delta actual={despachos} previo={pDesp} tipo="num" /> },
             { label: "Tasa de entrega", value: fmtPct(tasa), delta: <Delta actual={tasa} previo={pTasa} tipo="pct" /> },
           ]} />
+          {/* F1-12: los cuatro KPIs de arriba son los drivers, pero sueltos no dicen cuánto aportó
+              cada uno. Acá se multiplican y se reparte el cambio de profit entre ellos. */}
+          <DeltaExplicado
+            hoy={{ guias: despachos, entregas, revenue, profit: profitConf }}
+            antes={{ guias: pDesp, entregas: pEnt, revenue: pRev, profit: sumOf(pnlPrev, "profit_conf") }} />
         </CardContent>
       </Card>
 
