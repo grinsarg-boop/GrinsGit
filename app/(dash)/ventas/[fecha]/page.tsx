@@ -106,6 +106,7 @@ export default async function VentaDia({ params, searchParams }: {
     return { id: top.product_id, name: pname.get(top.product_id!) ?? `#${top.product_id}` };
   };
   // Trabado: sigue en la calle y hace 2 semanas que no registra movimiento de estado (para reclamar).
+  // eslint-disable-next-line react-hooks/purity -- server component: corre una vez por request, no en render de React
   const CUT14 = Date.now() - 14 * 86400000;
   const estadoDe = (o: OrderRow): { estado: EstadoKey; tracking: string | null; trabado: boolean } => {
     const desp = o.shipments.filter((s) => s.dispatched_at && s.status_canonical !== "cancelado");

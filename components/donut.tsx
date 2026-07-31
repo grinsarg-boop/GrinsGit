@@ -37,7 +37,9 @@ export function Donut({
 
   // Circunferencia normalizada a 100 para que dasharray sea directamente el porcentaje.
   const R = 15.9155;
-  let acum = 0;
+  const pcts = slices.map((s) => Math.max(s.value, 0) / total * 100);
+  // −25 arranca el trazo a las 12 en punto en vez de a las 3.
+  const offs = pcts.map((_, i) => 25 - pcts.slice(0, i).reduce((a, b) => a + b, 0));
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -45,10 +47,7 @@ export function Donut({
            aria-label={`Distribución: ${slices.map((s) => `${s.label} ${fmtPct(s.value / total)}`).join(", ")}`}>
         <circle cx="21" cy="21" r={R} fill="none" strokeWidth="6" className="stroke-muted" />
         {slices.map((s, i) => {
-          const pct = Math.max(s.value, 0) / total * 100;
-          // −25 arranca el trazo a las 12 en punto en vez de a las 3.
-          const off = -acum + 25;
-          acum += pct;
+          const pct = pcts[i], off = offs[i];
           return (
             <circle key={s.label} cx="21" cy="21" r={R} fill="none" strokeWidth="6"
                     className={cn(s.className, "tajada")}

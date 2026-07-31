@@ -14,7 +14,7 @@ type Session = { id: string; title: string | null; updated_at: string };
 
 export function ChatWidget() {
   const [open, setOpen] = useState(false);
-  const [loadedSessions, setLoadedSessions] = useState(false);
+  const loadedSessions = useRef(false);   // ref, no estado: nadie lo pinta y en estado dispara render en cascada
   const [sessions, setSessions] = useState<Session[]>([]);
   const [showList, setShowList] = useState(false);
   const [currentId, setCurrentId] = useState<string | null>(null);
@@ -26,8 +26,8 @@ export function ChatWidget() {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (open && !loadedSessions) { void loadSessions(); setLoadedSessions(true); }
-  }, [open, loadedSessions]);
+    if (open && !loadedSessions.current) { loadedSessions.current = true; void loadSessions(); }
+  }, [open]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
