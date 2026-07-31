@@ -13,6 +13,7 @@ import {
   type MesCaja,
 } from "@/lib/cashflow";
 import { inventarioSafe } from "@/lib/stock";
+import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { categorizarMov } from "./actions";
@@ -28,7 +29,6 @@ type SalesDay = { sale_date: string; profit_confirmado: number; profit_estimado:
 const N = (v: number | null | undefined) => Number(v ?? 0);
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const mesLabel = (mes: string) => `${MESES[Number(mes.slice(5, 7)) - 1]} ${mes.slice(0, 4)}`;
-const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 
 export default async function Caja() {
   let cf: Awaited<ReturnType<typeof fetchCashflow>>;

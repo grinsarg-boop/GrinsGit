@@ -1,5 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { nivel, percentil } from "./semaforo";
+import { nivel, percentil, pnlColor } from "./semaforo";
+
+const VERDE = "text-emerald-600 dark:text-emerald-400";
+const AMBAR = "text-amber-600 dark:text-amber-500";
+const ROJO = "text-destructive";
+
+describe("pnlColor", () => {
+  it("manda el confirmado, no el estimado", () => {
+    // Veinguard, 7 días (31/07): confirmado positivo → verde, aunque el estimado esté por encima
+    expect(pnlColor(998_804, 735_332)).toBe(VERDE);
+    // el caso que antes mentía en verde: la plata firme todavía está en rojo
+    expect(pnlColor(30_748, -2_465)).toBe(AMBAR);
+  });
+
+  it("rojo solo cuando ni el estimado alcanza", () => {
+    expect(pnlColor(-424_598, -424_598)).toBe(ROJO);
+    expect(pnlColor(-62_060, -87_255)).toBe(ROJO);
+  });
+
+  it("sin confirmado juzga el único número que hay", () => {
+    expect(pnlColor(1)).toBe(VERDE);
+    expect(pnlColor(0)).toBe(VERDE);
+    expect(pnlColor(-1)).toBe(ROJO);
+  });
+});
 
 describe("percentil", () => {
   it("interpola linealmente (R type 7)", () => {

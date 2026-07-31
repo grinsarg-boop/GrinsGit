@@ -38,3 +38,18 @@ export const CLASE_SEMAFORO: Record<Nivel, string> = {
 // Clase de color de una fila, o el gris de siempre cuando no hay umbral medido que aplicar.
 export const claseSemaforo = (n: Nivel | null, sinDato = "text-muted-foreground") =>
   n ? CLASE_SEMAFORO[n] : sinDato;
+
+// Verde/rojo del profit. Manda la plata FIRME (el confirmado), no el estimado: el estimado es una
+// proyección, y pintarlo afirma algo que todavía no pasó. Estaba copiado en 8 páginas juzgando siempre
+// el estimado, y eso mentía para los dos lados en rangos recientes — verde sobre plata que todavía no
+// existe, o rojo sobre una cohorte que solo va a subir.
+//
+// El caso del medio es el que importa y por eso hay tres colores y no dos: confirmado en rojo con
+// estimado en verde NO es pérdida, es cohorte inmadura (el flete y los ads ya se pagaron, el COD
+// todavía no entró). Va ámbar, que es el color que el panel ya usa para "todavía no se sabe".
+// Sin confirmado a mano (packs, zonas, un día suelto) se juzga el único número que hay.
+export function pnlColor(est: number, conf?: number) {
+  const firme = conf ?? est;
+  if (firme >= 0) return CLASE_SEMAFORO.ok;
+  return est >= 0 ? CLASE_SEMAFORO.medio : CLASE_SEMAFORO.mal;
+}

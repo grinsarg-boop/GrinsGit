@@ -6,13 +6,13 @@ import {
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fmtDate, fmtMoney, fmtPct } from "@/lib/format";
+import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { TIP_CONFIRMADO, TIP_ESTIMADO } from "@/lib/tips";
 
 export const revalidate = 60;
 
-const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 const COURIER: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML" };
 // entregado verde · terminales malos (plata perdida) rojo · incidencia naranja (accionable: reclamar
 // a Urbano) · resto (en la calle, normal) ámbar. La incidencia sale del rojo para no perderse entre
@@ -223,7 +223,7 @@ export default async function Dia({ params, searchParams }: {
 
       {/* Totales del día */}
       <Kpis items={[
-        { label: "Profit estimado", value: fmtMoney(tot.profitEst), color: pnlColor(tot.profitEst), tip: TIP_ESTIMADO },
+        { label: "Profit estimado", value: fmtMoney(tot.profitEst), color: pnlColor(tot.profitEst, tot.profitConf), tip: TIP_ESTIMADO },
         { label: "Confirmado", value: fmtMoney(tot.profitConf), color: tot.profitConf < 0 ? "text-destructive/80" : undefined, tip: TIP_CONFIRMADO },
         { label: "Revenue estimado", value: fmtMoney(tot.revenueEst) },
         { label: "Gasto en Ads", value: fmtMoney(tot.ads), tip: courierParam

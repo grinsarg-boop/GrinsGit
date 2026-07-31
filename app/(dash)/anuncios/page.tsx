@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AvisoEventos } from "@/components/aviso-eventos";
 import { adLabel, campaignLabel } from "@/lib/ad-label";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
+import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -23,7 +24,6 @@ type AdRow = {
 };
 
 const N = (v: number | null | undefined) => Number(v ?? 0);
-const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 const tasaColor = (t: number) => (t < 0.35 ? "text-destructive" : t < 0.45 ? "text-amber-600 dark:text-amber-500" : "text-emerald-600 dark:text-emerald-400");
 
 type Sums = { pedidos: number; despachadas: number; entregadas: number; devueltas: number; resueltas: number; cod_cobrado: number; flete: number; spend: number };

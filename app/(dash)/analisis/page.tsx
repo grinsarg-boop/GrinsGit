@@ -10,7 +10,7 @@ import { Waterfall } from "@/components/waterfall";
 import { Curva, type Punto } from "@/components/curva";
 import { Delta, DeltaExplicado } from "@/components/delta";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
-import { claseSemaforo, nivel, percentil } from "@/lib/semaforo";
+import { claseSemaforo, nivel, percentil, pnlColor } from "@/lib/semaforo";
 import { tipWaterfall } from "@/lib/tips";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -52,7 +52,6 @@ const ESTADO_COLOR: Record<string, { s: string; b: string }> = {
   no_despachado: { s: "stroke-slate-400", b: "bg-slate-400" },
   siniestro: { s: "stroke-violet-500", b: "bg-violet-500" },
 };
-const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 const N = (v: number | null | undefined) => Number(v ?? 0);
 
 export default async function Analisis({
@@ -292,7 +291,7 @@ export default async function Analisis({
             <span className="text-xs tabular-nums text-muted-foreground">vs {fmtDate(prevFrom)} → {fmtDate(prevTo)}</span>
           </div>
           <Kpis items={[
-            { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst),
+            { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst, profitConf),
               delta: <Delta actual={profitEst} previo={pProfitEst} />, pie: `confirmado ${fmtMoney(profitConf)}` },
             { label: "Cobrado", value: fmtMoney(revenue), delta: <Delta actual={revenue} previo={pRev} /> },
             { label: "Despachos", value: despachos.toLocaleString("es-AR"), delta: <Delta actual={despachos} previo={pDesp} tipo="num" /> },
@@ -326,7 +325,7 @@ export default async function Analisis({
         <CardContent className="space-y-3 pt-5">
           <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
             Profit por canal
-            <Tip tip="La dona y la columna grande usan el profit ESTIMADO (confirmado + proyección de lo que sigue en la calle): en rangos recientes el confirmado solo da muy negativo porque el flete y los ads ya se pagaron pero el COD todavía no maduró — no es pérdida, es cohorte inmadura. El confirmado queda al lado para ver cuánto ya es plata firme." />
+            <Tip tip="La dona y la columna grande usan el profit ESTIMADO (confirmado + proyección de lo que sigue en la calle): en rangos recientes el confirmado solo da muy negativo porque el flete y los ads ya se pagaron pero el COD todavía no maduró — no es pérdida, es cohorte inmadura. El confirmado queda al lado para ver cuánto ya es plata firme, y es él —no el estimado— el que decide el color: verde cuando la plata firme ya es positiva, ámbar cuando todavía está en rojo pero la cohorte proyecta positivo, rojo cuando ni proyectado da." />
           </span>
           <Donut slices={porCanal.filter((c) => c.profitEst > 0).map((c, i) => ({ label: COURIER[c.k] ?? c.k, value: c.profitEst, className: PALETA[i].s, dot: PALETA[i].b }))} />
           {porCanal.some((c) => c.profitEst <= 0) && (
@@ -349,9 +348,9 @@ export default async function Analisis({
                   <TableCell className="font-medium">{COURIER[c.k] ?? c.k}</TableCell>
                   <TableCell className="text-right tabular-nums">{c.despachadas.toLocaleString("es-AR")}</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">{c.despachadas ? fmtPct(c.entregadas / c.despachadas) : "—"}</TableCell>
-                  <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(c.profitEst))}>{fmtMoney(c.profitEst)}</TableCell>
+                  <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(c.profitEst, c.profitConf))}>{fmtMoney(c.profitEst)}</TableCell>
                   <TableCell className={cn("text-right tabular-nums", c.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(c.profitConf)}</TableCell>
-                  <TableCell className={cn("text-right tabular-nums", pnlColor(c.profitEst))}>{c.despachadas ? fmtMoney(c.profitEst / c.despachadas) : "—"}</TableCell>
+                  <TableCell className={cn("text-right tabular-nums", pnlColor(c.profitEst, c.profitConf))}>{c.despachadas ? fmtMoney(c.profitEst / c.despachadas) : "—"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -393,7 +392,7 @@ export default async function Analisis({
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{p.despachadas.toLocaleString("es-AR")}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{p.despachadas ? fmtPct(p.entregadas / p.despachadas) : "—"}</TableCell>
-                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(p.profitEst))}>{fmtMoney(p.profitEst)}</TableCell>
+                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(p.profitEst, p.profitConf))}>{fmtMoney(p.profitEst)}</TableCell>
                     <TableCell className={cn("text-right tabular-nums", p.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(p.profitConf)}</TableCell>
                     <TableCell className="text-right"><Delta actual={p.profitEst} previo={profitProdPrev.get(p.k) ?? NaN} /></TableCell>
                     <TableCell className="text-right tabular-nums">

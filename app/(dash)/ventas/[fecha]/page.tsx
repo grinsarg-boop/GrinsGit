@@ -3,13 +3,13 @@ import { Kpis } from "@/components/kpis";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { fmtDate, fmtMoney, fmtPct } from "@/lib/format";
+import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { TIP_CONFIRMADO, TIP_ESTIMADO } from "@/lib/tips";
 
 export const revalidate = 60;
 
-const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 const COURIER: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML" };
 
 // Estados de despacho de una VENTA COD (orden generada ese día), de mejor a peor. "pendiente" = orden válida
@@ -227,7 +227,7 @@ export default async function VentaDia({ params, searchParams }: {
       <Kpis items={[
         { label: "Generadas", value: String(generadas), tip: "Ventas generadas ese día en el canal filtrado (idéntico al panel). En Correo/ML son las ventas del día." },
         { label: "Despachadas", value: `${despachadas} · ${fmtPct(pctDesp)}`, tip: "Cuántas de esas ventas ya salieron a la calle. En Correo es la confirmación; en ML, entregadas por ML." },
-        { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst), tip: TIP_ESTIMADO },
+        { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst, profitConf), tip: TIP_ESTIMADO },
         { label: "Cerrado", value: fmtMoney(profitConf), color: profitConf < 0 ? "text-destructive/80" : undefined, tip: TIP_CONFIRMADO },
       ]} />
 
@@ -267,7 +267,7 @@ export default async function VentaDia({ params, searchParams }: {
                   <span className="hidden w-24 text-right tabular-nums text-muted-foreground lg:inline">{Number(r.flete) ? fmtMoney(Number(r.flete)) : "—"}</span>
                   <span className="hidden w-24 text-right tabular-nums text-muted-foreground lg:inline">{Number(r.comisiones) ? fmtMoney(Number(r.comisiones)) : "—"}</span>
                   <span className="hidden w-24 text-right tabular-nums text-muted-foreground md:inline">{Number(r.ads) ? fmtMoney(Number(r.ads)) : "—"}</span>
-                  <span className={cn("w-28 text-right font-semibold tabular-nums", pnlColor(pe))}>{fmtMoney(pe)}</span>
+                  <span className={cn("w-28 text-right font-semibold tabular-nums", pnlColor(pe, pc))}>{fmtMoney(pe)}</span>
                   <span className={cn("hidden w-28 text-right tabular-nums lg:inline", pc < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(pc)}</span>
                 </div>
               );

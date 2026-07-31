@@ -6,7 +6,7 @@ import {
 import Link from "next/link";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { breakEven } from "@/lib/breakeven";
-import { claseSemaforo, nivel, percentil } from "@/lib/semaforo";
+import { claseSemaforo, nivel, percentil, pnlColor } from "@/lib/semaforo";
 import { AvisoEventos } from "@/components/aviso-eventos";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -29,7 +29,6 @@ type MonthAgg = {
 
 
 // Verde ganás / rojo perdés — el color hace el trabajo antes de leer el número.
-const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 
 const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const monthLabel = (ym: string) => { const [y, m] = ym.split("-"); return `${MES[+m - 1]} ${y}`; };
@@ -331,7 +330,7 @@ export default async function Resumen({
             <div className="mb-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
               Profit estimado · <span className="tabular-nums normal-case">{rangeLabel}</span>
             </div>
-            <div className={cn("text-3xl font-bold tabular-nums tracking-tight", rango.despachadas ? pnlColor(rProfitEst) : "text-muted-foreground")}>
+            <div className={cn("text-3xl font-bold tabular-nums tracking-tight", rango.despachadas ? pnlColor(rProfitEst, rProfitConf) : "text-muted-foreground")}>
               {rango.despachadas ? fmtMoney(rProfitEst) : "—"}
             </div>
             {rango.despachadas ? (
@@ -597,7 +596,7 @@ export default async function Resumen({
                 <TableCell className="text-right tabular-nums">{m.despachadas}</TableCell>
                 <TableCell className="text-right tabular-nums">{m.entregadas}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.despachadas ? fmtPct(tasaProy) : "—"}</TableCell>
-                <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(m.profitEst))}>{fmtMoney(m.profitEst)}</TableCell>
+                <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(m.profitEst, m.profitConf))}>{fmtMoney(m.profitEst)}</TableCell>
                 <TableCell className={cn("text-right tabular-nums", m.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(m.profitConf)}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.flete ? fmtMoney(m.flete) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.comisiones ? fmtMoney(m.comisiones) : "—"}</TableCell>

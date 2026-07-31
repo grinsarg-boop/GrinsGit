@@ -20,7 +20,7 @@ export const TIP_CONFIRMADO =
   "Profit ya cerrado: lo cobrado menos envío, comisiones, costo de producto y Ads. NO es el monto cobrado — las columnas Envío y Comis. son informativas y ya están restadas acá, no las restes de nuevo. Puede dar negativo de forma temporal cuando todavía gastaste más en Ads de lo que maduró en ventas; se corrige a medida que las guías se entregan.";
 
 export const TIP_ESTIMADO =
-  "El confirmado más la proyección de las guías que siguen en la calle, según tu tasa de entrega histórica. Ya tiene todos los costos descontados (envío, comisiones, producto y Ads).";
+  "El confirmado más la proyección de las guías que siguen en la calle, según tu tasa de entrega histórica. Ya tiene todos los costos descontados (envío, comisiones, producto y Ads). El COLOR lo manda el confirmado y no el estimado: verde = la plata firme ya es positiva; ámbar = el confirmado todavía está en rojo pero la cohorte proyecta positivo (es inmadurez, no pérdida); rojo = ni proyectado da.";
 
 // El waterfall del P&L. Estaba escrito dos veces —/analisis y /analisis/[producto]— y ya habían
 // divergido: la del producto se comía la mitad de la explicación de las percepciones. `alcance`

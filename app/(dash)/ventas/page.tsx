@@ -10,7 +10,7 @@ import { Delta } from "@/components/delta";
 import { ProfitBars } from "@/components/profit-bars";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { breakEven } from "@/lib/breakeven";
-import { claseSemaforo, nivel, percentil } from "@/lib/semaforo";
+import { claseSemaforo, nivel, percentil, pnlColor } from "@/lib/semaforo";
 import { SELECT_EVENTOS, type Evento } from "@/lib/eventos";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -32,7 +32,6 @@ type MonthAgg = {
   flete: number; comisiones: number; percepciones: number;
 };
 
-const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 
 
 const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
@@ -323,7 +322,7 @@ export default async function Ventas({
             <div className="mb-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
               Profit por día de venta · <span className="tabular-nums normal-case">{rangeLabel}</span>
             </div>
-            <div className={cn("text-3xl font-bold tabular-nums tracking-tight", rango.generadas ? pnlColor(rProfitEst) : "text-muted-foreground")}>
+            <div className={cn("text-3xl font-bold tabular-nums tracking-tight", rango.generadas ? pnlColor(rProfitEst, rProfitConf) : "text-muted-foreground")}>
               {rango.generadas ? fmtMoney(rProfitEst) : "—"}
             </div>
             {rango.generadas ? (
@@ -417,7 +416,7 @@ export default async function Ventas({
                 <TableCell className="text-right tabular-nums text-muted-foreground">{p.percepciones ? fmtMoney(p.percepciones) : "—"}</TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">{p.ads ? fmtMoney(p.ads) : "—"}</TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">{cpaP > 0 ? fmtMoney(cpaP) : "—"}</TableCell>
-                      <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(p.profitEst))}>{fmtMoney(p.profitEst)}</TableCell>
+                      <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(p.profitEst, p.profitConf))}>{fmtMoney(p.profitEst)}</TableCell>
                       <TableCell className={cn("text-right tabular-nums", p.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(p.profitConf)}</TableCell>
                       <TableCell className="text-right tabular-nums">{p.ads > 0 ? fmtRatio(p.revEst / p.ads) : "—"}</TableCell>
                     </TableRow>
@@ -612,7 +611,7 @@ export default async function Ventas({
                 <TableCell className="font-medium capitalize">{monthLabel(m.month)}</TableCell>
                 <TableCell className="text-right tabular-nums">{m.generadas}</TableCell>
                 <TableCell className="text-right tabular-nums">{m.despachadas}</TableCell>
-                <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(m.profitEst))}>{fmtMoney(m.profitEst)}</TableCell>
+                <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(m.profitEst, m.profitConf))}>{fmtMoney(m.profitEst)}</TableCell>
                 <TableCell className={cn("text-right tabular-nums", m.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(m.profitConf)}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.flete ? fmtMoney(m.flete) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.comisiones ? fmtMoney(m.comisiones) : "—"}</TableCell>

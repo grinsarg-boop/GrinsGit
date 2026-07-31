@@ -11,6 +11,7 @@ import { mediaMovil } from "@/lib/tendencias";
 import { breakEven } from "@/lib/breakeven";
 import { SELECT_EVENTOS, type Evento } from "@/lib/eventos";
 import { AvisoEventos } from "@/components/aviso-eventos";
+import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +31,6 @@ type ProdWeek = { product: string; generadas: number; profit_estimado: number; a
 
 const N = (v: number | null | undefined) => Number(v ?? 0);
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
-const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 
 // La media móvil "de hoy" se toma en el último punto MADURO (fuera de la sombra) y se compara con la
 // de 14 puntos antes: eso es la tendencia, sin contaminarla con días que todavía van a subir.

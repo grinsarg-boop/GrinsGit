@@ -12,6 +12,7 @@ import { ChannelBars } from "@/components/channel-bars";
 import { Delta } from "@/components/delta";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { tipWaterfall } from "@/lib/tips";
+import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -34,7 +35,6 @@ type PackRow = {
   margen_neto_est: number;
 };
 
-const pnlColor = (n: number) => (n >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-destructive");
 const N = (v: number | null | undefined) => Number(v ?? 0);
 
 export default async function AnalisisProducto({ params, searchParams }: {
@@ -243,7 +243,7 @@ export default async function AnalisisProducto({ params, searchParams }: {
             <span className="text-xs tabular-nums text-muted-foreground">vs {fmtDate(prevFrom)} → {fmtDate(prevTo)}</span>
           </div>
           <Kpis items={[
-            { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst),
+            { label: "Profit estimado", value: fmtMoney(profitEst), color: pnlColor(profitEst, profitConf),
               delta: <Delta actual={profitEst} previo={pProfitEst} />, pie: `confirmado ${fmtMoney(profitConf)}` },
             { label: "Cobrado", value: fmtMoney(revenue), delta: <Delta actual={revenue} previo={pRev} /> },
             { label: "Despachos", value: despachos.toLocaleString("es-AR"), delta: <Delta actual={despachos} previo={pDesp} tipo="num" />,
@@ -308,10 +308,10 @@ export default async function AnalisisProducto({ params, searchParams }: {
                     <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(N(p.margen_bruto))}</TableCell>
                     <TableCell className={cn("text-right tabular-nums", pnlColor(m))}>{fmtMoney(m)}</TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">{adsP ? fmtMoney(adsP) : "—"}</TableCell>
-                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(fe))}
+                    <TableCell className={cn("text-right font-semibold tabular-nums", pnlColor(fe, f))}
                                title={p.en_calle ? `${p.en_calle} guías en la calle, proyectadas con los priors del panel` : "sin guías en la calle: estimado = cerrado"}>{fmtMoney(fe)}</TableCell>
                     <TableCell className={cn("text-right tabular-nums", f < 0 ? "text-destructive/75" : "text-muted-foreground")}>{fmtMoney(f)}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", pnlColor(fe))}>{p.guias ? fmtMoney(fe / p.guias) : "—"}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", pnlColor(fe, f))}>{p.guias ? fmtMoney(fe / p.guias) : "—"}</TableCell>
                     <TableCell><div className="h-1.5 w-full rounded bg-muted"><div className={cn("barra h-1.5 rounded", fe >= 0 ? "bg-emerald-500" : "bg-destructive")} style={{ width: `${Math.abs(fe) / maxPackM * 100}%` }} /></div></TableCell>
                   </TableRow>
                 );
