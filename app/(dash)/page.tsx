@@ -11,7 +11,7 @@ import { AvisoEventos } from "@/components/aviso-eventos";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
-import { TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO, TIP_PERCEP } from "@/lib/tips";
+import { TIP_ADS_ML, TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO, TIP_PERCEP } from "@/lib/tips";
 
 export const revalidate = 60; // R12
 
@@ -395,7 +395,7 @@ export default async function Resumen({
             <div>
               <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
                 MercadoLibre
-                <Tip tip="Product Ads de MercadoLibre, con IVA, imputados a la publicación real desde la 062 (antes se prorrateaban por revenue y el profit por producto salía mentido). No pasan por ad_spend: por eso nunca entran a 'sin cohorte'." />
+                <Tip tip={TIP_ADS_ML} />
               </div>
               <div className="text-lg font-semibold tabular-nums">{fmtMoney(adsMl)}</div>
               <div className="text-xs text-muted-foreground">{adsTot ? fmtPct(adsMl / adsTot) : "—"} del total</div>
@@ -486,7 +486,7 @@ export default async function Resumen({
                 <TableHead className="text-right">Ads Meta</TableHead>
                 <TableHead className="text-right">
                   <span className="inline-flex items-center gap-1">Ads ML
-                    <Tip tip="Product Ads de MercadoLibre (con IVA), imputados a la publicación real desde la 062. Es una pauta con otra economía: se puja por publicación y no pasa por ad_spend, así que nunca cae en 'sin cohorte'." />
+                    <Tip tip={TIP_ADS_ML} />
                   </span>
                 </TableHead>
               </>
@@ -602,7 +602,7 @@ export default async function Resumen({
                 <TableHead className="text-right">Ads Meta</TableHead>
                 <TableHead className="text-right">
                   <span className="inline-flex items-center gap-1">Ads ML
-                    <Tip tip="Product Ads de MercadoLibre (con IVA), imputados a la publicación real desde la 062. Es una pauta con otra economía: se puja por publicación y no pasa por ad_spend, así que nunca cae en 'sin cohorte'." />
+                    <Tip tip={TIP_ADS_ML} />
                   </span>
                 </TableHead>
               </>

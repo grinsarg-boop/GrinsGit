@@ -11,6 +11,7 @@ import { PackCourierBars } from "@/components/pack-courier-bars";
 import { ChannelBars } from "@/components/channel-bars";
 import { Delta } from "@/components/delta";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
+import { tipWaterfall } from "@/lib/tips";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -372,7 +373,7 @@ export default async function AnalisisProducto({ params, searchParams }: {
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               De lo cobrado al profit · {prod.name}
-              <Tip tip="Sobre el COD efectivamente cobrado del producto en el período, restando un costo por escalón en el orden del P&L. El flete es hundido: se paga por toda guía despachada, entregue o no. Percepciones ML solo si el producto vende por ese canal." />
+              <Tip tip={tipWaterfall("del producto en el período")} />
             </span>
             <span className="text-xs tabular-nums text-muted-foreground">cobrado {fmtMoney(revenue)}</span>
           </div>

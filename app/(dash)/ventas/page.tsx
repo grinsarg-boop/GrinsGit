@@ -15,7 +15,7 @@ import { type Evento } from "@/lib/eventos";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
-import { TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO, TIP_PERCEP } from "@/lib/tips";
+import { TIP_ADS_ML, TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO, TIP_PERCEP } from "@/lib/tips";
 
 export const revalidate = 60;
 
@@ -494,7 +494,7 @@ export default async function Ventas({
                 <TableHead className="text-right">Ads Meta</TableHead>
                 <TableHead className="text-right">
                   <span className="inline-flex items-center gap-1">Ads ML
-                    <Tip tip="Product Ads de MercadoLibre (con IVA), imputados a la publicación real desde la 062. Es una pauta con otra economía: se puja por publicación y no pasa por ad_spend, así que nunca cae en 'sin cohorte'." />
+                    <Tip tip={TIP_ADS_ML} />
                   </span>
                 </TableHead>
               </>
@@ -606,7 +606,7 @@ export default async function Ventas({
                 <TableHead className="text-right">Ads Meta</TableHead>
                 <TableHead className="text-right">
                   <span className="inline-flex items-center gap-1">Ads ML
-                    <Tip tip="Product Ads de MercadoLibre (con IVA), imputados a la publicación real desde la 062. Es una pauta con otra economía: se puja por publicación y no pasa por ad_spend, así que nunca cae en 'sin cohorte'." />
+                    <Tip tip={TIP_ADS_ML} />
                   </span>
                 </TableHead>
               </>

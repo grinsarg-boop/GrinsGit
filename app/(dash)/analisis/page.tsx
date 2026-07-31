@@ -11,6 +11,7 @@ import { Curva, type Punto } from "@/components/curva";
 import { Delta, DeltaExplicado } from "@/components/delta";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { claseSemaforo, nivel, percentil } from "@/lib/semaforo";
+import { tipWaterfall } from "@/lib/tips";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -311,7 +312,7 @@ export default async function Analisis({
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
               De lo cobrado al profit
-              <Tip tip="Sobre el COD efectivamente cobrado del período, restando un costo por escalón en el orden del P&L. El flete es hundido: se paga por toda guía despachada, entregue o no, por eso pesa más de lo que uno espera. Percepciones ML = IVA/IIBB que MercadoLibre factura sobre sus servicios (solo canal ML): estimadas por día al ~18% calibrado contra la factura real; el Reporte_Facturacion mensual (en /sync) las pisa con el valor exacto." />
+              <Tip tip={tipWaterfall()} />
             </span>
             <span className="text-xs tabular-nums text-muted-foreground">cobrado {fmtMoney(revenue)}</span>
           </div>
