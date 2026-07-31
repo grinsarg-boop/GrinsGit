@@ -185,10 +185,8 @@ export default async function Ventas({
 
   // Ads por FUENTE (F1-11): los Product Ads de ML son la parte de `ads` de las filas courier='ml';
   // todo el resto —incluida la pauta sin cohorte, que sale de ad_spend— es Meta. Suman el total exacto.
-  // El split en las tablas solo aporta en "Todos": con filtro de courier es todo Meta o todo ML.
   const adsMl = rango.adsMl;
   const adsMeta = adsTot - adsMl;
-  const splitAds = !courierParam;
 
   // F1-13 · small multiples de la tasa de entrega por courier, ESCALA COMPARTIDA 0-100%. Acá compartir
   // eje sí corresponde —es la misma métrica en el mismo rango— y es justamente lo que hay que ver: la
@@ -450,7 +448,7 @@ export default async function Ventas({
                     <span className="tabular-nums text-muted-foreground">{e.guiasFirme.toLocaleString("es-AR")} guías</span>
                   </div>
                   <Chispa puntos={e.serie} positivo min={0} max={1} pendientes={MADURA_SEMANAS}
-                          fmt={fmtPct} unidad={`Tasa de entrega ${COURIER_NOMBRE[e.courier] ?? e.courier}`} />
+                          formato="pct" unidad={`Tasa de entrega ${COURIER_NOMBRE[e.courier] ?? e.courier}`} />
                 </div>
               ))}
             </div>
@@ -489,18 +487,11 @@ export default async function Ventas({
             <TableHead className="text-right">Envío <Tip tip={TIP_FLETE} /></TableHead>
             <TableHead className="text-right">Comis. <Tip tip={TIP_COMIS} /></TableHead>
             <TableHead className="text-right">Percep. <Tip tip={TIP_PERCEP} /></TableHead>
-            {splitAds ? (
-              <>
-                <TableHead className="text-right">Ads Meta</TableHead>
-                <TableHead className="text-right">
-                  <span className="inline-flex items-center gap-1">Ads ML
-                    <Tip tip={TIP_ADS_ML} />
-                  </span>
-                </TableHead>
-              </>
-            ) : (
-              <TableHead className="text-right">Ads</TableHead>
-            )}
+            <TableHead className="text-right">
+              <span className="inline-flex items-center gap-1">Ads
+                <Tip tip={`Pauta del día imputada a cohortes. En el rango elegido son ${fmtMoney(adsMeta)} de Meta y ${fmtMoney(adsMl)} de Product Ads de MercadoLibre (el desglose por fuente está en la card de arriba: por fila no entra sin empujar el ROAS fuera de la pantalla). ${TIP_ADS_ML}`} />
+              </span>
+            </TableHead>
             <TableHead className="text-right">
               <span className="inline-flex items-center gap-1">CPA
                 <Tip tip={`Gasto en Ads del día dividido las ventas generadas ese día. El costo de adquisición real por venta.${
@@ -566,14 +557,7 @@ export default async function Ventas({
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.flete ? fmtMoney(d.flete) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.comisiones ? fmtMoney(d.comisiones) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.percepciones ? fmtMoney(d.percepciones) : "—"}</TableCell>
-                {splitAds ? (
-                  <>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads - d.adsMl ? fmtMoney(d.ads - d.adsMl) : "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{d.adsMl ? fmtMoney(d.adsMl) : "—"}</TableCell>
-                  </>
-                ) : (
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads ? fmtMoney(d.ads) : "—"}</TableCell>
-                )}
+                <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads ? fmtMoney(d.ads) : "—"}</TableCell>
                 {/* Semáforo contra umbral medido (F1-09). El CPA queda firme el mismo día —no madura—
                     así que acá sí se pinta siempre que haya ventas y pauta. */}
                 <TableCell className={cn("text-right tabular-nums", cpaDia > 0 ? claseSemaforo(nivel(cpaDia, cortesCpa, "baja")) : "text-muted-foreground")}>
@@ -584,7 +568,7 @@ export default async function Ventas({
           })}
           {!list.length && (
             <TableRow>
-              <TableCell colSpan={splitAds ? 11 : 10} className="text-center text-muted-foreground">Sin ventas en el rango elegido</TableCell>
+              <TableCell colSpan={10} className="text-center text-muted-foreground">Sin ventas en el rango elegido</TableCell>
             </TableRow>
           )}
         </TableBody>
@@ -601,18 +585,11 @@ export default async function Ventas({
             <TableHead className="text-right">Envío <Tip tip={TIP_FLETE} /></TableHead>
             <TableHead className="text-right">Comis. <Tip tip={TIP_COMIS} /></TableHead>
             <TableHead className="text-right">Percep. <Tip tip={TIP_PERCEP} /></TableHead>
-            {splitAds ? (
-              <>
-                <TableHead className="text-right">Ads Meta</TableHead>
-                <TableHead className="text-right">
-                  <span className="inline-flex items-center gap-1">Ads ML
-                    <Tip tip={TIP_ADS_ML} />
-                  </span>
-                </TableHead>
-              </>
-            ) : (
-              <TableHead className="text-right">Ads</TableHead>
-            )}
+            <TableHead className="text-right">
+              <span className="inline-flex items-center gap-1">Ads
+                <Tip tip={`Pauta del día imputada a cohortes. En el rango elegido son ${fmtMoney(adsMeta)} de Meta y ${fmtMoney(adsMl)} de Product Ads de MercadoLibre (el desglose por fuente está en la card de arriba: por fila no entra sin empujar el ROAS fuera de la pantalla). ${TIP_ADS_ML}`} />
+              </span>
+            </TableHead>
             <TableHead className="text-right">CPA</TableHead>
           </TableRow>
         </TableHeader>
@@ -629,21 +606,14 @@ export default async function Ventas({
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.flete ? fmtMoney(m.flete) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.comisiones ? fmtMoney(m.comisiones) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.percepciones ? fmtMoney(m.percepciones) : "—"}</TableCell>
-                {splitAds ? (
-                  <>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads - m.adsMl ? fmtMoney(m.ads - m.adsMl) : "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{m.adsMl ? fmtMoney(m.adsMl) : "—"}</TableCell>
-                  </>
-                ) : (
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads ? fmtMoney(m.ads) : "—"}</TableCell>
-                )}
+                <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads ? fmtMoney(m.ads) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{cpaMes > 0 ? fmtMoney(cpaMes) : "—"}</TableCell>
               </TableRow>
             );
           })}
           {!meses.length && (
             <TableRow>
-              <TableCell colSpan={splitAds ? 11 : 10} className="text-center text-muted-foreground">Sin datos históricos</TableCell>
+              <TableCell colSpan={10} className="text-center text-muted-foreground">Sin datos históricos</TableCell>
             </TableRow>
           )}
         </TableBody>

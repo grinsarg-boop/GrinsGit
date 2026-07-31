@@ -11,7 +11,9 @@
       "Bash(tar xzf *)",
       "Bash(rm node-v22.17.0-darwin-arm64.tar.gz)",
       "Bash(~/.local/node-v22.17.0-darwin-arm64/bin/node --version)",
-      "Bash(docker info *)"
+      "Bash(docker info *)",
+      "Bash(git push*)",
+      "Bash(node scripts/db-apply.mjs*)"
     ]
   }
 }

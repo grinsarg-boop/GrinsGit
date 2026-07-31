@@ -1,7 +1,11 @@
 "use client";
 import { useState } from "react";
-import { fmtDate, fmtMoney } from "@/lib/format";
+import { fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+// El formato viaja como string y no como función: esto es un client component y una función no
+// cruza el borde del servidor (revienta el render entero de la página, no solo la card).
+const FMT = { money: fmtMoney, pct: fmtPct } as const;
 
 // Sparkline semanal: una línea, cero ejes, tooltip al pasar el mouse (columnas invisibles, mismo
 // patrón que profit-bars; el left va en % porque el svg escala con el ancho de la card).
@@ -14,16 +18,17 @@ import { cn } from "@/lib/utils";
 // la tasa de entrega por courier (0-100%) sí, el profit por producto no — ahí compartir escala
 // aplastaría a los chicos contra el más grande.
 export function Chispa({
-  puntos, positivo, min: minFijo, max: maxFijo, pendientes = 1, fmt = fmtMoney, unidad = "Profit semanal",
+  puntos, positivo, min: minFijo, max: maxFijo, pendientes = 1, formato = "money", unidad = "Profit semanal",
 }: {
   puntos: { x: string; v: number }[];
   positivo: boolean;
   min?: number;
   max?: number;
   pendientes?: number;
-  fmt?: (v: number) => string;
+  formato?: keyof typeof FMT;
   unidad?: string;
 }) {
+  const fmt = FMT[formato];
   const [hi, setHi] = useState<number | null>(null);
   if (puntos.length < 3) return null;
   const W = 240, H = 56, PAD = 7;

@@ -194,9 +194,6 @@ export default async function Resumen({
   // Por fuente (F1-11): los Product Ads de ML son la parte de `ads` de las filas courier='ml'; todo el
   // resto —incluida la pauta sin cohorte, que sale de ad_spend— es Meta. Las dos suman el total exacto.
   const adsMl = rango.adsMl;
-  // El split por fuente en las tablas solo aporta en "Todos": con filtro de courier es todo Meta o
-  // todo ML, y una columna de ceros es peor que ninguna.
-  const splitAds = !courierParam;
   const adsMeta = adsTot - adsMl;
 
   // Break-even MER del rango (Playbook-Faris §8, mismo cálculo que la línea punteada de /tendencias):
@@ -481,18 +478,11 @@ export default async function Resumen({
             <TableHead className="text-right">Envío <Tip tip={TIP_FLETE} /></TableHead>
             <TableHead className="text-right">Comis. <Tip tip={TIP_COMIS} /></TableHead>
             <TableHead className="text-right">Percep. <Tip tip={TIP_PERCEP} /></TableHead>
-            {splitAds ? (
-              <>
-                <TableHead className="text-right">Ads Meta</TableHead>
-                <TableHead className="text-right">
-                  <span className="inline-flex items-center gap-1">Ads ML
-                    <Tip tip={TIP_ADS_ML} />
-                  </span>
-                </TableHead>
-              </>
-            ) : (
-              <TableHead className="text-right">Ads</TableHead>
-            )}
+            <TableHead className="text-right">
+              <span className="inline-flex items-center gap-1">Ads
+                <Tip tip={`Pauta del día imputada a cohortes. En el rango elegido son ${fmtMoney(adsMeta)} de Meta y ${fmtMoney(adsMl)} de Product Ads de MercadoLibre (el desglose por fuente está en la card de arriba: por fila no entra sin empujar el ROAS fuera de la pantalla). ${TIP_ADS_ML}`} />
+              </span>
+            </TableHead>
             <TableHead className="text-right">
               <span className="inline-flex items-center gap-1">ROAS est.
                 <Tip tip={`Revenue estimado dividido el gasto total en Ads. Cuánto facturás por cada peso invertido en publicidad.${
@@ -558,14 +548,7 @@ export default async function Resumen({
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.flete ? fmtMoney(d.flete) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.comisiones ? fmtMoney(d.comisiones) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.percepciones ? fmtMoney(d.percepciones) : "—"}</TableCell>
-                {splitAds ? (
-                  <>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads - d.adsMl ? fmtMoney(d.ads - d.adsMl) : "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{d.adsMl ? fmtMoney(d.adsMl) : "—"}</TableCell>
-                  </>
-                ) : (
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads ? fmtMoney(d.ads) : "—"}</TableCell>
-                )}
+                <TableCell className="text-right tabular-nums text-muted-foreground">{d.ads ? fmtMoney(d.ads) : "—"}</TableCell>
                 {/* Semáforo contra umbral medido (F1-09): break-even del rango y p75 de 90 días. Los
                     días inmaduros quedan en gris — su revenue todavía sube, pintarlos sería mentir. */}
                 <TableCell className={cn("text-right tabular-nums",
@@ -577,7 +560,7 @@ export default async function Resumen({
           })}
           {!list.length && (
             <TableRow>
-              <TableCell colSpan={splitAds ? 12 : 11} className="text-center text-muted-foreground">
+              <TableCell colSpan={11} className="text-center text-muted-foreground">
                 Sin despachos en el rango elegido
               </TableCell>
             </TableRow>
@@ -597,18 +580,11 @@ export default async function Resumen({
             <TableHead className="text-right">Envío <Tip tip={TIP_FLETE} /></TableHead>
             <TableHead className="text-right">Comis. <Tip tip={TIP_COMIS} /></TableHead>
             <TableHead className="text-right">Percep. <Tip tip={TIP_PERCEP} /></TableHead>
-            {splitAds ? (
-              <>
-                <TableHead className="text-right">Ads Meta</TableHead>
-                <TableHead className="text-right">
-                  <span className="inline-flex items-center gap-1">Ads ML
-                    <Tip tip={TIP_ADS_ML} />
-                  </span>
-                </TableHead>
-              </>
-            ) : (
-              <TableHead className="text-right">Ads</TableHead>
-            )}
+            <TableHead className="text-right">
+              <span className="inline-flex items-center gap-1">Ads
+                <Tip tip={`Pauta del día imputada a cohortes. En el rango elegido son ${fmtMoney(adsMeta)} de Meta y ${fmtMoney(adsMl)} de Product Ads de MercadoLibre (el desglose por fuente está en la card de arriba: por fila no entra sin empujar el ROAS fuera de la pantalla). ${TIP_ADS_ML}`} />
+              </span>
+            </TableHead>
             <TableHead className="text-right">ROAS est.</TableHead>
           </TableRow>
         </TableHeader>
@@ -626,21 +602,14 @@ export default async function Resumen({
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.flete ? fmtMoney(m.flete) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.comisiones ? fmtMoney(m.comisiones) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{m.percepciones ? fmtMoney(m.percepciones) : "—"}</TableCell>
-                {splitAds ? (
-                  <>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads - m.adsMl ? fmtMoney(m.ads - m.adsMl) : "—"}</TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">{m.adsMl ? fmtMoney(m.adsMl) : "—"}</TableCell>
-                  </>
-                ) : (
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads ? fmtMoney(m.ads) : "—"}</TableCell>
-                )}
+                <TableCell className="text-right tabular-nums text-muted-foreground">{m.ads ? fmtMoney(m.ads) : "—"}</TableCell>
                 <TableCell className="text-right tabular-nums">{m.ads > 0 ? fmtRatio(m.revenueEst / m.ads) : "—"}</TableCell>
               </TableRow>
             );
           })}
           {!meses.length && (
             <TableRow>
-              <TableCell colSpan={splitAds ? 12 : 11} className="text-center text-muted-foreground">
+              <TableCell colSpan={11} className="text-center text-muted-foreground">
                 Sin datos históricos
               </TableCell>
             </TableRow>
