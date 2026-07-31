@@ -25,7 +25,7 @@ const EJE: Record<Kind, (v: number) => string> = {
 };
 
 export function Tendencia({
-  puntos, kind, ma = 7, sombra = 0, trazo = "stroke-emerald-500", punto = "bg-emerald-500", label,
+  puntos, kind, ma = 7, sombra = 0, trazo = "stroke-emerald-500", punto = "bg-emerald-500", label, umbral,
 }: {
   puntos: PuntoT[];
   kind: Kind;
@@ -34,6 +34,9 @@ export function Tendencia({
   trazo?: string;      // clase stroke-* de la media móvil — literal, NO derivar en runtime
   punto?: string;      // clase bg-* del mismo color para la leyenda (trampa de Tailwind: solo literales compilan)
   label: string;
+  // Línea de referencia punteada y anotada (break-even). Sin esto había que saberse el umbral de
+  // memoria para leer si un día estuvo bien o mal — que es la diferencia entre un gráfico y un dato.
+  umbral?: { v: number; texto: string };
 }) {
   const [hi, setHi] = useState<number | null>(null);
   if (puntos.length < Math.max(3, ma)) {
@@ -45,7 +48,11 @@ export function Tendencia({
   const n = puntos.length;
   const medias = mediaMovil(puntos.map((p) => p.v), ma);
 
-  const vals = [...puntos.map((p) => p.v), ...medias.filter((m): m is number => m !== null), 0];
+  // El umbral entra al dominio: si queda fuera de escala, la línea no se dibujaría y el gráfico
+  // mentiría por omisión justo cuando más importa (todos los días de un lado del break-even).
+  const ok = umbral && isFinite(umbral.v);
+  const vals = [...puntos.map((p) => p.v), ...medias.filter((m): m is number => m !== null), 0,
+                ...(ok ? [umbral!.v] : [])];
   const max = Math.max(...vals), min = Math.min(...vals);
   const span = max - min || 1;
   const x = (i: number) => PAD.l + (i / (n - 1)) * plotW;
@@ -91,6 +98,14 @@ export function Tendencia({
               <text x={x(n - 1)} y={PAD.t + 9} textAnchor="end" className="fill-muted-foreground text-[9px]">
                 inmaduro
               </text>
+            </g>
+          )}
+          {ok && (
+            <g>
+              <line x1={PAD.l} x2={W - PAD.r} y1={y(umbral!.v)} y2={y(umbral!.v)}
+                    className="stroke-foreground/55" strokeWidth="1.25" strokeDasharray="5 4" />
+              <text x={W - PAD.r - 2} y={y(umbral!.v) - 4} textAnchor="end"
+                    className="fill-foreground/70 text-[9px]">{umbral!.texto}</text>
             </g>
           )}
           <path d={linea((i) => puntos[i].v)} fill="none" strokeWidth="1.5" className="stroke-muted-foreground/40" />

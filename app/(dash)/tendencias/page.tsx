@@ -8,6 +8,7 @@ import { ProyeccionMes, type PuntoAcum } from "@/components/proyeccion-mes";
 import { Tendencia, type PuntoT } from "@/components/tendencia";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { mediaMovil } from "@/lib/tendencias";
+import { breakEven } from "@/lib/breakeven";
 import { supabaseAdmin } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -80,7 +81,7 @@ export default async function Tendencias({
     .map((r) => ({
       date: r.sale_date, generadas: r.generadas ?? 0, despachadas: r.despachadas ?? 0,
       entregadas: r.entregadas ?? 0, ads: N(r.ads), sin: N(r.ads_sin_cohorte),
-      revenueEst: N(r.revenue_estimado),
+      revenueEst: N(r.revenue_estimado), profitEst: N(r.profit_estimado),
       neto: N(r.profit_estimado) - N(r.ads_sin_cohorte),
       netoConf: N(r.profit_confirmado) - N(r.ads_sin_cohorte),
     }))
@@ -129,6 +130,14 @@ export default async function Tendencias({
 
   const sombraDe = (pts: PuntoT[], horizonte: number) => pts.filter((p) => p.x > daysAgoIso(horizonte)).length;
 
+  // Break-even del rango que se está mirando (Playbook-Faris §8). Es la línea contra la que se juzga
+  // el CPA y el ROAS de cada día: sin ella el gráfico muestra la forma pero no si estuvo bien o mal.
+  // Se calcula sobre los mismos días que las series (hoy afuera, incompleto) para que la línea y los
+  // puntos hablen de lo mismo.
+  const be = breakEven(rango.map((d) => ({
+    generadas: d.generadas, revenueEst: d.revenueEst, ads: d.ads, profitEst: d.profitEst,
+  })));
+
   // ---- tendencia por producto (semanal, sumando los couriers del filtro) ----
   const prodMap = new Map<string, { profit: number; gen: number; ads: number }[]>();
   weekly.forEach(({ data }, wi) => {
@@ -165,6 +174,7 @@ export default async function Tendencias({
   const bloques: {
     titulo: string; tip: string; pts: PuntoT[]; kind: "money" | "num" | "pct" | "ratio";
     sombra: number; bueno: "sube" | "baja"; trazo: string; punto: string; deltaTipo: "money" | "num" | "pct";
+    umbral?: { v: number; texto: string };
   }[] = [
     {
       titulo: "Profit por día de venta", kind: "money", pts: sProfit, sombra: sombraDe(sProfit, 10), bueno: "sube",
@@ -179,6 +189,7 @@ export default async function Tendencias({
     {
       titulo: "CPA de adquisición", kind: "money", pts: sCpa, sombra: sombraDe(sCpa, 2), bueno: "baja",
       trazo: "stroke-amber-500", punto: "bg-amber-500", deltaTipo: "money",
+      umbral: isFinite(be.cpa) ? { v: be.cpa, texto: `break-even ${fmtMoney(be.cpa)}` } : undefined,
       tip: "Ads asignada del día ÷ ventas generadas ese día (misma fórmula que la tabla diaria de /ventas). El último día queda sombreado: la pauta de Meta termina de sincronizar unas horas después del cierre, y ese hueco se leería como un CPA buenísimo que no es. La pauta sin cohorte no entra: es una corrección whole-business por período, no de un día puntual. Ojo en 'Todos': si cambia la mezcla de productos, el CPA global se mueve sin que ninguna campaña haya cambiado — la referencia por producto vive en /analisis.",
     },
     {
@@ -189,6 +200,7 @@ export default async function Tendencias({
     {
       titulo: "ROAS estimado", kind: "ratio", pts: sRoas, sombra: sombraDe(sRoas, 10), bueno: "sube",
       trazo: "stroke-rose-500", punto: "bg-rose-500", deltaTipo: "num",
+      umbral: isFinite(be.mer) ? { v: be.mer, texto: `break-even ${fmtRatio(be.mer)}` } : undefined,
       tip: "Revenue estimado de las ventas del día ÷ ads asignada del día. El revenue de los días inmaduros todavía está subestimado (ventas sin despachar), así que la cola reciente tira para abajo — no leer ROAS real ahí adentro.",
     },
   ];
@@ -315,6 +327,18 @@ export default async function Tendencias({
       )}
 
       {/* tendencias */}
+      {/* El break-even del rango, escrito una vez: las líneas punteadas de los gráficos de CPA y ROAS
+          son este mismo número. Se mueve con la entrega, así que no es una constante de settings. */}
+      {isFinite(be.cpa) && (
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span className="font-medium uppercase tracking-wide">Break-even del rango</span>
+          <span className="tabular-nums">CPA <b className="text-foreground">{fmtMoney(be.cpa)}</b></span>
+          <span className="tabular-nums">MER <b className="text-foreground">{fmtRatio(be.mer)}</b></span>
+          <span className="tabular-nums">contribución pre-pauta <b className="text-foreground">{fmtPct(be.tasa)}</b></span>
+          <Tip tip="La línea contra la que se juzga cada día (Playbook-Faris §8). Contribución pre-pauta = profit estimado + pauta, o sea lo que queda de lo cobrado después de flete, comisiones, percepciones y producto, ANTES de gastar en ads. Break-even CPA = esa contribución ÷ ventas generadas: arriba de ese CPA cada venta nueva destruye plata. Break-even MER = 1 ÷ tasa de contribución. Se calcula sobre el rango elegido y no sobre un número fijo porque se mueve con la TASA DE ENTREGA mucho más que con cualquier decisión de puja: pasó de $8.768 en mayo a $14.276 en julio casi solo por eso. Ojo: los días recientes están inmaduros y bajan la contribución estimada, así que en rangos cortos el break-even sale conservador (más exigente de lo real)." />
+        </div>
+      )}
+
       {bloques.map((b) => {
         const iHoy = b.pts.length - 1 - b.sombra;
         const maHoy = maAt(b.pts, iHoy);
@@ -337,7 +361,7 @@ export default async function Tendencias({
                 )}
               </div>
               <Tendencia puntos={b.pts} kind={b.kind} sombra={b.sombra} trazo={b.trazo} punto={b.punto}
-                         label={`${b.titulo}, últimos ${nDias} días`} />
+                         umbral={b.umbral} label={`${b.titulo}, últimos ${nDias} días`} />
             </CardContent>
           </Card>
         );
