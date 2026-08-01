@@ -328,14 +328,16 @@ export default async function Resumen({
         <CardContent className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 pt-5">
           <div>
             <div className="mb-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
-              Profit estimado · <span className="tabular-nums normal-case">{rangeLabel}</span>
+              Profit confirmado · <span className="tabular-nums normal-case">{rangeLabel}</span>
             </div>
+            {/* El hero es el CONFIRMADO, no el estimado: el número grande y de color tiene que ser
+                plata que existe. El estimado baja a la línea de apoyo, con lo que falta madurar. */}
             <div className={cn("text-3xl font-bold tabular-nums tracking-tight", rango.despachadas ? pnlColor(rProfitEst, rProfitConf) : "text-muted-foreground")}>
-              {rango.despachadas ? fmtMoney(rProfitEst) : "—"}
+              {rango.despachadas ? fmtMoney(rProfitConf) : "—"}
             </div>
             {rango.despachadas ? (
               <div className="pt-1 text-sm text-muted-foreground">
-                confirmado <span className="tabular-nums">{fmtMoney(rProfitConf)}</span>
+                estimado <span className="tabular-nums">{fmtMoney(rProfitEst)}</span>
                 <span className="mx-1.5">·</span>
                 <span className="font-medium tabular-nums text-amber-600 dark:text-amber-500">{fmtMoney(rEnCamino)} en camino</span>
               </div>
