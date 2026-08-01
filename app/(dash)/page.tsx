@@ -319,9 +319,9 @@ export default async function Resumen({
       </div>
 
       {flexPend.length > 0 && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
-          <span className="font-medium">Flete Flex de ML sin cargar</span> — {flexPend.reduce((s, w) => s + w.n, 0)} órdenes cuentan flete $0 hasta subir la liquidación de Santiago (en <Link href="/sync" className="underline">Sync</Link>). Semanas: {flexPend.map((w) => `${fmtDate(w.semana)} (${w.n})`).join(" · ")}.
-        </div>
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium text-amber-700 dark:text-amber-500">⚑ Flete Flex de ML sin cargar</span> — {flexPend.reduce((s, w) => s + w.n, 0)} órdenes cuentan flete $0 hasta subir la liquidación de Santiago (en <Link href="/sync" className="underline">Sync</Link>). Semanas: {flexPend.map((w) => `${fmtDate(w.semana)} (${w.n})`).join(" · ")}.
+        </p>
       )}
 
       <Card>

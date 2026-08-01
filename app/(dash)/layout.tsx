@@ -8,9 +8,8 @@ export default function DashLayout({ children }: { children: React.ReactNode }) 
     <div className="mx-auto w-full max-w-6xl p-4">
       {/* Suspense porque la nav lee ?t= con useSearchParams — sin esto un prerender estático rompe el build. */}
       <Suspense>
-        <Nav />
+        <Nav avisos={<SaludBanner />} />
       </Suspense>
-      <SaludBanner />
       {children}
       <ChatWidget />
     </div>

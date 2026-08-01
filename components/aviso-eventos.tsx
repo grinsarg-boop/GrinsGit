@@ -17,26 +17,18 @@ export async function AvisoEventos({ from, to }: { from: string; to: string }) {
   const evs = enRango((data ?? []) as Evento[], from, to);
   if (!evs.length) return null;
 
-  const franjas = evs.filter(esFranja);
-  const puntuales = evs.filter((e) => !esFranja(e));
+  // Una línea al pie de los filtros, no una caja por franja: el aviso depende del rango elegido —no
+  // es un problema del sistema, así que no va a la campanita de la nav— pero tampoco justifica media
+  // pantalla. Franjas primero (las que rompen la comparación), después los puntuales.
+  const texto = [
+    ...evs.filter(esFranja).map((e) => `dato no comparable ${fmtDate(e.fecha)}→${fmtDate(e.fecha_fin!)}: ${e.texto}`),
+    ...evs.filter((e) => !esFranja(e)).map((e) => `${fmtDate(e.fecha)} ${e.texto}`),
+  ].join(" · ");
 
   return (
-    <div className="space-y-2">
-      {franjas.map((e) => (
-        <div key={e.id} className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
-          <span className="font-medium text-amber-700 dark:text-amber-500">
-            ⚑ Dato no comparable · {fmtDate(e.fecha)} → {fmtDate(e.fecha_fin!)}
-          </span>
-          <span className="ml-1 text-muted-foreground">{e.texto}</span>
-        </div>
-      ))}
-      {puntuales.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">⚑ En el rango:</span>{" "}
-          {puntuales.map((e) => `${fmtDate(e.fecha)} ${e.texto}`).join(" · ")}{" "}
-          <Link href="/config" className="underline underline-offset-2">editar eventos</Link>
-        </p>
-      )}
-    </div>
+    <p className="text-xs text-muted-foreground">
+      <span className="font-medium text-amber-700 dark:text-amber-500">⚑ En el rango:</span> {texto}{" "}
+      <Link href="/config" className="underline underline-offset-2">editar eventos</Link>
+    </p>
   );
 }

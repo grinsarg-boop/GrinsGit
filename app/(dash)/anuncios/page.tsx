@@ -205,12 +205,9 @@ export default async function Anuncios({
         </div>
       )}
       {!maduro && bus.despachadas > 0 && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-          <span className="font-semibold text-amber-700 dark:text-amber-500">⏳ Rango en maduración</span>
-          <span className="ml-1 text-muted-foreground">
-            {fmtPct(enCalleRatio)} de las guías todavía en la calle. Tasa y ROAS van a <b className="text-foreground">subir</b> — los números finales se conocen en ~21 días. Proyección de negocio a madurez: ROAS ≈ <b className="text-foreground">{fmtRatio(projROAS)}</b> (conservador).
-          </span>
-        </div>
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium text-amber-700 dark:text-amber-500">⏳ Rango en maduración</span> — {fmtPct(enCalleRatio)} de las guías todavía en la calle. Tasa y ROAS van a <b className="text-foreground">subir</b>; los números finales se conocen en ~21 días. Proyección de negocio a madurez: ROAS ≈ <b className="text-foreground">{fmtRatio(projROAS)}</b> (conservador).
+        </p>
       )}
 
       {!rows.length ? (

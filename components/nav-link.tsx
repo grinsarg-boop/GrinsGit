@@ -26,7 +26,9 @@ const BASE = "rounded-md px-2 py-1 text-sm transition-colors";
 const OFF = "text-muted-foreground hover:bg-muted/60 hover:text-foreground";
 const ON = "bg-muted font-medium text-foreground";
 
-export function Nav() {
+// `avisos` es la campanita de salud (server component, ver salud-banner.tsx) entrando como slot:
+// necesita una RPC, así que no puede vivir adentro de este client component.
+export function Nav({ avisos }: { avisos?: React.ReactNode }) {
   const path = usePathname();
   const t = useSearchParams().get("t");
   const tab = t === "correo" || t === "etiquetas" ? t : "picking"; // mismo default que la página
@@ -42,7 +44,7 @@ export function Nav() {
             ))}
           </div>
         ))}
-        <div className="ml-auto"><ThemeToggle /></div>
+        <div className="ml-auto flex items-center gap-1">{avisos}<ThemeToggle /></div>
       </div>
       {path === "/logistica" && (
         <div className="mt-1 flex flex-wrap items-center gap-1 pl-4">
