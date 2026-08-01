@@ -522,10 +522,9 @@ export default async function Resumen({
                     ? <>{fmtPct(tasaAct)} <span className="text-muted-foreground/60">→</span> <b className="text-foreground">{fmtPct(tasaProy)}</b></>
                     : "—"}
                 </TableCell>
-                <TableCell className={cn(
-                  "text-right font-bold tabular-nums",
-                  inmaduro ? "text-muted-foreground" : pnlColor(d.profitEst),
-                )}>
+                {/* El estimado va gris y sin bold a propósito: es una proyección, y pintarla de verde
+                    afirmaba plata que todavía no entró. El semáforo vive en el confirmado, acá al lado. */}
+                <TableCell className="text-right tabular-nums text-muted-foreground">
                   {fmtMoney(d.profitEst)}
                   {inmaduro ? (
                     <Tip label="Qué significa inmaduro" tip="La tasa de entrega de este día todavía puede cambiar, así que el estimado no es definitivo. Se vuelve firme cuando las guías terminan de entregarse.">
@@ -537,7 +536,7 @@ export default async function Resumen({
                     </Tip>
                   ) : null}
                 </TableCell>
-                <TableCell className={cn("text-right tabular-nums", d.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>
+                <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(d.profitEst, d.profitConf))}>
                   {d.profitConf < 0 ? (
                     <Tip label="Por qué es negativo" tip="Negativo transitorio: las guías de este día aún no maduraron lo suficiente para cubrir el gasto de Ads. No es una pérdida cerrada.">
                       {fmtMoney(d.profitConf)}

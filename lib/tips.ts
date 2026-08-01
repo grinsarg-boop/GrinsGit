@@ -17,10 +17,10 @@ export const TIP_PERCEP =
   "Percepciones de IVA e IIBB que MercadoLibre/MercadoPago facturan sobre sus servicios (comisiones, envíos y publicidad) — SOLO canal ML, ~18% de esos cargos. Por día: estimadas con la tasa calibrada contra la factura real hasta que se sube el Reporte_Facturacion del mes en /sync, que las reemplaza por el valor exacto. Son pagos a cuenta de impuestos (criterio conservador: se cuentan como costo hasta que el contador diga lo contrario). Informativo: ya están descontadas del profit.";
 
 export const TIP_CONFIRMADO =
-  "Profit ya cerrado: lo cobrado menos envío, comisiones, costo de producto y Ads. NO es el monto cobrado — las columnas Envío y Comis. son informativas y ya están restadas acá, no las restes de nuevo. Puede dar negativo de forma temporal cuando todavía gastaste más en Ads de lo que maduró en ventas; se corrige a medida que las guías se entregan.";
+  "Profit ya cerrado: lo cobrado menos envío, comisiones, costo de producto y Ads. NO es el monto cobrado — las columnas Envío y Comis. son informativas y ya están restadas acá, no las restes de nuevo. Puede dar negativo de forma temporal cuando todavía gastaste más en Ads de lo que maduró en ventas; se corrige a medida que las guías se entregan. Es la columna que se pinta, porque es la única que afirma plata que existe: verde = la plata firme ya es positiva; ámbar = está en rojo pero la cohorte proyecta positivo (es inmadurez, no pérdida); rojo = ni proyectado da.";
 
 export const TIP_ESTIMADO =
-  "El confirmado más la proyección de las guías que siguen en la calle, según tu tasa de entrega histórica. Ya tiene todos los costos descontados (envío, comisiones, producto y Ads). El COLOR lo manda el confirmado y no el estimado: verde = la plata firme ya es positiva; ámbar = el confirmado todavía está en rojo pero la cohorte proyecta positivo (es inmadurez, no pérdida); rojo = ni proyectado da.";
+  "El confirmado más la proyección de las guías que siguen en la calle, según tu tasa de entrega histórica. Ya tiene todos los costos descontados (envío, comisiones, producto y Ads). Va en gris a propósito: es un pronóstico, no plata. El verde/rojo vive en el confirmado, la columna de al lado — un estimado en verde afirmaba plata que todavía no entró.";
 
 // El waterfall del P&L. Estaba escrito dos veces —/analisis y /analisis/[producto]— y ya habían
 // divergido: la del producto se comía la mitad de la explicación de las percepciones. `alcance`

@@ -550,10 +550,9 @@ export default async function Ventas({
                     )}
                   </div>
                 </TableCell>
-                <TableCell className={cn(
-                  "text-right font-bold tabular-nums",
-                  inmaduro ? "text-muted-foreground" : pnlColor(d.profitEst),
-                )}>
+                {/* El estimado va gris y sin bold a propósito: es una proyección, y pintarla de verde
+                    afirmaba plata que todavía no entró. El semáforo vive en el confirmado, acá al lado. */}
+                <TableCell className="text-right tabular-nums text-muted-foreground">
                   {fmtMoney(d.profitEst)}
                   {inmaduro ? (
                     <Tip label="Qué significa inmaduro" tip="Buena parte de las ventas de este día todavía no se despachó/entregó, así que el estimado no es definitivo. Se firma a medida que las guías cierran.">
@@ -561,7 +560,7 @@ export default async function Ventas({
                     </Tip>
                   ) : null}
                 </TableCell>
-                <TableCell className={cn("text-right tabular-nums", d.profitConf < 0 ? "text-destructive/75" : "text-muted-foreground")}>
+                <TableCell className={cn("text-right font-bold tabular-nums", pnlColor(d.profitEst, d.profitConf))}>
                   {fmtMoney(d.profitConf)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">{d.flete ? fmtMoney(d.flete) : "—"}</TableCell>
