@@ -453,7 +453,7 @@ export default async function Resumen({
             <TableHead className="text-right">Despachos</TableHead>
             <TableHead className="w-36">
               <span className="inline-flex items-center gap-1">Madurez
-                <Tip tip="Qué porcentaje de las guías de ese día ya se resolvieron (entregadas o canceladas). A más madurez, más confiable el estimado." />
+                <Tip tip="Qué porcentaje de las guías de ese día ya se resolvieron (entregadas o canceladas). En Correo, el prepago cuenta resuelto cuando se pagó o cuando el link ya venció sin pagarse. A más madurez, más confiable el estimado." />
               </span>
             </TableHead>
             <TableHead className="text-right">

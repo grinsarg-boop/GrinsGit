@@ -483,7 +483,7 @@ export default async function Ventas({
             </TableHead>
             <TableHead className="w-40">
               <span className="inline-flex items-center gap-1">Resolución
-                <Tip tip="Qué porcentaje de las ventas de ese día ya tienen un desenlace definitivo: cobradas (entregadas) o perdidas (devueltas, rehusadas, o sin despachar a esta altura). Los pedidos en tránsito o sin guía recientes NO cuentan como resueltos. A más resolución, más firme el número — un día con 100% ya está cerrado." />
+                <Tip tip="Qué porcentaje de las ventas de ese día ya tienen un desenlace definitivo: cobradas (entregadas) o perdidas (devueltas, rehusadas, sin despachar a esta altura, o link de pago vencido sin pagar). Los pedidos en tránsito, sin guía recientes o con el link todavía vigente NO cuentan como resueltos. A más resolución, más firme el número — un día con 100% ya está cerrado." />
               </span>
             </TableHead>
             <TableHead className="text-right text-amber-600 dark:text-amber-500">
