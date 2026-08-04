@@ -2,6 +2,10 @@ import { today } from "@/lib/couriers/sync";
 import { badCronAuth, supabaseAdmin } from "@/lib/supabase";
 
 // Recalculo manual (§4.7). Body opcional {from, to}; default últimos 60 días.
+// 60 días de recompute no entran en los 10s default. 300s = techo de Pro. Backfills más largos
+// siguen yendo por script local (statement timeout de Postgres, no de Vercel).
+export const maxDuration = 300;
+
 export async function POST(req: Request) {
   const unauth = badCronAuth(req);
   if (unauth) return unauth;

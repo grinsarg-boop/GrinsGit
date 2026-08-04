@@ -2,7 +2,7 @@
   "crons": [
     { "path": "/api/sync/meta", "schedule": "0 9 * * *" },
     { "path": "/api/sync/urbano?limit=100&rounds=16", "schedule": "30 9 * * *" },
-    { "path": "/api/sync/ml?days=60&enrich=300", "schedule": "45 9 * * *" },
+    { "path": "/api/sync/ml?days=60&enrich=300", "schedule": "45 */4 * * *" },
     { "path": "/api/monitor/ad-review", "schedule": "0 10 * * *" }
   ]
 }

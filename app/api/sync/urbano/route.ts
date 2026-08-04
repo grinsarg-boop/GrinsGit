@@ -3,8 +3,9 @@ import { discoverUrbano, runCourierSync, shouldChain } from "@/lib/couriers/sync
 import { urbano } from "@/lib/couriers/urbano";
 import { badCronAuth } from "@/lib/supabase";
 
-// >1000 guías en batches de 200 (masiva) no entran en los 10s default de Hobby. Máx Hobby = 60s.
-export const maxDuration = 60;
+// >1000 guías en batches de 200 (masiva) no entran en los 10s default. Vercel Pro permite 300s
+// (Hobby capaba a 60): eso es lo que habilita limit=400 y la vuelta completa en ~30 min.
+export const maxDuration = 300;
 
 async function syncUrbano(limit: number, discover: boolean) {
   // El REFRESH corre PRIMERO y completa (guías + recompute): es lo crítico y ya andaba. El descubrimiento

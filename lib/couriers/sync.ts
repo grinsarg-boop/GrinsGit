@@ -7,11 +7,12 @@ const TERMINALES = ["entregado", "devuelto", "siniestro", "cancelado"];
 // Compartido por /api/sync/urbano y /api/sync/fixy.
 //
 // BATCHES POR INVOCACIÓN (FASE 4d): con >1000 guías el sync completo no entra en el timeout de
-// Vercel (Hobby 60s). Cada llamada procesa las `limit` guías MÁS STALE (menor updated_at); como
-// sincronizar bumpea updated_at, la próxima llamada agarra las siguientes → n8n lo llama en loop
+// Vercel. Cada llamada procesa las `limit` guías MÁS STALE (menor updated_at); como sincronizar
+// bumpea updated_at, la próxima llamada agarra las siguientes → el cron lo llama en loop
 // (ceil(total/limit) veces) hasta refrescar todas. Sin cursor: la staleness auto-avanza.
-// limit=100: la masiva Urbano tarda ~0.3s/código; con el timeout de Vercel (Hobby 60s), 100
-// (~30s masiva + upsert + recompute ≈ 45s) es el máximo seguro. n8n loopea ceil(total/100).
+// La masiva Urbano tarda ~0.3s/código. Con Hobby (60s) el máximo seguro era limit=100; con Pro
+// (300s) el pg_cron llama con limit=400 (~120s masiva + upsert + recompute ≈ 150s) → las ~700
+// guías activas dan la vuelta en 2 corridas de 15 min. Subir más pide medir antes: el techo son 300s.
 export async function runCourierSync(courier: "urbano" | "fixy", client: CourierClient, limit = 100) {
   const db = supabaseAdmin();
   const started = Date.now();

@@ -2,6 +2,10 @@ import { SHOPIFY_API_VERSION, shopifyFetch, upsertShipmentFromFulfillment } from
 import { badCronAuth, logSyncRun, supabaseAdmin } from "@/lib/supabase";
 
 // Reconciliación diaria 03:00: los webhooks se pierden (§5.2).
+// Es la única ruta con paginado ILIMITADO (250 órdenes/página + 1 RPC por orden): con el default de
+// 10s se cortaba a mitad en silencio ante un pico. 300s = techo de Pro.
+export const maxDuration = 300;
+
 export async function POST(req: Request) {
   const unauth = badCronAuth(req);
   if (unauth) return unauth;
