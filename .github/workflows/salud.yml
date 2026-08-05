@@ -58,9 +58,10 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           test -n "$CRON_SECRET" || { echo "::error::falta el secret CRON_SECRET"; exit 1; }
-          resp=$(curl -sfS --max-time 60 -H "Authorization: Bearer $CRON_SECRET" \
-            "https://biolabs-finanzas.vercel.app/api/salud/cajas") \
-            || { echo "::error title=cajas-ml::/api/salud/cajas no respondió"; exit 1; }
+          code=$(curl -sS -o resp.json -w '%{http_code}' --max-time 60 -H "Authorization: Bearer $CRON_SECRET" \
+            "https://biolabs-finanzas.vercel.app/api/salud/cajas") || code="sin respuesta (curl $?)"
+          [ "$code" = 200 ] || { echo "::error title=cajas-ml::/api/salud/cajas → $code"; exit 1; }
+          resp=$(cat resp.json)
           echo "$resp"
 
           {
@@ -83,9 +84,10 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           test -n "$CRON_SECRET" || { echo "::error::falta el secret CRON_SECRET"; exit 1; }
-          resp=$(curl -sfS --max-time 90 -X POST -H "Authorization: Bearer $CRON_SECRET" \
-            "https://biolabs-finanzas.vercel.app/api/monitor/ad-review") \
-            || { echo "::error title=ad-review::/api/monitor/ad-review no respondió"; exit 1; }
+          code=$(curl -sS -o resp.json -w '%{http_code}' --max-time 90 -X POST -H "Authorization: Bearer $CRON_SECRET" \
+            "https://biolabs-finanzas.vercel.app/api/monitor/ad-review") || code="sin respuesta (curl $?)"
+          [ "$code" = 200 ] || { echo "::error title=ad-review::/api/monitor/ad-review → $code"; exit 1; }
+          resp=$(cat resp.json)
           echo "$resp" | jq -c '{accounts, open, warnings}'
 
           # familia (§060) = el veredicto que antes había que ir a buscar al Graph a mano:
@@ -117,9 +119,10 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           test -n "$CRON_SECRET" || { echo "::error::falta el secret CRON_SECRET"; exit 1; }
-          resp=$(curl -sfS --max-time 60 -X POST -H "Authorization: Bearer $CRON_SECRET" \
-            "https://biolabs-finanzas.vercel.app/api/salud/cuentas") \
-            || { echo "::error title=cuentas-meta::/api/salud/cuentas no respondió"; exit 1; }
+          code=$(curl -sS -o resp.json -w '%{http_code}' --max-time 60 -X POST -H "Authorization: Bearer $CRON_SECRET" \
+            "https://biolabs-finanzas.vercel.app/api/salud/cuentas") || code="sin respuesta (curl $?)"
+          [ "$code" = 200 ] || { echo "::error title=cuentas-meta::/api/salud/cuentas → $code"; exit 1; }
+          resp=$(cat resp.json)
           echo "$resp" | jq -c '{rojo, cambios}'
 
           {
