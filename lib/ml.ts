@@ -71,7 +71,7 @@ export async function getMlAccessToken(db: Db = supabaseAdmin()): Promise<string
   return stat;
 }
 
-type MlItem = { item?: { title?: string }; quantity?: number; unit_price?: number; sale_fee?: number };
+type MlItem = { item?: { id?: string; title?: string }; quantity?: number; unit_price?: number; sale_fee?: number };
 export type MlOrder = {
   id: number;
   date_created: string;
@@ -82,14 +82,29 @@ export type MlOrder = {
   payments?: { id?: number; status?: string; shipping_cost?: number }[];
 };
 
+// Publicaciones cuyo título NO dice la cantidad en ningún lado, así que no hay regex que las saque.
+// Pasa con los títulos de catálogo de ML, que ML impone y no controlamos.
+// ponytail: un objeto alcanza mientras sean pocas; si pasa de ~5, va a tabla con su propio sync.
+const PACK_POR_ITEM: Record<string, number> = {
+  MLA3692036796: 2, // "Dermatech Gotero Extractos De Hierbas Pureza…" — es el 2-pack de catálogo
+};
+
 // Pack (unidades por venta) embebido en el título ML: "3 Gotero Pureza"→3, "4 X 30ml"→4, "Gotas"→1.
 // ML NO usa quantity para el pack (siempre viene 1); el tamaño está en el nombre del listado.
-export function parseMlPack(title: string | null | undefined): number {
+// El pack manda el COGS via product_costs(product_id, pack): leerlo de menos infla el profit.
+export function parseMlPack(title: string | null | undefined, itemId?: string | null): number {
+  if (itemId && PACK_POR_ITEM[itemId]) return PACK_POR_ITEM[itemId];
   const t = title ?? "";
-  const lead = t.match(/^\s*(\d{1,2})\s/); //  "3 Gotero…"
-  if (lead) return Number(lead[1]);
-  const nx = t.match(/(\d{1,2})\s*[xX]\s*\d/); // "…4 X 30ml"
-  if (nx) return Number(nx[1]);
+  for (const re of [
+    /^\s*(\d{1,2})\s/, //      "3 Gotero…"
+    /(\d{1,2})\s*[xX]\s*\d/, // "…4 X 30ml"
+    /[xX]\s*(\d{1,2})/, //     "…Promo X4…"
+    /(\d{1,2})\s*u\b/i, //     "…Menta 2u Menta"
+  ]) {
+    const n = Number(t.match(re)?.[1]);
+    // El tope de 12 es lo que descarta los falsos positivos ("X 30ml" → 30, no es un pack).
+    if (n >= 1 && n <= 12) return n;
+  }
   return 1;
 }
 
@@ -119,7 +134,7 @@ export function mapMlOrder(o: MlOrder) {
     ml_id: o.id,
     created_at: o.date_created,
     product: matchProduct(titles), // null si no matchea ninguno de los 6
-    pack: parseMlPack(items[0]?.item?.title),
+    pack: parseMlPack(items[0]?.item?.title, items[0]?.item?.id),
     units: items.reduce((n, it) => n + (it.quantity ?? 0), 0),
     shipment_id: o.shipping?.id ?? null,
     total_amount: o.total_amount ?? 0,

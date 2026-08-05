@@ -61,6 +61,20 @@ describe("parseMlPack", () => {
     expect(parseMlPack("")).toBe(1);
     expect(parseMlPack(null)).toBe(1);
   });
+  // Los tres que se contaban como x1 y cobraban $2.500 de COGS en vez de $4.500/$10.000 (medido 05/08/2026).
+  it("saca el pack de 'Nu' y de 'Promo XN'", () => {
+    expect(parseMlPack("Pureza Drenaje Linfático Hinchazón Abdomen Piernas Menta 2u Menta")).toBe(2);
+    expect(parseMlPack("Pureza Drenaje Linfático Gotas Orgánicas Hinchazon Promo X4 Menta")).toBe(4);
+  });
+  it("el item_id pisa al título cuando el título de catálogo no dice la cantidad", () => {
+    const catalogo = "Dermatech Gotero Extractos De Hierbas Pureza Drenaje Linfatico Aceite Menta";
+    expect(parseMlPack(catalogo)).toBe(1); // sin id no hay de dónde sacarlo
+    expect(parseMlPack(catalogo, "MLA3692036796")).toBe(2);
+  });
+  it("no confunde el volumen del frasco con el pack", () => {
+    expect(parseMlPack("Gotas Pureza Drenaje Linfático X 30ml Menta")).toBe(1);
+    expect(parseMlPack("Gotas Pureza Drenaje Linfático Hinchazón Abdomen 30ml Menta")).toBe(1);
+  });
 });
 
 describe("sellerFlete", () => {
