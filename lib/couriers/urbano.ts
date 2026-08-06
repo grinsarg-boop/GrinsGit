@@ -2,7 +2,11 @@ import type { CourierClient, CourierEvent, FetchStatusesResult } from "./types";
 
 // Tracking de Urbano (SPEC §5.4, R7). El sync incremental usa la API oficial MASIVA (JSON, bulk,
 // sin rate-limit): POST /tracking/consultaTrackingMasivo/, auth en el body, consulta por
-// codigoSeguimiento = id de pedido Shopify (Opción A: shipment.tracking = id Shopify).
+// codigoSeguimiento.
+// EL CÓDIGO CAMBIÓ EL 04/08/2026: antes era el id de pedido de Shopify (13 dígitos), ahora es
+// `BLABS<order_number>` (el NÚMERO de pedido). Medido contra la API: el shopify_id de un despacho
+// del 06/08 da codError 5 y su BLABS da codError 0; los despachos de hasta el 03/08 siguen
+// respondiendo por shopify_id (Urbano no re-keyeó lo viejo, es un corte hacia adelante).
 // El BACKFILL histórico usa el cache del scraping viejo (HTML, ya validado contra la oficial) →
 // parseUrbanoResponse se conserva para eso. Sólo cambia el transporte del sync en adelante, no la
 // semántica: mismos códigos (005) y mismo evento sintético de ciclo.
@@ -19,6 +23,10 @@ function parseUrbanoDate(s: string): string | null {
   const m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(s.trim());
   return m ? `${m[3]}-${m[2]}-${m[1]}T12:00:00Z` : null;
 }
+
+// Código de seguimiento → referencia de pedido. `BLABS18942` → `18942` (order_number); un shopify_id
+// vuelve intacto. Es lo único que separa el código nuevo del viejo en todo el ingest.
+export const pelar = (codigo: string) => codigo.replace(/^BLABS/i, "");
 
 function decodeEntities(s: string): string {
   return s.replace(/&quot;/g, '"').replace(/&#039;/g, "'")
@@ -71,9 +79,13 @@ type MasivoItem = {
 export function parseUrbanoMasivo(item: MasivoItem, cliCodigo: string): CourierEvent[] {
   if (!item || item.codError !== 0 || !Array.isArray(item.movimientos)) return [];
   const events: CourierEvent[] = [];
+  // `tracking` = el código tal cual (es la clave contra Urbano y la del on conflict con el alta por
+  // tag, 013). `order_ref` = el código PELADO, porque es lo que matchea contra orders en 006:
+  // "BLABS18942" no es ni shopify_id (^\d{10,}$) ni order_number → la guía quedaría huérfana.
+  const orderRef = pelar(cliCodigo);
   const ciclo = parseUrbanoDate(item.fecha ?? "");
   if (ciclo) {
-    events.push({ courier: "urbano", tracking: cliCodigo, order_ref: cliCodigo,
+    events.push({ courier: "urbano", tracking: cliCodigo, order_ref: orderRef,
       status_raw: CICLO_STATUS, occurred_at: ciclo, raw: { fecha: item.fecha, producto: item.producto } });
   }
   let maxAt: string | null = null, maxCode = "", maxCount = 0;
@@ -81,7 +93,7 @@ export function parseUrbanoMasivo(item: MasivoItem, cliCodigo: string): CourierE
     const at = parseUrbanoDate(m.checkFecha ?? "");
     const code = (m.check ?? "").trim().toUpperCase();
     if (code && at) {
-      events.push({ courier: "urbano", tracking: cliCodigo, order_ref: cliCodigo,
+      events.push({ courier: "urbano", tracking: cliCodigo, order_ref: orderRef,
         status_raw: code, occurred_at: at,
         raw: { descripcion: (m.descripcion ?? "").trim(), codigo_motivo: m.codigo_motivo, estado_actual: item.estado } });
       if (maxAt === null || at > maxAt) { maxAt = at; maxCode = code; maxCount = 1; }  // nuevo máximo
@@ -99,7 +111,7 @@ export function parseUrbanoMasivo(item: MasivoItem, cliCodigo: string): CourierE
   // matchea el código → no se emite.
   const estadoCode = /^([A-Za-z0-9]+)\s*-/.exec((item.estado ?? "").trim())?.[1]?.toUpperCase();
   if (estadoCode && maxAt && (estadoCode !== maxCode || maxCount > 1)) {
-    events.push({ courier: "urbano", tracking: cliCodigo, order_ref: cliCodigo,
+    events.push({ courier: "urbano", tracking: cliCodigo, order_ref: orderRef,
       status_raw: estadoCode, occurred_at: maxAt.replace("T12:00:00Z", "T23:59:59Z"),
       raw: { estado_actual: item.estado, sintetico: "estado" } });
   }

@@ -85,6 +85,18 @@ describe("parseUrbanoMasivo", () => {
     expect(parseUrbanoMasivo(masivoInexistente, "999999999999")).toEqual([]);
   });
 
+  // 04/08/2026: el código pasó de shopify_id a BLABS<order_number>. tracking guarda el código tal cual
+  // (clave contra Urbano y contra el alta por tag), pero order_ref va PELADO o el match de 006 falla:
+  // "BLABS18942" no es shopify_id (^\d{10,}$) ni order_number → guía huérfana, invisible en el P&L.
+  it("código BLABS: tracking crudo, order_ref pelado al número de pedido", () => {
+    const ev = parseUrbanoMasivo({ ...masivoRC, codGestion: "BLABS18942" }, "BLABS18942");
+    expect(ev.length).toBeGreaterThan(0);
+    for (const e of ev) {
+      expect(e.tracking).toBe("BLABS18942");
+      expect(e.order_ref).toBe("18942");
+    }
+  });
+
   // Bug de madurez: Urbano reporta estado="RM - Rendido a Matriz" (autoritativo) pero el último
   // movimiento sincronizado es AR → sin esto quedaba en_transito. El estado se emite como evento
   // al cierre del día del último movimiento (23:59 > 12:00) → gana el "último por occurred_at".
