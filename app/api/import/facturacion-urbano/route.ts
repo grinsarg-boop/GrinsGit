@@ -37,6 +37,14 @@ export async function POST(req: Request) {
 
     const { data: updated, error } = await supabaseAdmin().rpc("import_urbano_freight", { p });
     if (error) throw new Error(error.message);
+    // Filas que entraron y CERO matcheadas = el código de la facturación no es el de `shipments`.
+    // Pasó a ser posible el 04/08/2026, cuando Urbano cambió el código a BLABS<order_number>: si el
+    // archivo trae el gui_numero propio de Urbano en vez del código nuestro, no matchea NADA y el flete
+    // queda estimado. Devolver ok:true acá es perder plata en silencio (§4.1) → run en error.
+    if (p.length > 0 && (updated ?? 0) === 0) {
+      const muestra = p.slice(0, 3).map((r) => r.tracking).join(", ");
+      throw new Error(`0 de ${p.length} filas matchearon una guía. Columna "${cTracking}" trae: ${muestra}`);
+    }
     await logSyncRun("facturacion-urbano", "ok", updated ?? 0);
     return Response.json({ ok: true, filas: p.length, actualizadas: updated ?? 0 });
   } catch (e) {
