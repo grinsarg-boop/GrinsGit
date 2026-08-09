@@ -24,6 +24,26 @@ describe("_parsePage", () => {
     expect(r.courier).toBe("urbano");
     expect(r.orden).toBe("16943");
   });
+  // Las etiquetas que se bajan del panel de Urbano NO traen "#NNNNN": el nº de pedido está solo
+  // adentro del código de seguimiento. Un PDF entero salía "sin N° de pedido legible" (09/08/2026).
+  it("Urbano del panel: el pedido sale de BLABS<nro>, no hay ningún '#'", () => {
+    const t = "Fecha emisión: 09/08/2026 Canalizador: BCH - ZONAO3 F Shipper: 4362-BIOLABS Destinatario: Maria belen almada Telefono: 5492944676986 Domicilio: Cacique linares 1680 Localidad: El.bolson (8430) Provincia: Rio Negro BLABS19124 Bulto/s: 1/1 Valor Contrareembolso: $49990 Powered by TCPDF (www.tcpdf.org)";
+    expect(/#\d/.test(t)).toBe(false); // si esto falla, la etiqueta cambió y el test ya no prueba nada
+    const r = _parsePage(t, 1);
+    expect(r.courier).toBe("urbano");
+    expect(r.orden).toBe("19124");
+  });
+  it("Urbano estampado por redespacho.mjs: BLABS y #NNNNN coinciden", () => {
+    const t = "Fecha emisión: 09/08/2026 Canalizador: POS - ZONAO1 C Shipper: 4362-BIOLABS Destinatario: Estela Vargas Localidad: Campo Grande (3362) BLABS16134 Bulto/s: 1/1 Valor Contrareembolso: $48999 Powered by TCPDF (www.tcpdf.org) #16134 2B";
+    expect(_parsePage(t, 1).orden).toBe("16134");
+  });
+  it("Fixy: el 'BIOLABS' del remitente no se confunde con un BLABS de Urbano", () => {
+    const t = "1756093 R.N.P.S.P N 1259 BIOLABS DESTINATARIO Virginia orieta Remito: 19029 www.fixy.com.ar Contrareembolso: $ 49990";
+    const r = _parsePage(t, 1);
+    expect(r.courier).toBe("fixy");
+    expect(r.orden).toBe("19029");
+  });
+
   it("Correo: DESTINATARIO #NNNNN", () => {
     const r = _parsePage("CLASICO F.PAGADO REMITENTE BioLabsArg DESTINATARIO #16966 Abel", 2);
     expect(r.courier).toBe("correo");

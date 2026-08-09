@@ -39,6 +39,11 @@ function parsePage(text: string, page: number): Label {
   // Solo para COD; en ML el "#262382468" es el id del vendedor, no la orden → NO extraer ahí.
   const orden = cod
     ? (text.match(/remito[:\s]+(\d{3,7})/i)?.[1]
+        // Urbano: el seguimiento es BLABS<nro-pedido> desde el 04/08/2026 (commit 9ce1cdc), y las
+        // etiquetas que se bajan del panel NO traen "#NNNNN" en ningún lado — solo esto. Sin esta
+        // regla, un PDF de Urbano entero sale "sin N° de pedido legible".
+        // (Las de scripts/redespacho.mjs sí traen "#NNNNN", pero porque se lo estampa el script.)
+        ?? text.match(/blabs\s*(\d{4,6})\b/i)?.[1]
         ?? text.match(/destinatario\s+#(\d{4,6})/i)?.[1]
         ?? text.match(/#(\d{4,6})\b/)?.[1]
         ?? null)
