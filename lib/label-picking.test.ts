@@ -57,6 +57,25 @@ describe("_parsePage", () => {
     expect(r.unidades).toBe(4);
     expect(r.revisar).toBe(false);
   });
+  // Los dos packs que se leían de menos (09/08/2026). Importan más que el resto: el código que se
+  // estampa sale de acá, y un número bajo hace que el depósito mande menos de lo que se cobró.
+  it("ML: el pack pegado adelante del título ('Frasco 2 Revival Oil…') es 2, no 1", () => {
+    const t = "Venta ID: 20000 17477229458 Recortá esta parte de la etiqueta para que tu paquete viaje seguro. 1 Unidad Fragancia: Lavanda | Tipo de envase: Frasco 2 Revival Oil Aceite Anticelulitico Masajes 240ml Lavanda";
+    const r = _parsePage(t, 1);
+    expect(r.producto).toBe("Revival Oil");
+    expect(r.unidades).toBe(2);
+    expect(r.revisar).toBe(false);
+  });
+  it("ML: el '2x1' del título ES el pack (a diferencia de Shopify, donde es marketing)", () => {
+    const t = "Venta ID: 20000 17470000000 Recortá esta parte de la etiqueta. 1 Unidad Sabor: Sin sabor | Tipo de envase: Gotero Gotas Natures Sunrise Drenaje Linfatico Organico Detox 2x1 30ml";
+    const r = _parsePage(t, 1);
+    expect(r.producto).toBe("Natures");
+    expect(r.unidades).toBe(2);
+  });
+  it("ML: 'Gotas … Menta' sin número sigue siendo x1", () => {
+    const t = "Venta ID: 20000 17470000001 Recortá esta parte. 1 Unidad Sabor: Menta | Tipo de envase: Botella Gotas Pureza Drenaje Linfático Hinchazón Abdomen Piernas Menta";
+    expect(_parsePage(t, 1).unidades).toBe(1);
+  });
   it("ML mixto (2 productos) → revisar, no cuenta a ciegas", () => {
     const r = _parsePage("Venta ID 20000 111 1 Unidad Gotero Pureza Drenaje y BeeVenom", 1);
     expect(r.courier).toBe("ml");

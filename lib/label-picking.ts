@@ -55,7 +55,18 @@ function parsePage(text: string, page: number): Label {
     // El SKU trae el pack en el último dígito (VE4 = Veinguard x4, igual que B3 de /correo).
     // Ojo: "1 Unidad" en ML es la cantidad de PUBLICACIONES compradas, no el pack.
     const packM = text.match(/sku:\s*[a-z]+(\d{1,2})\b/i)
-      ?? text.match(/(\d+)\s*[xX]\s*\d+\s*ml\b/i)          // "4 X 30ml" → 4
+      // El título del listado arranca justo después de "Tipo de envase: <envase>", y muchas veces
+      // el pack va pegado adelante: "Frasco 2 Revival Oil Aceite…" = 2. Es el equivalente del
+      // /^\s*(\d{1,2})\s/ de parseMlPack (ml.ts), que acá no sirve porque el título no está solo.
+      // Sin esta regla "2 Revival Oil …240ml" se leía 1: ninguna otra pide número sin "gotero"/"u".
+      // Rango 1-12 por lo mismo que ml.ts: descarta "30 ml" y demás falsos positivos.
+      ?? text.match(/tipo de envase:\s*\S+\s+(1[0-2]|[1-9])\b/i)
+      // "4 X 30ml" → 4 y también "…Detox 2x1" → 2. Antes esta regla exigía "ml" atrás y el 2x1 de
+      // los listados de ML se leía 1, mientras que parseMlPack (ml.ts) lo contaba 2 para el P&L:
+      // el depósito despachaba 1 donde se cobraron 2. Confirmado por Pancho el 09/08/2026: en ML
+      // el "2x1" del título ES el pack (a diferencia de Shopify, donde es marketing — ver
+      // migración 006 y docs/indicador-2b3b.md). Rango 1-12 como en ml.ts.
+      ?? text.match(/(1[0-2]|[1-9])\s*[xX]\s*\d/)
       ?? text.match(/pack\s*x?\s*(\d+)/i)
       ?? text.match(/(\d+)\s*(?:goteros?|frascos?|comprimidos?|c[aá]psulas?)\b/i)
       ?? text.match(/(\d+)\s*u\b/i);
