@@ -24,7 +24,7 @@ async function fetchPedidos(orders: string[]): Promise<{ pedidos: ShopifyPedido[
   return { pedidos, notFound };
 }
 
-function download(name: string, blob: Blob) {
+export function download(name: string, blob: Blob) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = name;

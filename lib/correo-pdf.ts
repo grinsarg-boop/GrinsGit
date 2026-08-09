@@ -1,6 +1,7 @@
 // Solo cliente: pdfjs-dist para leer el nº de pedido de cada etiqueta y
 // pdf-lib para estampar el código de producto. Nada sale del navegador.
 import { PDFDocument, StandardFonts } from "pdf-lib";
+import { stampPage } from "./label-prep";
 
 // Nº de pedido por página ("DESTINATARIO #16778"). null si la página no tiene.
 export async function extractOrders(input: ArrayBuffer): Promise<(string | null)[]> {
@@ -21,8 +22,9 @@ export async function extractOrders(input: ArrayBuffer): Promise<(string | null)
   return orders;
 }
 
-// Código grande en el recuadro vacío al pie de la etiqueta de Correo
-// (posición validada 13/07 sobre los layouts DOM y SUC; no pisa barras ni QR).
+// Código grande en el recuadro vacío al pie de la etiqueta de Correo. La posición vive en
+// label-prep.ts junto con la de Urbano y Fixy — una sola tabla de coordenadas, no una por pantalla.
+// Efecto del cambio: si el PDF no es la A4 apaisada de MiCorreo ya no se estampa a ciegas en (95,88).
 export async function stampCodes(
   input: ArrayBuffer,
   codeByPage: (string | null)[],
@@ -31,7 +33,7 @@ export async function stampCodes(
   const font = await doc.embedFont(StandardFonts.HelveticaBold);
   doc.getPages().forEach((page, i) => {
     const code = codeByPage[i];
-    if (code) page.drawText(code, { x: 95, y: 88, size: 26, font });
+    if (code) stampPage(page, code, "correo", font);
   });
   return doc.save();
 }

@@ -184,7 +184,9 @@ export function pickProducto(
 }
 
 // B3 = BeeVenom x3. La letra sale del nombre canónico de product-match.
-export function productoCode(p: ShopifyPedido): string | null {
+// (el parámetro es estructural a propósito: /logistica?t=preparar tiene producto+unidades cruzados
+//  por /api/picking, no un ShopifyPedido entero, y la regla del código tiene que ser una sola)
+export function productoCode(p: { producto: string | null; qty: number }): string | null {
   return p.producto ? `${p.producto[0].toUpperCase()}${p.qty}` : null;
 }
 

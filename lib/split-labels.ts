@@ -1,4 +1,6 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts } from "pdf-lib";
+import { stampPage } from "./label-prep";
+import type { LabelCourier } from "./label-picking";
 
 // Etiquetas de Mercado Envíos (Flex): páginas de 10x19 cm = talón de producto
 // arriba (4 cm, "recortá esta parte") + etiqueta 10x15 abajo. Al final del PDF
@@ -12,16 +14,26 @@ export type MlSplitResult = {
   pdf: Uint8Array;
   labels: number; // etiquetas emitidas
   skipped: number; // páginas descartadas (hoja resumen A4 u otros tamaños)
+  sinEstampar: number; // con código pedido pero geometría no validada (ver STAMP en label-prep)
 };
+
+// stampByPage[i] = qué estampar en la página i (0-indexed) del PDF de ENTRADA. Se estampa acá y no
+// afuera porque acá es el único lugar donde se sabe qué página de salida vino de cuál de entrada:
+// las descartadas y el talón rompen la correspondencia posicional.
+// El courier viene del que llama porque Flex y Colecta tienen el MISMO tamaño y distinto layout:
+// la geometría sola no alcanza para elegir dónde va el código (ver STAMP en label-prep.ts).
+export type MlStamp = { code: string; courier: LabelCourier } | null;
 
 export async function mlLabelsTo10x15(
   input: Uint8Array | ArrayBuffer,
-  { includeTalon = false }: { includeTalon?: boolean } = {}
+  { includeTalon = false, stampByPage = [] }: { includeTalon?: boolean; stampByPage?: MlStamp[] } = {}
 ): Promise<MlSplitResult> {
   const src = await PDFDocument.load(input, { ignoreEncryption: true });
   const out = await PDFDocument.create();
+  const font = stampByPage.some(Boolean) ? await out.embedFont(StandardFonts.HelveticaBold) : null;
   let labels = 0;
   let skipped = 0;
+  let sinEstampar = 0;
 
   const pages = src.getPages();
   for (let i = 0; i < pages.length; i++) {
@@ -30,10 +42,16 @@ export async function mlLabelsTo10x15(
       skipped++;
       continue;
     }
+    const s = stampByPage[i];
+    const marcar = (page: ReturnType<typeof out.addPage>) => {
+      if (s && font && !stampPage(page, s.code, s.courier, font)) sinEstampar++;
+    };
+
     if (height <= OUT_H + TOL) {
       // ya es 10x15: pasa tal cual
       const [copied] = await out.copyPages(src, [i]);
       out.addPage(copied);
+      marcar(copied);
       labels++;
       continue;
     }
@@ -47,7 +65,9 @@ export async function mlLabelsTo10x15(
       );
 
     const label = await embed(0, OUT_H);
-    out.addPage([OUT_W, OUT_H]).drawPage(label, { x: 0, y: 0 });
+    const hoja = out.addPage([OUT_W, OUT_H]);
+    hoja.drawPage(label, { x: 0, y: 0 });
+    marcar(hoja); // el talón (que dice el producto) se recorta: el código va en la etiqueta
     labels++;
 
     if (includeTalon) {
@@ -57,5 +77,5 @@ export async function mlLabelsTo10x15(
     }
   }
 
-  return { pdf: await out.save(), labels, skipped };
+  return { pdf: await out.save(), labels, skipped, sinEstampar };
 }

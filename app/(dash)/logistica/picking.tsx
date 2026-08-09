@@ -8,7 +8,7 @@ import type { PickingOrder } from "@/app/api/picking/route";
 const COURIER_LABEL: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML", flex: "Flex", "?": "¿?" };
 const loc = (l: Label) => `${l.file ?? "?"} p.${l.page}`;
 
-async function fetchOrders(ordenes: string[]): Promise<PickingOrder[]> {
+export async function fetchOrders(ordenes: string[]): Promise<PickingOrder[]> {
   const out: PickingOrder[] = [];
   for (let i = 0; i < ordenes.length; i += 60) {
     const res = await fetch(`/api/picking?orders=${ordenes.slice(i, i + 60).join(",")}`);

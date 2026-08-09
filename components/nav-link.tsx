@@ -18,6 +18,7 @@ const GRUPOS: [string, string][][] = [
 // borró de la página — la nav es la única superficie de navegación.
 const LOGISTICA: [string, string][] = [
   ["picking", "Picking del día"],
+  ["preparar", "Preparar etiquetas"],
   ["correo", "Correo Argentino"],
   ["etiquetas", "Etiquetas ML"],
 ];
@@ -31,7 +32,7 @@ const ON = "bg-muted font-medium text-foreground";
 export function Nav({ avisos }: { avisos?: React.ReactNode }) {
   const path = usePathname();
   const t = useSearchParams().get("t");
-  const tab = t === "correo" || t === "etiquetas" ? t : "picking"; // mismo default que la página
+  const tab = t === "preparar" || t === "correo" || t === "etiquetas" ? t : "picking"; // mismo default que la página
   return (
     <nav className="mb-6 border-b pb-3">
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
