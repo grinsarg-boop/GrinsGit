@@ -14,7 +14,17 @@ const PRODUCT_KEYWORDS: [string, string][] = [
   ["revival", "Revival Oil"],
   // M3 (Aceite Reafirmante Anti-celulítico): Shopify + ML. En SQL también (027).
   ["reafirmante", "M3"],
+  // Arraigo (Sérum Anticaída de Romero): vende por COD desde el 05/08/2026 y no estaba en ningún
+  // lado — las etiquetas salían "sin producto reconocido".
+  // La keyword es la MARCA, no "romero": matchAllProducts corre sobre el texto entero de la
+  // etiqueta de ML, que incluye el nombre del destinatario, y Romero es un apellido común — un
+  // cliente apellidado así quedaría marcado como venta mixta.
+  // ⚠️ TODAVÍA NO está en la versión SQL ni en products: el P&L no lo atribuye (product_id NULL).
+  ["arraigo", "Arraigo"],
 ];
+
+// Nombres canónicos, para el test que chequea que no colisionen las letras del código de depósito.
+export const PRODUCTOS = [...new Set(PRODUCT_KEYWORDS.map(([, name]) => name))];
 
 export function matchProduct(text: string): string | null {
   const t = text.toLowerCase();

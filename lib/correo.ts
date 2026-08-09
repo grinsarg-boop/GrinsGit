@@ -183,11 +183,20 @@ export function pickProducto(
   return { producto, qty };
 }
 
-// B3 = BeeVenom x3. La letra sale del nombre canónico de product-match.
+// B3 = BeeVenom x3. La letra sale de la inicial del nombre canónico de product-match, salvo donde
+// eso colisionaría: Arraigo empieza con A igual que Altus, y este código lo lee una persona en el
+// depósito — dos productos con la misma letra es un pedido armado mal.
+// product-match.test.ts falla si dos productos terminan compartiendo letra.
+const LETRA: Record<string, string> = { Arraigo: "S" }; // S de Sérum (A ya es Altus)
+
+export function letraProducto(producto: string): string {
+  return LETRA[producto] ?? producto[0].toUpperCase();
+}
+
 // (el parámetro es estructural a propósito: /logistica?t=preparar tiene producto+unidades cruzados
 //  por /api/picking, no un ShopifyPedido entero, y la regla del código tiene que ser una sola)
 export function productoCode(p: { producto: string | null; qty: number }): string | null {
-  return p.producto ? `${p.producto[0].toUpperCase()}${p.qty}` : null;
+  return p.producto ? `${letraProducto(p.producto)}${p.qty}` : null;
 }
 
 export function pedidoToRow(p: ShopifyPedido): CorreoRow {
