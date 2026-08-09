@@ -119,6 +119,9 @@ export function Preparar() {
 
   const resueltas = rows.filter((r) => r.producto);
   const revisar = rows.filter((r) => !r.producto);
+  // ML/Flex acá salen ordenadas pero SIN código (otro layout) y SIN partir a 10×15. El tab
+  // "Etiquetas ML" hace las dos cosas, así que hay que mandarlo ahí en vez de dejarlo pasar callado.
+  const ml = rows.filter((r) => r.courier === "ml" || r.courier === "flex");
   // Resumen del día en el mismo orden en que van a salir impresas.
   const pilas = new Map<string, number[]>();
   for (const r of resueltas) pilas.set(r.producto!, [...(pilas.get(r.producto!) ?? []), r.unidades ?? 1]);
@@ -132,6 +135,11 @@ export function Preparar() {
         (<b className="text-foreground">B3</b> = BeeVenom x3) y te devuelve{" "}
         <b className="text-foreground">un solo PDF ordenado por producto y por unidades</b>: imprimís y
         armás sin volver a ordenar nada. Se procesa en tu navegador, no se sube a ningún lado.
+      </p>
+      <p className="text-sm text-muted-foreground">
+        Las de <b className="text-foreground">MercadoLibre</b> no van acá: van en{" "}
+        <a href="/logistica?t=etiquetas" className="underline">Etiquetas ML</a>, que además de
+        ordenarlas y estamparles el código las parte a 10×15 para la impresora térmica.
       </p>
 
       <Dropzone
@@ -156,6 +164,15 @@ export function Preparar() {
               {revisar.length > 0 && ` · ${revisar.length} a revisar (van al final)`}
             </span>
           </div>
+
+          {ml.length > 0 && (
+            <p className="text-sm text-amber-600">
+              ⚠️ {ml.length} etiqueta(s) de MercadoLibre/Flex. Acá salen ordenadas pero{" "}
+              <b>sin código y sin partir a 10×15</b> (son otro layout). Para esas usá{" "}
+              <a href="/logistica?t=etiquetas" className="underline">Etiquetas ML</a>, que las parte,
+              las ordena <i>y</i> les estampa el código.
+            </p>
+          )}
 
           {pilas.size > 0 && (
             <p className="text-sm">
