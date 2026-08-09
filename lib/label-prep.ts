@@ -15,10 +15,14 @@ import type { LabelCourier } from "./label-picking";
 // La geometría además se verifica en runtime: con otra medida de página la coordenada no significa
 // nada, así que NO se estampa — mejor una etiqueta sin código que una con el barcode tapado, que es
 // un bulto que no se puede despachar.
-const STAMP: Partial<Record<LabelCourier, { w: number; h: number; x: number; y: number; size: number }>> = {
+const STAMP: Partial<Record<LabelCourier, { w: number; h: number; x: number; y: number; size: number; center?: boolean }>> = {
   correo: { w: 841.89, h: 595.28, x: 95, y: 88, size: 26 },  // A4 apaisada — recuadro vacío al pie (13/07)
   fixy: { w: 595.0, h: 841.9, x: 460, y: 380, size: 32 },    // A4 vertical — columna libre a la derecha del domicilio
-  urbano: { w: 425.2, h: 283.5, x: 305, y: 150, size: 26 },  // 15×10 apaisada — hueco arriba del QR
+  // Urbano 15×10 apaisada: chico y centrado en la franja de arriba (pedido de Pancho 09/08 — antes
+  // iba grande al medio derecha y quedaba invadiendo la etiqueta). Es la ÚNICA franja libre a todo
+  // el ancho: y 272-284, medida uniendo la tinta de 112 páginas de las dos plantillas.
+  // Queda arriba del "#pedido" que estampa redespacho.mjs (y≈256), así que no chocan.
+  urbano: { w: 425.2, h: 283.5, x: 0, y: 273.5, size: 11, center: true },
   // Flex: la 10×15 que sale de mlLabelsTo10x15 (el producto vive en el talón, que se recorta → sin
   // esto la etiqueta impresa no dice qué lleva). Columna libre a la izquierda del QR; el recuadro
   // del pie NO sirve, ahí el "Destinatario:" largo baja hasta y=28.
@@ -38,7 +42,8 @@ export function stampPage(page: PDFPage, code: string, courier: LabelCourier, fo
   const s = STAMP[courier];
   const { width, height } = page.getSize();
   if (!s || Math.abs(width - s.w) > TOL || Math.abs(height - s.h) > TOL) return false;
-  page.drawText(code, { x: s.x, y: s.y, size: s.size, font });
+  const x = s.center ? (width - font.widthOfTextAtSize(code, s.size)) / 2 : s.x;
+  page.drawText(code, { x, y: s.y, size: s.size, font });
   return true;
 }
 
