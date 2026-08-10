@@ -82,6 +82,26 @@ describe("buildPdf", () => {
     expect(out.length).toBe(4);
   });
 
+  // Correo entra en A4 apaisada con la etiqueta en un rincón; sale recortada a 10×15 para la
+  // impresora térmica, y el código se estampa en la geometría NUEVA (si se estampara antes del
+  // recorte quedaría al pie, pegado al borde, y la térmica lo corta).
+  it("Correo se recorta a 10×15 y se estampa ahí; los otros couriers no se tocan", { timeout: 30000 }, async () => {
+    const correo = await pdfCorreo([16001, 16002]);
+    const { pdf, sinEstampar } = await buildPdf([correo], [
+      { file: 0, page: 1, courier: "correo" as const, code: "B3" },
+      { file: 0, page: 2, courier: "correo" as const, code: "N12" },
+    ]);
+    expect(sinEstampar).toBe(0);
+    for (const p of (await PDFDocument.load(pdf)).getPages()) {
+      expect(p.getSize().width).toBeCloseTo(10 * 28.3465, 0);
+      expect(p.getSize().height).toBeCloseTo(15 * 28.3465, 0);
+    }
+    // Una página que NO es Correo conserva su tamaño original.
+    const urbano = await pdfCorreo([16003], [425.2, 283.5]);
+    const r2 = await buildPdf([urbano], [{ file: 0, page: 1, courier: "urbano" as const, code: "B2" }]);
+    expect((await PDFDocument.load(r2.pdf)).getPage(0).getSize().width).toBeCloseTo(425.2, 0);
+  });
+
   it("no estampa si la geometría no es la validada para ese courier", { timeout: 30000 }, async () => {
     const raro = await pdfCorreo([16005], [400, 400]); // no es la A4 apaisada de MiCorreo
     const { pdf, sinEstampar } = await buildPdf(
