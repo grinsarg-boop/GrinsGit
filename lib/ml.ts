@@ -291,10 +291,25 @@ export async function applyFlexFlete(db: Db = supabaseAdmin()): Promise<{ update
 // la tabla settings.flex_freight_by_cp. Marca ship_cost_estimated=true; applyFlexFlete lo pisa cuando
 // llega el listado real. (1) captura dest_cp de los que no lo tienen (1 fetch/shipment), (2) aplica la
 // tabla a todos los pendientes con CP conocido (barato, sin API — cubre CPs que se agregaron después).
-export async function estimateFlexByCP(db: Db = supabaseAdmin(), limit = 200): Promise<{ estimated: number; sinCP: number }> {
+// Precio Flex de un CP: exacto si está en la tabla de la liquidación; si no, promedio de su zona
+// (2 primeros dígitos, que es como cobra DarLogistica) y en última instancia el promedio global.
+// ponytail: sin este fallback el CP desconocido dejaba ship_cost en NULL — flete $0 en el P&L, que
+// eran 97 órdenes y $4,49M de facturación viajando gratis. Cuando llega el XLSX real, lo pisa.
+export function flexPriceForCP(table: Record<string, number>, cp: string): number | null {
+  const vals = Object.values(table);
+  if (!vals.length) return null;
+  const exacto = table[cp];
+  if (exacto != null) return exacto;
+  const prom = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const zona = Object.entries(table).filter(([k]) => k.slice(0, 2) === cp.slice(0, 2)).map(([, v]) => v);
+  return Math.round(zona.length ? prom(zona) : prom(vals));
+}
+
+export async function estimateFlexByCP(db: Db = supabaseAdmin(), limit = 200): Promise<{ estimated: number; porZona: number }> {
   const { data: st } = await db.from("settings").select("value").eq("key", "flex_freight_by_cp").maybeSingle();
   const table = (st?.value as Record<string, number>) ?? {};
-  if (!Object.keys(table).length) return { estimated: 0, sinCP: 0 };
+  if (!Object.keys(table).length) return { estimated: 0, porZona: 0 };
+
 
   // (1) capturar CP destino de los Flex pendientes que aún no lo tienen
   const { data: nuevos } = await db.from("ml_orders")
@@ -320,15 +335,16 @@ export async function estimateFlexByCP(db: Db = supabaseAdmin(), limit = 200): P
   const { data: pend } = await db.from("ml_orders")
     .select("ml_id, dest_cp")
     .eq("status", "paid").eq("ship_type", "self_service").is("ship_cost", null).not("dest_cp", "is", null);
-  let estimated = 0, sinCP = 0;
+  let estimated = 0, porZona = 0;
   for (const r of pend ?? []) {
-    const price = table[r.dest_cp as string];
-    if (price != null) {
-      await db.from("ml_orders").update({ ship_cost: price, ship_cost_estimated: true }).eq("ml_id", r.ml_id);
-      estimated++;
-    } else sinCP++;
+    const cp = r.dest_cp as string;
+    const price = flexPriceForCP(table, cp);
+    if (price == null) continue;
+    await db.from("ml_orders").update({ ship_cost: price, ship_cost_estimated: true }).eq("ml_id", r.ml_id);
+    estimated++;
+    if (table[cp] == null) porZona++;
   }
-  return { estimated, sinCP };
+  return { estimated, porZona };
 }
 
 // --- Product Ads de ML (publicidad) ---

@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
-import { groupBonifByDay, mapMlOrder, parseOrderRef, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
+import { flexPriceForCP, groupBonifByDay, mapMlOrder, parseOrderRef, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
 
 const NOW = 1_700_000_000_000;
 
@@ -217,5 +217,24 @@ describe("parseOrderRef", () => {
     expect(parseOrderRef("")).toBeNull();
     expect(parseOrderRef(null)).toBeNull();
     expect(parseOrderRef(undefined)).toBeNull();
+  });
+});
+
+describe("flexPriceForCP", () => {
+  // CABA (11xx) barato, GBA oeste (17xx) caro: el promedio global mentiría en los dos sentidos.
+  const T = { "1188": 5000, "1192": 5400, "1743": 9000, "1745": 9400 };
+
+  it("usa el precio exacto cuando el CP está en la liquidación", () => {
+    expect(flexPriceForCP(T, "1188")).toBe(5000);
+  });
+  it("un CP nuevo cae al promedio de SU zona, no al global", () => {
+    expect(flexPriceForCP(T, "1199")).toBe(5200);  // (5000+5400)/2 — no 7200
+    expect(flexPriceForCP(T, "1763")).toBe(9200);  // (9000+9400)/2
+  });
+  it("una zona entera desconocida cae al promedio global", () => {
+    expect(flexPriceForCP(T, "6706")).toBe(7200);
+  });
+  it("sin tabla no inventa un precio", () => {
+    expect(flexPriceForCP({}, "1188")).toBeNull();
   });
 });
