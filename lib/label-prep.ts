@@ -90,15 +90,17 @@ const OUT_H = 15 * CM;
 // La etiqueta de Correo ocupa solo un rincón de la A4 apaisada: el resto es papel en blanco y el
 // "Powered by TCPDF" del pie, que NO es parte de la etiqueta. Medido sobre 24 páginas de
 // Correo10071/2107/1707: idéntico en las 24.
-const CORREO_CROP = { left: 56, bottom: 74, right: 300, top: 537 }; // 244 × 463 pt = 8,6 × 16,3 cm
+// El corte de abajo va en 132 y no en 74 a propósito: entre 74 y 130 está el recuadro vacío del pie,
+// que dejó de usarse cuando el código se mudó arriba. Sacándolo la etiqueta queda 244 × 405 pt
+// (8,6 × 14,3 cm) y entra en 10×15 SIN escalar — el código de barras sale a su tamaño original.
+// Con el recuadro habría que encogerla a 0,92 y el barcode con ella.
+const CORREO_CROP = { left: 56, bottom: 132, right: 300, top: 537 }; // 244 × 405 pt
 
 // Recorta la etiqueta de la A4 y la centra en una hoja de 10×15 para la impresora térmica.
-// Escala ~0,92 (la etiqueta es más alta que 15 cm en proporción): es lo mínimo para que entre
-// entera. Reducir el barcode tiene un límite y 0,92 está lejos de él, pero es la razón por la que
-// esto NO se le aplica a Fixy ni a Urbano, que ya vienen en su tamaño.
 async function correoA10x15(out: PDFDocument, orig: PDFPage): Promise<PDFPage> {
   const emb = await out.embedPage(orig, CORREO_CROP, [1, 0, 0, 1, -CORREO_CROP.left, -CORREO_CROP.bottom]);
-  const s = Math.min(OUT_W / emb.width, OUT_H / emb.height);
+  // Nunca agrandar: 1 es el tamaño con el que Correo diseñó el barcode.
+  const s = Math.min(1, OUT_W / emb.width, OUT_H / emb.height);
   const hoja = out.addPage([OUT_W, OUT_H]);
   hoja.drawPage(emb, {
     x: (OUT_W - emb.width * s) / 2,
