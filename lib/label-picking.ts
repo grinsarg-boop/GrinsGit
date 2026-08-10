@@ -56,32 +56,43 @@ function parsePage(text: string, page: number): Label {
   let unidades: number | null = null;
   let revisar = false;
   if (courier === "ml" || courier === "flex") {
-    const prods = matchAllProducts(text);                 // varios keywords = venta mixta
+    // ── El producto y el pack se leen SOLO del título del listado, NUNCA de la página entera ──
+    // La etiqueta de Colecta trae medidas del bulto ("QBC 6x7x25cm"), peso, CP, teléfono, fechas y
+    // códigos de ruteo. Leyendo todo, la regla NxN agarraba el "6x7" de las medidas y un pedido de
+    // UNA unidad salía rotulado P6 → el depósito manda 6. Encontrado el 09/08/2026 en
+    // E3268…_labels.pdf p16 (Venta 17824513396, "Gotas Pureza … Menta", que es el listado x1).
+    // El título va entre "N Unidad(es)" y el bloque del remitente: ancla presente en las 266
+    // etiquetas reales que hay para probar, y en ninguna entran las medidas.
+    const mU = text.match(/\d+\s*unidad(?:es)?\s+/i);
+    const resto = mU ? text.slice(mU.index! + mU[0].length) : text;
+    const corte = resto.search(/\s+(?:Remitente|Devolver a|Venta:|Pack ID:|DermaTech|#\d)/i);
+    const titulo = corte > 0 ? resto.slice(0, corte) : resto.slice(0, 140);
+
+    const prods = matchAllProducts(titulo);               // varios keywords = venta mixta
     // El SKU trae el pack en el último dígito (VE4 = Veinguard x4, igual que B3 de /correo).
     // Ojo: "1 Unidad" en ML es la cantidad de PUBLICACIONES compradas, no el pack.
-    const packM = text.match(/sku:\s*[a-z]+(\d{1,2})\b/i)
+    const packM = titulo.match(/sku:\s*[a-z]+(\d{1,2})\b/i)
       // El título del listado arranca justo después de "Tipo de envase: <envase>", y muchas veces
       // el pack va pegado adelante: "Frasco 2 Revival Oil Aceite…" = 2. Es el equivalente del
       // /^\s*(\d{1,2})\s/ de parseMlPack (ml.ts), que acá no sirve porque el título no está solo.
       // Sin esta regla "2 Revival Oil …240ml" se leía 1: ninguna otra pide número sin "gotero"/"u".
       // Rango 1-12 por lo mismo que ml.ts: descarta "30 ml" y demás falsos positivos.
-      ?? text.match(/tipo de envase:\s*\S+\s+(1[0-2]|[1-9])\b/i)
+      ?? titulo.match(/tipo de envase:\s*\S+\s+(1[0-2]|[1-9])\b/i)
       // "4 X 30ml" → 4 y también "…Detox 2x1" → 2. Antes esta regla exigía "ml" atrás y el 2x1 de
       // los listados de ML se leía 1, mientras que parseMlPack (ml.ts) lo contaba 2 para el P&L:
       // el depósito despachaba 1 donde se cobraron 2. Confirmado por Pancho el 09/08/2026: en ML
       // el "2x1" del título ES el pack (a diferencia de Shopify, donde es marketing — ver
       // migración 006 y docs/indicador-2b3b.md). Rango 1-12 como en ml.ts.
-      ?? text.match(/(1[0-2]|[1-9])\s*[xX]\s*\d/)
-      ?? text.match(/pack\s*x?\s*(\d+)/i)
-      ?? text.match(/(\d+)\s*(?:goteros?|frascos?|comprimidos?|c[aá]psulas?)\b/i)
-      ?? text.match(/(\d+)\s*u\b/i);
+      ?? titulo.match(/(1[0-2]|[1-9])\s*[xX]\s*\d/)
+      ?? titulo.match(/pack\s*x?\s*(\d+)/i)
+      ?? titulo.match(/(\d+)\s*(?:goteros?|frascos?|comprimidos?|c[aá]psulas?)\b/i)
+      ?? titulo.match(/(\d+)\s*u\b/i);
     const pack = packM ? +packM[1] : 1;
     // Red de seguridad: si NINGUNA regla habló y sin embargo el título del listado tiene un número
     // suelto, es un formato que no conozco y "1" sería una suposición. Un pack leído de menos =
     // despachar menos de lo cobrado, y falla en silencio. Mejor mandarlo a revisar.
     // Medido sobre 213 etiquetas reales: dispara en 0. Habría cazado "Frasco 2 Revival Oil" y
     // "Detox 2x1", que se leían 1 hasta el 09/08/2026.
-    const titulo = text.match(/tipo de envase:\s*(.{5,140}?)(?:\s+Remitente|\s+DermaTech|\s+#\d|$)/i)?.[1] ?? "";
     const numeroRaro = !packM && /\b\d{1,2}\b/.test(titulo.replace(/\d+\s*ml\b/gi, ""));
     const qtyM = text.match(/(\d+)\s*unidad(?:es)?\b/i);   // "1 Unidad" (compras del mismo listado)
     const multiCompra = (qtyM ? +qtyM[1] : 1) > 1;

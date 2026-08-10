@@ -92,6 +92,17 @@ describe("_parsePage", () => {
     expect(r.producto).toBe("Natures");
     expect(r.unidades).toBe(2);
   });
+  // El peor bug posible de esta herramienta: un pedido de 1 rotulado como 6, o sea el depósito
+  // mandando 6. Texto REAL de E3268…_labels.pdf p16 (09/08/2026): el "6x7" que la regla NxN
+  // agarraba son las MEDIDAS del bulto que imprime Colecta, no un pack.
+  it("ML: las medidas del bulto ('QBC 6x7x25cm') no son el pack", () => {
+    const t = "Venta ID: 20000 17824513396 Recortá esta parte de la etiqueta para que tu paquete viaje seguro. 1 Unidad Sabor: Menta | Tipo de envase: Botella Gotas Pureza Drenaje Linfático Hinchazón Abdomen Piernas Menta Remitente #262382468 Devolver a CTP BUE Sector CGC B1842ZAC Monte Grande Venta: 20000 17824513396 XCF1 Despachar: lun 10/ago antes de 17:30 hs 477178 84192 10 10:00 XCF1 > COR140 SUR-NQNF FAP: 16276 C SUC HC495214923AR QBC 6x7x25cm 0.17 kg Dario Vaca (VACADARIO20230627104446) Domicilio: Calle 2 0 CP: 8305 Centenario";
+    const r = _parsePage(t, 1);
+    expect(r.producto).toBe("Pureza");
+    expect(r.unidades).toBe(1); // el listado es "Gotas ... Menta", sin número: es x1
+    expect(r.revisar).toBe(false);
+  });
+
   // Red de seguridad: un formato de título que no conozco, con un número que ninguna regla
   // interpreta, NO se asume 1 — se manda a revisar. Un pack leído de menos despacha de menos.
   it("ML: número en el título que ninguna regla entiende → revisar, no '1' a ciegas", () => {
