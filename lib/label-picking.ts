@@ -76,11 +76,21 @@ function parsePage(text: string, page: number): Label {
       ?? text.match(/(\d+)\s*(?:goteros?|frascos?|comprimidos?|c[aá]psulas?)\b/i)
       ?? text.match(/(\d+)\s*u\b/i);
     const pack = packM ? +packM[1] : 1;
+    // Red de seguridad: si NINGUNA regla habló y sin embargo el título del listado tiene un número
+    // suelto, es un formato que no conozco y "1" sería una suposición. Un pack leído de menos =
+    // despachar menos de lo cobrado, y falla en silencio. Mejor mandarlo a revisar.
+    // Medido sobre 213 etiquetas reales: dispara en 0. Habría cazado "Frasco 2 Revival Oil" y
+    // "Detox 2x1", que se leían 1 hasta el 09/08/2026.
+    const titulo = text.match(/tipo de envase:\s*(.{5,140}?)(?:\s+Remitente|\s+DermaTech|\s+#\d|$)/i)?.[1] ?? "";
+    const numeroRaro = !packM && /\b\d{1,2}\b/.test(titulo.replace(/\d+\s*ml\b/gi, ""));
     const qtyM = text.match(/(\d+)\s*unidad(?:es)?\b/i);   // "1 Unidad" (compras del mismo listado)
     const multiCompra = (qtyM ? +qtyM[1] : 1) > 1;
-    if (prods.length === 1 && !multiCompra) {
+    if (prods.length === 1 && !multiCompra && !numeroRaro) {
       producto = prods[0];
       unidades = pack;
+    } else if (prods.length === 1 && numeroRaro) {
+      producto = prods[0];
+      revisar = true; // sabemos qué es, no cuántos
     } else if (prods.length >= 1) {
       // mixto (>1 producto) o multi-compra → no se puede partir bien desde la etiqueta
       producto = prods.length === 1 ? prods[0] : null;

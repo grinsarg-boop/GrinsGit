@@ -92,6 +92,15 @@ describe("_parsePage", () => {
     expect(r.producto).toBe("Natures");
     expect(r.unidades).toBe(2);
   });
+  // Red de seguridad: un formato de título que no conozco, con un número que ninguna regla
+  // interpreta, NO se asume 1 — se manda a revisar. Un pack leído de menos despacha de menos.
+  it("ML: número en el título que ninguna regla entiende → revisar, no '1' a ciegas", () => {
+    const t = "Venta ID: 20000 17470000002 Recortá esta parte. 1 Unidad Sabor: Menta | Tipo de envase: Gotero Pureza Drenaje Linfático — Llevá 2 y ahorrá";
+    const r = _parsePage(t, 1);
+    expect(r.producto).toBe("Pureza"); // qué es, lo sabemos
+    expect(r.revisar).toBe(true);      // cuántos, no
+    expect(r.unidades).toBeNull();
+  });
   it("ML: 'Gotas … Menta' sin número sigue siendo x1", () => {
     const t = "Venta ID: 20000 17470000001 Recortá esta parte. 1 Unidad Sabor: Menta | Tipo de envase: Botella Gotas Pureza Drenaje Linfático Hinchazón Abdomen Piernas Menta";
     expect(_parsePage(t, 1).unidades).toBe(1);
