@@ -103,6 +103,29 @@ describe("_parsePage", () => {
     expect(r.revisar).toBe(false);
   });
 
+  // Encontrado cruzando 249 etiquetas contra la API de ML (09/08/2026): el pack escrito con la
+  // letra adelante no lo agarraba ninguna regla y se leía 1. 26 unidades de menos, en silencio.
+  it("ML: el pack con la x adelante ('Promo X4', 'X5 Pack') también es pack", () => {
+    const p4 = "Venta ID: 20000 17800000001 Recortá. 1 Unidad Sabor: Menta | Tipo de envase: Gotero Pureza Drenaje Linfático Gotas Orgánicas Hinchazon Promo X4 Menta Remitente #262382468";
+    expect(_parsePage(p4, 1).unidades).toBe(4);
+    const p5 = "Venta ID: 20000 17800000002 Recortá. 1 Unidad Sabor: Menta | Tipo de envase: Gotero X5 Pack Pureza Drenaje Linfático Hinchazón Abdomen Piernas Menta Remitente #262382468";
+    expect(_parsePage(p5, 1).unidades).toBe(5);
+    // y no rompe el caso con el número adelante: "4 X 30ml" sigue siendo 4, no 30
+    const ml = "Venta ID: 20000 17800000003 Recortá. 1 Unidad Fragancia: Menta | Tipo de envase: Frasco SKU: VE4 Veinguard Solución Herbal Varices 4 X 30ml Remitente #262382468";
+    expect(_parsePage(ml, 1).unidades).toBe(4);
+  });
+
+  // El listado real MLA3030521696 se llama "X5 Pack Ahorro Drenaje Linfático…" y NO nombra al
+  // producto: matchProduct no tiene de dónde agarrarse ("drenaje" no sirve, lo comparte con
+  // Natures). Sale sin producto y sin código — que es lo correcto, pero significa que ese listado
+  // hay que renombrarlo en ML para que el depósito lo pueda rotular.
+  it("ML: un listado que no nombra el producto sale sin código, no adivina", () => {
+    const t = "Venta ID: 20000 17800000004 Recortá. 1 Unidad Sabor: Menta | Tipo de envase: Gotero X5 Pack Ahorro Drenaje Linfático Hinchazón Abdomen Piernas Menta Remitente #262382468";
+    const r = _parsePage(t, 1);
+    expect(r.producto).toBeNull();
+    expect(r.unidades).toBeNull();
+  });
+
   // Red de seguridad: un formato de título que no conozco, con un número que ninguna regla
   // interpreta, NO se asume 1 — se manda a revisar. Un pack leído de menos despacha de menos.
   it("ML: número en el título que ninguna regla entiende → revisar, no '1' a ciegas", () => {

@@ -84,6 +84,11 @@ function parsePage(text: string, page: number): Label {
       // el "2x1" del título ES el pack (a diferencia de Shopify, donde es marketing — ver
       // migración 006 y docs/indicador-2b3b.md). Rango 1-12 como en ml.ts.
       ?? titulo.match(/(1[0-2]|[1-9])\s*[xX]\s*\d/)
+      // …y al revés, con la letra adelante: "Promo X4", "X5 Pack Ahorro". Es la regla
+      // /[xX]\s*(\d{1,2})/ que parseMlPack (ml.ts) ya tenía y acá faltaba: 8 etiquetas de la tanda
+      // del 09/08/2026 salían x1 debiendo ser x4 y x5 — 26 unidades de menos, en silencio.
+      // Va DESPUÉS de la regla NxN para que "4 X 30ml" siga siendo 4 y no 30.
+      ?? titulo.match(/[xX]\s*(1[0-2]|[1-9])\b/)
       ?? titulo.match(/pack\s*x?\s*(\d+)/i)
       ?? titulo.match(/(\d+)\s*(?:goteros?|frascos?|comprimidos?|c[aá]psulas?)\b/i)
       ?? titulo.match(/(\d+)\s*u\b/i);
