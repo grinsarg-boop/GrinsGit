@@ -5,13 +5,21 @@ import type { CourierClient, CourierEvent, FetchStatusesResult } from "./types";
 // Consulta por REMITO (= order_number Shopify); el response trae guia.fechas[] con el Nro Guia,
 // estado (texto), codigo_estado (numérico) y fecha/hora. NO trae plata (importe/contrareembolso):
 // el flete/COD sigue saliendo del XLSX (/api/import/fixy-xlsx). status_raw = codigo_estado (mapeo
-// exact en 008). Emite SOLO el estado actual (fechas[0]) — más fresco que el XLSX; dispatched_at
-// ya viene del XLSX. Sólo lectura: NUNCA guias.json/solicitarRetiro/generar-recepcion (escritura).
+// exact en 008/014/052/073). Sólo lectura: NUNCA guias.json/solicitarRetiro/generar-recepcion.
+//
+// HISTORIAL COMPLETO (073): `fechas[]` trae TODOS los eventos de la guía en CADA llamada, no el
+// último. Emitir sólo `fechas[0]` tiraba esa historia y dejaba grabado únicamente el estado que la
+// guía tenía el día en que el sync la miró: sólo el 32,5% de las guías tenía el evento de alta
+// (41 = despachado), que es el que ancla la cohorte de despacho. Se emiten todos, en orden
+// cronológico (viejo→nuevo) para que el desempate por `id` del rollup (072) elija el más nuevo.
+// Es retroactivo: la API sigue devolviendo la historia vieja, así que re-sincronizar la recupera.
 const API = (process.env.FIXY_API_URL ?? "https://fixy.epresis.com/").replace(/\/$/, "");
 const SEGUIMIENTO = `${API}/api/v2/seguimiento.json`;
 const CONCURRENCY = 5;
 
-type FixyFecha = { guia?: number; estado?: string; codigo_estado?: number; fecha?: string; hora?: string; detalles?: string };
+// `detalles` viene null cuando el operador no escribió nada (la mayoría de los eventos automáticos).
+type FixyFecha = { guia?: number; estado?: string; codigo_estado?: number; fecha?: string; hora?: string; detalles?: string | null };
+type FixySeguimiento = { status?: string; guia?: { fechas?: FixyFecha[] } };
 
 // "dd/mm/yyyy" + "HH:MM" → ISO con offset ART (-03:00).
 function fixyApiDate(fecha?: string, hora?: string): string | null {
@@ -19,6 +27,23 @@ function fixyApiDate(fecha?: string, hora?: string): string | null {
   if (!m) return null;
   const t = /^\d{1,2}:\d{2}/.test((hora ?? "").trim()) ? hora!.trim() : "12:00";
   return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}T${t.padStart(5, "0")}:00-03:00`;
+}
+
+// `fechas[]` viene DESC (fechas[0] = estado actual) y se emite al revés, cronológico.
+export function parseFixySeguimiento(remito: string, j: FixySeguimiento): CourierEvent[] {
+  const events: CourierEvent[] = [];
+  const fechas = j?.guia?.fechas ?? [];
+  for (let i = fechas.length - 1; i >= 0; i--) {
+    const f = fechas[i];
+    const at = fixyApiDate(f.fecha, f.hora);
+    if (f.codigo_estado == null || !at) continue; // evento roto: se saltea, el resto vale igual
+    events.push({
+      courier: "fixy", tracking: String(f.guia ?? ""), order_ref: remito,
+      status_raw: String(f.codigo_estado), occurred_at: at,
+      raw: { estado: f.estado, detalles: f.detalles, via: "api" },
+    });
+  }
+  return events;
 }
 
 // {events, warning?}: un HTTP no-2xx (401 token vencido, 5xx) es un fallo que hay que VER, no un
@@ -29,15 +54,7 @@ async function fetchRemito(remito: string): Promise<{ events: CourierEvent[]; wa
     body: JSON.stringify({ api_token: process.env.FIXY_API_TOKEN, remito }),
   });
   if (!res.ok) return { events: [], warning: { courier: "fixy", remito, http: res.status } };
-  const j: { status?: string; guia?: { fechas?: FixyFecha[] } } = await res.json();
-  const f = j?.guia?.fechas?.[0]; // fechas[0] = estado actual (viene desc)
-  const at = fixyApiDate(f?.fecha, f?.hora);
-  if (!f || f.codigo_estado == null || !at) return { events: [] };
-  return { events: [{
-    courier: "fixy", tracking: String(f.guia ?? ""), order_ref: remito,
-    status_raw: String(f.codigo_estado), occurred_at: at,
-    raw: { estado: f.estado, detalles: f.detalles, via: "api" },
-  }] };
+  return { events: parseFixySeguimiento(remito, await res.json()) };
 }
 
 // trackings = REMITOS (order_number) — runCourierSync pasa order_ref para fixy. Tandas de CONCURRENCY.

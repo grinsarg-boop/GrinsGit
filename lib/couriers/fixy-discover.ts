@@ -18,9 +18,10 @@ export function fixyFreight(
 
 // Descubre despachos Fixy nuevos (proceso post-08/07: la guía se registra en Fixy por API, NO en un
 // tag como Urbano). Toma los pedidos courier='fixy' sin guía (v_fixy_sin_guia), pregunta a la API por
-// remito=order_number y crea la shipment. La API sólo da el estado ACTUAL → ancla el despacho en
-// created_at del pedido (evento synth 'despachado') cuando el estado ya avanzó, para no cohortear en
-// la fecha de entrega. El estado real y el flete estimado por CP quedan en la guía.
+// remito=order_number y crea la shipment. El estado real y el flete estimado por CP quedan en la guía.
+// El alta (evento 41) la trae la propia API en `fechas[]` — hasta 073 se emitía un evento 41 sintético
+// con el created_at del pedido porque el cliente sólo leía el estado actual; eso anclaba 40 de 183
+// guías 1-2 días ANTES del despacho real (el pedido entra antes de que se registre la guía).
 // ponytail: el flete queda is_estimated=false (upsert lo marca real). Es cosmético — no afecta el
 // profit, sólo el "% estimado" del dashboard; el `Importe` real del XLSX lo pisa igual.
 export async function discoverFixy(sinceDays = 45, max = 250): Promise<number> {
@@ -48,12 +49,6 @@ export async function discoverFixy(sinceDays = 45, max = 250): Promise<number> {
       ...e, importe: fixyFreight(o, cp, prov, def),
       raw: { ...(e.raw as object ?? {}), via: "fixy-api" },
     });
-    if (e.status_raw !== "41") {
-      enriched.push({
-        courier: "fixy", tracking: e.tracking, order_ref: e.order_ref,
-        status_raw: "41", occurred_at: o.created_at, raw: { via: "fixy-api", synth: true },
-      });
-    }
   }
   return enriched.length ? upsertEvents(enriched) : 0;
 }
