@@ -53,7 +53,8 @@ try {
                    'supabase/tests/ad_review_check.sql',
                    'supabase/tests/account_status_check.sql',
                    'supabase/tests/urbano_ei_check.sql',
-                   'supabase/tests/devoluciones_viejas_check.sql']) {
+                   'supabase/tests/devoluciones_viejas_check.sql',
+                   'supabase/tests/decay_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');
