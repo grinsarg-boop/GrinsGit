@@ -15,6 +15,7 @@ export type Label = {
   file?: string;             // PDF de origen (para ubicar la etiqueta que falló)
   courier: LabelCourier;
   orden: string | null;      // COD: para cruzar con Shopify
+  venta: string | null;      // ML/Flex: id de venta o de pack (16 díg.) → cruza con /api/ml-picking
   price: number | null;      // contrareembolso (validación)
   producto: string | null;   // ML/Flex: leído de la etiqueta (único)
   unidades: number | null;   // ML/Flex: unidades del pack
@@ -51,6 +52,14 @@ function parsePage(text: string, page: number): Label {
 
   const priceRaw = text.match(/contra\s*reembolso[:\s]*\$?\s*([\d.]+)/i)?.[1] ?? null;
   const price = priceRaw ? Number(priceRaw.replace(/\./g, "")) : null;
+
+  // Id de venta (o de pack) de ML: 16 dígitos que el PDF parte como "Venta ID: 20000 17421290758"
+  // — el 20000 ES parte del id. Con esto la unidad real se pregunta a la API (/api/ml-picking) en
+  // vez de deducirla del título; el parser de abajo queda de fallback.
+  const venta = (courier === "ml" || courier === "flex")
+    ? (text.match(/(?:venta|pack)\s*(?:id)?\s*:?\s*([\d\s]{16,24})/i)?.[1]
+        ?.replace(/\D/g, "").match(/^\d{16}/)?.[0] ?? null)
+    : null;
 
   let producto: string | null = null;
   let unidades: number | null = null;
@@ -115,7 +124,33 @@ function parsePage(text: string, page: number): Label {
     // prods.length === 0 → sin producto reconocido (se marca aparte)
   }
 
-  return { page, courier, orden, price, producto, unidades, revisar };
+  return { page, courier, orden, venta, price, producto, unidades, revisar };
+}
+
+// ── Cruce con la API de ML (/api/ml-picking) ──
+// Lo que la API sabe de una venta. `unidades` sale de UNITS_PER_PACK de la publicación × quantity,
+// que es el dato del catálogo — no una lectura del título.
+export type MlVenta = {
+  producto: string | null;   // null = ninguna keyword matcheó
+  unidades: number | null;   // null = alguna publicación no declara UNITS_PER_PACK
+  mixto: boolean;            // más de un producto distinto en la venta/pack
+  error?: string;            // no se pudo consultar → vale el parser del título
+};
+
+// La API manda; el título es el fallback. Si los dos hablan y NO coinciden, nadie manda: va a
+// revisar (uno de los dos está mal y despachar de menos se paga con un reclamo).
+export function mergeVenta(l: Label, v?: MlVenta | null): Label & { difiere: boolean } {
+  if (!v || v.error) return { ...l, difiere: false };
+  if (v.mixto) return { ...l, producto: null, revisar: true, difiere: false };
+  const producto = v.producto ?? l.producto;
+  // Producto conocido pero sin unidades declaradas: sabemos qué es, no cuántos.
+  if (v.unidades == null) return { ...l, producto, revisar: true, difiere: false };
+  const difiere =
+    (!!l.producto && !!v.producto && l.producto !== v.producto) ||
+    (l.unidades != null && l.unidades !== v.unidades);
+  // Si la API resolvió limpio, pisa el `revisar` del título: justamente resuelve las multi-compra
+  // (2 unidades de un listado x3 = 6) que el parser no podía partir.
+  return { ...l, producto, unidades: v.unidades, revisar: difiere || (!v.producto && l.revisar), difiere };
 }
 
 // Desglose de paquetes por tamaño de pack: dado el N° de unidades de cada pedido de un producto,

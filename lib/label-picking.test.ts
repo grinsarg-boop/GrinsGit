@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { _parsePage, packBreakdown } from "./label-picking";
+import { _parsePage, packBreakdown, mergeVenta, type Label } from "./label-picking";
 
 describe("packBreakdown", () => {
   it("agrupa por tamaño de pack, ordenado", () => {
@@ -16,7 +16,7 @@ describe("packBreakdown", () => {
 describe("_parsePage", () => {
   it("Fixy: courier, remito y contrareembolso (cruza por orden)", () => {
     const t = "1720297 BIOLABS DESTINATARIO Andres Contrareembolso: $ 49980 BULTOS 1/1 Remito: 16934 www.fixy.com.ar";
-    expect(_parsePage(t, 1)).toEqual({ page: 1, courier: "fixy", orden: "16934", price: 49980, producto: null, unidades: null, revisar: false });
+    expect(_parsePage(t, 1)).toEqual({ page: 1, courier: "fixy", orden: "16934", venta: null, price: 49980, producto: null, unidades: null, revisar: false });
   });
   it("Urbano: Canalizador/Shipper → urbano, orden por #NNNNN", () => {
     const t = "Fecha emisión Canalizador RES Shipper: 4362-BIOLABS Destinatario Sergio Valor Contrareembolso: $58999 #16943";
@@ -144,5 +144,65 @@ describe("_parsePage", () => {
     expect(r.courier).toBe("ml");
     expect(r.revisar).toBe(true);
     expect(r.producto).toBeNull();
+  });
+});
+
+// El id que cruza contra la API de ML. El PDF lo parte como "20000 17421290758": el 20000 ES parte
+// del id, son 16 dígitos. Sin esto no hay con qué preguntar y todo cae al parser del título.
+describe("_parsePage: id de venta de ML", () => {
+  it("'Venta ID: 20000 NNN' → los 16 dígitos pegados, sin comerse lo que sigue", () => {
+    const t = "Venta ID: 20000 17421290758 1 Unidad Sabor Menta 3 Gotero Pureza Drenaje Remitente #262382468";
+    expect(_parsePage(t, 1).venta).toBe("2000017421290758");
+  });
+  it("'Pack ID: 20000 NNN' también sirve (el endpoint prueba orden y después pack)", () => {
+    const t = "Pack ID: 20000 14040615337 Recortá esta parte de la etiqueta. 1 Unidad Botella 2 Gotero Pureza Drenaje";
+    expect(_parsePage(t, 1).venta).toBe("2000014040615337");
+  });
+  it("sin espacio adentro del id", () => {
+    expect(_parsePage("Venta ID: 2000017824513396 Recortá 1 Unidad Gotero Pureza Drenaje", 1).venta).toBe("2000017824513396");
+  });
+  it("etiqueta COD: no hay id de ML", () => {
+    expect(_parsePage("CLASICO F.PAGADO REMITENTE BioLabsArg DESTINATARIO #16966 Abel", 1).venta).toBeNull();
+  });
+});
+
+// La API manda sobre el título, salvo que se contradigan: ahí no manda nadie y va a revisar.
+describe("mergeVenta", () => {
+  const base: Label = {
+    page: 1, courier: "ml", orden: null, venta: "2000017421290758",
+    price: null, producto: "Pureza", unidades: 3, revisar: false,
+  };
+  it("la API pisa lo que dijo el título cuando coinciden en producto", () => {
+    const r = mergeVenta({ ...base, unidades: 1 }, { producto: "Pureza", unidades: 2, mixto: false });
+    expect(r.unidades).toBe(2);
+    expect(r.difiere).toBe(true);   // el título decía 1 → no se estampa, se revisa
+    expect(r.revisar).toBe(true);
+  });
+  it("coinciden → se estampa, sin ruido", () => {
+    const r = mergeVenta(base, { producto: "Pureza", unidades: 3, mixto: false });
+    expect(r).toMatchObject({ producto: "Pureza", unidades: 3, revisar: false, difiere: false });
+  });
+  it("multi-compra que el título no podía partir: la API la resuelve y sale del 'revisar'", () => {
+    const l = { ...base, unidades: null, revisar: true };
+    const r = mergeVenta(l, { producto: "Pureza", unidades: 6, mixto: false }); // 2 × listado x3
+    expect(r.unidades).toBe(6);
+    expect(r.revisar).toBe(false);
+  });
+  it("API caída → vale el título tal cual (fallback)", () => {
+    const r = mergeVenta(base, { producto: null, unidades: null, mixto: false, error: "orders 500" });
+    expect(r).toMatchObject({ producto: "Pureza", unidades: 3, revisar: false, difiere: false });
+  });
+  it("sin id de venta (nunca se consultó) → vale el título", () => {
+    expect(mergeVenta(base, null)).toMatchObject({ producto: "Pureza", unidades: 3, revisar: false });
+  });
+  it("la API dice mixto → sin producto y a revisar, aunque el título viera uno solo", () => {
+    const r = mergeVenta(base, { producto: null, unidades: 4, mixto: true });
+    expect(r.producto).toBeNull();
+    expect(r.revisar).toBe(true);
+  });
+  it("publicación sin UNITS_PER_PACK → sabemos qué, no cuántos: a revisar, nunca asumir 1", () => {
+    const r = mergeVenta(base, { producto: "Pureza", unidades: null, mixto: false });
+    expect(r.revisar).toBe(true);
+    expect(r.unidades).toBe(3); // queda lo del título, pero sin código: se cuenta a mano
   });
 });

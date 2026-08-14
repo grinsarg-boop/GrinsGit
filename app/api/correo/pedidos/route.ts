@@ -1,21 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
 import { shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify";
 import { pickProducto, type ShopifyPedido } from "@/lib/correo";
-
-// El middleware saltea /api → este endpoint valida la sesión del dashboard
-// por su cuenta (misma regla que middleware.ts: user + whitelist de mails).
-async function sessionOk(req: NextRequest): Promise<boolean> {
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll: () => req.cookies.getAll(), setAll: () => {} } },
-  );
-  const { data: { user } } = await supabase.auth.getUser();
-  const allowed = (process.env.ALLOWED_EMAILS ?? "")
-    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-  return !!user && allowed.includes(user.email?.toLowerCase() ?? "");
-}
+import { sessionOk } from "@/lib/api-session";
 
 const FIELDS = "name,total_price,email,phone,shipping_address,customer,line_items";
 
