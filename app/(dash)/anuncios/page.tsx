@@ -7,7 +7,7 @@ import { adLabel, campaignLabel } from "@/lib/ad-label";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
-import { PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
+import { EYEBROW, PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 export const revalidate = 60;
@@ -179,19 +179,28 @@ export default async function Anuncios({
         <span className="text-sm tabular-nums text-muted-foreground">{rangeLabel}</span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <div className="flex flex-wrap items-center gap-1">
-          {presets.map(([label, d, h]) => (
-            <Link key={label} href={hrefWith({ desde: d, hasta: h })} aria-current={from === d && to === h ? "page" : undefined} className={chip(from === d && to === h)}>{label}</Link>
-          ))}
+      {/* Mismo control que /ventas y /analisis. Acá el único eje es el rango: el orden de las campañas
+          vive junto a su tabla, porque ordena esa tabla y no recorta la pantalla. */}
+      <div className="space-y-2 rounded-xl border bg-card p-2.5 text-sm shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={EYEBROW}>Rango</span>
+          <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+            {presets.map(([label, d, h]) => (
+              <Link key={label} href={hrefWith({ desde: d, hasta: h })}
+                    aria-current={from === d && to === h ? "page" : undefined}
+                    className={chip(from === d && to === h)}>{label}</Link>
+            ))}
+          </div>
+          <form method="get" className="inline-flex items-center gap-1.5">
+            {orden && <input type="hidden" name="orden" value={orden} />}
+            <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
+              className="rounded-md border bg-background px-2 py-1 tabular-nums outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-ring" />
+            <span aria-hidden className="text-muted-foreground">→</span>
+            <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
+              className="rounded-md border bg-background px-2 py-1 tabular-nums outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-ring" />
+            <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent motion-safe:active:scale-95">Aplicar</button>
+          </form>
         </div>
-        <form method="get" className="inline-flex items-center gap-1.5">
-          {orden && <input type="hidden" name="orden" value={orden} />}
-          <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde" className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <span className="text-muted-foreground">→</span>
-          <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta" className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent">Aplicar</button>
-        </form>
       </div>
 
       <AvisoEventos from={from} to={to} />
