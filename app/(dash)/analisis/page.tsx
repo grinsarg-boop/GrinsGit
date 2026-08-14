@@ -13,7 +13,7 @@ import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { claseSemaforo, nivel, percentil, pnlColor } from "@/lib/semaforo";
 import { tipWaterfall } from "@/lib/tips";
 import { supabaseAdmin } from "@/lib/supabase";
-import { PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
+import { EYEBROW, PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 export const revalidate = 60;
@@ -108,8 +108,17 @@ export default async function Analisis({
   // mismos totales del período anterior, para los Δ
   const pRev = sumOf(pnlPrev, "revenue"), pProfitEst = sumOf(pnlPrev, "profit_est");
   const pDesp = sumOf(pnlPrev, "despachadas"), pEnt = sumOf(pnlPrev, "entregadas");
-  const tasa = despachos ? entregas / despachos : 0;
-  const pTasa = pDesp ? pEnt / pDesp : 0;
+  // Tasa de entrega SOLO sobre COD (Urbano + Fixy). Sumando los cuatro canales, el KPI subía cuando
+  // crecía la parte de ML —que entrega ~100% porque la entrega la hace ML— y cuando crecía Correo,
+  // que es prepago y ahí "entrega" ni siquiera es la métrica. Un mes con más ML se leía como un mes
+  // que entregó mejor. Con un courier ya elegido en el filtro, las filas son las de ese courier.
+  const esCod = (r: PnlRow) => r.courier === "urbano" || r.courier === "fixy";
+  const filasTasa = courierParam ? pnl : pnl.filter(esCod);
+  const filasTasaPrev = courierParam ? pnlPrev : pnlPrev.filter(esCod);
+  const despTasa = sumOf(filasTasa, "despachadas"), entTasa = sumOf(filasTasa, "entregadas");
+  const pDespTasa = sumOf(filasTasaPrev, "despachadas"), pEntTasa = sumOf(filasTasaPrev, "entregadas");
+  const tasa = despTasa ? entTasa / despTasa : 0;
+  const pTasa = pDespTasa ? pEntTasa / pDespTasa : 0;
 
   // 1 · de lo cobrado al profit, un costo por escalón. El orden es el del P&L (§4.7 del SPEC) y la
   // identidad cierra al peso: cobrado − flete − comisiones − percepciones − costo − ads = profit_conf
@@ -232,42 +241,58 @@ export default async function Analisis({
         <span className="text-sm tabular-nums text-muted-foreground">{rangeLabel}</span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <div className="flex flex-wrap items-center gap-1">
-          {presets.map(([label, d, h]) => (
-            <Link key={label} href={hrefWith({ desde: d, hasta: h })}
-                  aria-current={from === d && to === h ? "page" : undefined} className={chip(from === d && to === h)}>{label}</Link>
-          ))}
+      {/* Mismo control que el Resumen y /ventas, con el eje propio de esta pantalla —producto— como
+          tercera fila: son cuatro recortes del mismo dato, no cuatro barras de herramientas. */}
+      <div className="space-y-2 rounded-xl border bg-card p-2.5 shadow-sm text-sm">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex items-center gap-2">
+            <span className={EYEBROW}>Canal</span>
+            <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+              {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
+                <Link key={val} href={hrefWith({ courier: val })}
+                      aria-current={(courier ?? "") === val ? "page" : undefined}
+                      className={chip((courier ?? "") === val)}>{label}</Link>
+              ))}
+            </div>
+          </div>
+
+          <span aria-hidden className="hidden h-5 w-px bg-border lg:block" />
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={EYEBROW}>Rango</span>
+            <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+              {presets.map(([label, d, h]) => (
+                <Link key={label} href={hrefWith({ desde: d, hasta: h })}
+                      aria-current={from === d && to === h ? "page" : undefined}
+                      className={chip(from === d && to === h)}>{label}</Link>
+              ))}
+            </div>
+            <form method="get" className="inline-flex items-center gap-1.5">
+              {courier && <input type="hidden" name="courier" value={courier} />}
+              {producto && <input type="hidden" name="producto" value={producto} />}
+              <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
+                className="rounded-md border bg-background px-2 py-1 tabular-nums outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-ring" />
+              <span aria-hidden className="text-muted-foreground">→</span>
+              <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
+                className="rounded-md border bg-background px-2 py-1 tabular-nums outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-ring" />
+              <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent motion-safe:active:scale-95">Aplicar</button>
+            </form>
+          </div>
         </div>
-        <form method="get" className="inline-flex items-center gap-1.5">
-          {courier && <input type="hidden" name="courier" value={courier} />}
-          {producto && <input type="hidden" name="producto" value={producto} />}
-          <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
-            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <span className="text-muted-foreground">→</span>
-          <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
-            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent">Aplicar</button>
-        </form>
-        <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
-          {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
-            <Link key={val} href={hrefWith({ courier: val })}
-                  aria-current={(courier ?? "") === val ? "page" : undefined}
-                  className={cn(PILL,
-                    (courier ?? "") === val ? PILL_ON
-                                            : PILL_OFF)}>{label}</Link>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-1">
-          <Link href={hrefWith({ producto: "" })} aria-current={!prodParam ? "page" : undefined} className={chip(!prodParam)}>
-            Todos los productos
-          </Link>
-          {prods.map((pr) => (
-            <Link key={pr.id} href={hrefWith({ producto: String(pr.id) })}
-                  aria-current={prodParam === pr.id ? "page" : undefined} className={chip(prodParam === pr.id)}>
-              {pr.name}
+
+        <div className="flex flex-wrap items-center gap-2 border-t pt-2">
+          <span className={EYEBROW}>Producto</span>
+          <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+            <Link href={hrefWith({ producto: "" })} aria-current={!prodParam ? "page" : undefined} className={chip(!prodParam)}>
+              Todos
             </Link>
-          ))}
+            {prods.map((pr) => (
+              <Link key={pr.id} href={hrefWith({ producto: String(pr.id) })}
+                    aria-current={prodParam === pr.id ? "page" : undefined} className={chip(prodParam === pr.id)}>
+                {pr.name}
+              </Link>
+            ))}
+          </div>
           {prodParam && (
             <Link href={subHref(prodParam)}
                   className="font-medium text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">
@@ -296,7 +321,12 @@ export default async function Analisis({
               delta: <Delta actual={profitEst} previo={pProfitEst} />, pie: `confirmado ${fmtMoney(profitConf)}` },
             { label: "Cobrado", value: fmtMoney(revenue), delta: <Delta actual={revenue} previo={pRev} /> },
             { label: "Despachos", value: despachos.toLocaleString("es-AR"), delta: <Delta actual={despachos} previo={pDesp} tipo="num" /> },
-            { label: "Tasa de entrega", value: fmtPct(tasa), delta: <Delta actual={tasa} previo={pTasa} tipo="pct" /> },
+            { label: courierParam ? "Tasa de entrega" : "Tasa de entrega COD",
+              value: fmtPct(tasa),
+              tip: courierParam ? undefined
+                : "Solo Urbano + Fixy, que son los canales donde la entrega es nuestra. ML queda afuera porque la entrega la hace ML y cuenta ~100%, y Correo porque es prepago —ahí la métrica es la tasa de confirmación—. Mezclados, el número subía cuando crecía la parte de ML sin que la operación hubiera mejorado.",
+              delta: <Delta actual={tasa} previo={pTasa} tipo="pct" />,
+              pie: courierParam ? undefined : `${despTasa.toLocaleString("es-AR")} guías COD` },
           ]} />
           {/* F1-12: los cuatro KPIs de arriba son los drivers, pero sueltos no dicen cuánto aportó
               cada uno. Acá se multiplican y se reparte el cambio de profit entre ellos. */}

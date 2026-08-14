@@ -87,10 +87,19 @@ export default async function AnalisisProducto({ params, searchParams }: {
   const percep = sumOf(rows, "percepciones"), costo = sumOf(rows, "costo_producto"), ads = sumOf(rows, "ads");
   const profitConf = sumOf(rows, "profit_conf"), profitEst = sumOf(rows, "profit_est");
   const despachos = sumOf(rows, "despachadas"), entregas = sumOf(rows, "entregadas");
-  const tasa = despachos ? entregas / despachos : 0;
   const pRev = sumOf(prev, "revenue"), pProfitEst = sumOf(prev, "profit_est");
   const pDesp = sumOf(prev, "despachadas"), pEnt = sumOf(prev, "entregadas"), pAds = sumOf(prev, "ads");
-  const pTasa = pDesp ? pEnt / pDesp : 0;
+  // La entrega se mide solo sobre COD (Urbano + Fixy). Mezclando los cuatro canales, un producto que
+  // vende fuerte en ML se leía como un producto que entrega bien: ML cuenta ~100% porque la entrega
+  // la hace ML, y Correo es prepago. El sesgo es peor acá que en el panel general, porque el mix de
+  // canal cambia MUCHO entre productos: dos productos con la misma operación se comparaban mal.
+  const esCod = (r: PnlRow) => r.courier === "urbano" || r.courier === "fixy";
+  const filasTasa = courierParam ? rows : rows.filter(esCod);
+  const filasTasaPrev = courierParam ? prev : prev.filter(esCod);
+  const despTasa = sumOf(filasTasa, "despachadas");
+  const pDespTasa = sumOf(filasTasaPrev, "despachadas");
+  const tasa = despTasa ? sumOf(filasTasa, "entregadas") / despTasa : 0;
+  const pTasa = pDespTasa ? sumOf(filasTasaPrev, "entregadas") / pDespTasa : 0;
   const cpa = despachos ? ads / despachos : 0;
   const prevCpa = pDesp ? pAds / pDesp : 0;
   const ref = cpaObj[prod.name];
@@ -248,7 +257,7 @@ export default async function AnalisisProducto({ params, searchParams }: {
               delta: <Delta actual={profitEst} previo={pProfitEst} />, pie: `confirmado ${fmtMoney(profitConf)}` },
             { label: "Cobrado", value: fmtMoney(revenue), delta: <Delta actual={revenue} previo={pRev} /> },
             { label: "Despachos", value: despachos.toLocaleString("es-AR"), delta: <Delta actual={despachos} previo={pDesp} tipo="num" />,
-              pie: <>entrega {fmtPct(tasa)} <Delta actual={tasa} previo={pTasa} tipo="pct" className="ml-1" /></> },
+              pie: <>entrega{courierParam ? "" : " COD"} {fmtPct(tasa)} <Delta actual={tasa} previo={pTasa} tipo="pct" className="ml-1" /></> },
             { label: "CPA (ads ÷ despachos)", value: cpa ? fmtMoney(cpa) : "—",
               color: cpaEstado === "ok" ? "text-emerald-600 dark:text-emerald-400"
                    : cpaEstado === "vig" ? "text-amber-600 dark:text-amber-500"

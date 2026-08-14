@@ -13,7 +13,7 @@ import { SELECT_EVENTOS, type Evento } from "@/lib/eventos";
 import { AvisoEventos } from "@/components/aviso-eventos";
 import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
-import { PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
+import { EYEBROW, PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 export const revalidate = 60;
@@ -73,11 +73,20 @@ export default async function Tendencias({
     return { from: daysAgoIso(7 * (i + 1)), to: daysAgoIso(7 * i + 1) };
   });
 
-  const [{ data: sdRaw }, { data: evRaw }, ...weekly] = await Promise.all([
+  // Las dos series COD van aparte para poder dibujar la tasa de entrega sin ML ni Correo (ver más
+  // abajo). Sin filtro de courier son dos llamadas extra; con filtro puesto no se piden.
+  const codDirecto = courierParam === "urbano" || courierParam === "fixy";
+  const pedidosCod = courierParam ? [] : (["urbano", "fixy"] as const)
+    .map((c) => db.rpc("sales_days", { p_from: pFrom, p_courier: c }));
+
+  const [{ data: sdRaw }, { data: evRaw }, ...resto] = await Promise.all([
     db.rpc("sales_days", { p_from: pFrom, p_courier: courierParam }),
     db.from("eventos").select(SELECT_EVENTOS).lte("fecha", today),
     ...semanas.map((w) => db.rpc("sales_by_product", { p_from: w.from, p_to: w.to, p_courier: courierParam })),
+    ...pedidosCod,
   ]);
+  const weekly = resto.slice(0, semanas.length);
+  const sdCod = resto.slice(semanas.length) as { data: SalesDay[] | null }[];
   // Blackouts anotados (065): las curvas los dibujan como marca, no como performance.
   const eventos = (evRaw ?? []) as Evento[];
 
@@ -130,9 +139,25 @@ export default async function Tendencias({
   // Tasa por día de VENTA, no de despacho: un día de despacho flaco (domingo con 2 guías) daba 0% o
   // 100% por puro n chico y arrastraba la media. El día de venta siempre tiene volumen sano (pedido del
   // dueño, 20/07: "no hay día en que se hayan generado pedidos de los cuales no se entregó ninguno").
-  const sTasa: PuntoT[] = rango
-    .filter((d) => d.despachadas > 0)
-    .map((d) => ({ x: d.date, v: d.entregadas / d.despachadas }));
+  // …y SOLO sobre COD. Sumando los cuatro canales, esta curva subía cuando crecía la parte de ML
+  // (entrega ~100%, la hace ML) o de Correo (prepago) sin que Urbano ni Fixy hubieran mejorado un
+  // punto: una tendencia de mix leyéndose como una tendencia de operación. Es el peor lugar donde
+  // podía estar el blend, porque acá lo que se lee es justamente la PENDIENTE.
+  const tasaPorDia = new Map<string, { desp: number; ent: number }>();
+  for (const { data } of (codDirecto || !sdCod.length ? [{ data: null }] : sdCod)) {
+    for (const r of (data ?? []) as SalesDay[]) {
+      const a = tasaPorDia.get(r.sale_date) ?? { desp: 0, ent: 0 };
+      a.desp += r.despachadas ?? 0;
+      a.ent += r.entregadas ?? 0;
+      tasaPorDia.set(r.sale_date, a);
+    }
+  }
+  const sTasa: PuntoT[] = tasaPorDia.size
+    ? [...tasaPorDia.entries()]
+        .filter(([x, a]) => a.desp > 0 && x >= rangoFrom && x < today)
+        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+        .map(([x, a]) => ({ x, v: a.ent / a.desp }))
+    : rango.filter((d) => d.despachadas > 0).map((d) => ({ x: d.date, v: d.entregadas / d.despachadas }));
 
   const sombraDe = (pts: PuntoT[], horizonte: number) => pts.filter((p) => p.x > daysAgoIso(horizonte)).length;
 
@@ -199,9 +224,12 @@ export default async function Tendencias({
       tip: "Ads asignada del día ÷ ventas generadas ese día (misma fórmula que la tabla diaria de /ventas). El último día queda sombreado: la pauta de Meta termina de sincronizar unas horas después del cierre, y ese hueco se leería como un CPA buenísimo que no es. La pauta sin cohorte no entra: es una corrección whole-business por período, no de un día puntual. Ojo en 'Todos': si cambia la mezcla de productos, el CPA global se mueve sin que ninguna campaña haya cambiado — la referencia por producto vive en /analisis.",
     },
     {
-      titulo: "Tasa de entrega por día de venta", kind: "pct", pts: sTasa, sombra: sombraDe(sTasa, 23), bueno: "sube",
+      titulo: courierParam ? "Tasa de entrega por día de venta" : "Tasa de entrega COD por día de venta",
+      kind: "pct", pts: sTasa, sombra: sombraDe(sTasa, 23), bueno: "sube",
       trazo: "stroke-violet-500", punto: "bg-violet-500", deltaTipo: "pct",
-      tip: "De las ventas generadas cada día que llegaron a despacharse, cuántas se entregaron. Se cohortea por día de VENTA a propósito: por día de despacho, un domingo con 2 guías daba 0% o 100% de puro ruido y arrastraba la media. Madura en ~3 semanas (entrega 21 días + 1-2 de despacho): toda la franja sombreada va a subir sola — si la curva se aplana también fuera de la franja, ahí sí hay problema (o sync congelado). Ojo en 'Todos': si crece la parte de ML o Correo, la tasa global sube sin que Urbano haya mejorado — filtrá por canal para aislar.",
+      tip: `De las ventas generadas cada día que llegaron a despacharse, cuántas se entregaron. Se cohortea por día de VENTA a propósito: por día de despacho, un domingo con 2 guías daba 0% o 100% de puro ruido y arrastraba la media. Madura en ~3 semanas (entrega 21 días + 1-2 de despacho): toda la franja sombreada va a subir sola — si la curva se aplana también fuera de la franja, ahí sí hay problema (o sync congelado).${
+        courierParam ? "" : " Solo Urbano + Fixy: ML y Correo quedan afuera porque su entrega no es nuestra (ML entrega ~100%) y en Correo la métrica es la confirmación, no la entrega. Mezclados, la curva subía cuando crecía la parte de esos canales sin que la operación hubiera mejorado — que es justo lo que una curva de tendencia no puede hacer."
+      }`,
     },
     {
       titulo: "ROAS estimado", kind: "ratio", pts: sRoas, sombra: sombraDe(sRoas, 10), bueno: "sube",
@@ -243,22 +271,40 @@ export default async function Tendencias({
       </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
-          {[["30", "30 días"], ["60", "60 días"], ["90", "90 días"], ["180", "180 días"]].map(([val, label]) => (
-            <Link key={val} href={hrefWith({ dias: val })}
-                  aria-current={nDias === Number(val) ? "page" : undefined} className={chip(nDias === Number(val))}>{label}</Link>
-          ))}
+      {/* Mismo control que el resto del panel. Acá el eje temporal es una ventana fija y no un rango
+          libre —las curvas necesitan largo parejo para que la pendiente signifique algo—, así que el
+          grupo se llama Ventana y no Rango. */}
+      <div className="rounded-xl border bg-card p-2.5 shadow-sm text-sm">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex items-center gap-2">
+            <span className={EYEBROW}>Canal</span>
+            <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+              {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
+                <Link key={val} href={hrefWith({ courier: val })}
+                      aria-current={(courier ?? "") === val ? "page" : undefined}
+                      className={chip((courier ?? "") === val)}>{label}</Link>
+              ))}
+            </div>
+          </div>
+
+          <span aria-hidden className="hidden h-5 w-px bg-border lg:block" />
+
+          <div className="flex items-center gap-2">
+            <span className={EYEBROW}>Ventana</span>
+            <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+              {[["30", "30 días"], ["60", "60 días"], ["90", "90 días"], ["180", "180 días"]].map(([val, label]) => (
+                <Link key={val} href={hrefWith({ dias: val })}
+                      aria-current={nDias === Number(val) ? "page" : undefined}
+                      className={chip(nDias === Number(val))}>{label}</Link>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
-          {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
-            <Link key={val} href={hrefWith({ courier: val })}
-                  aria-current={(courier ?? "") === val ? "page" : undefined} className={chip((courier ?? "") === val)}>{label}</Link>
-          ))}
+
+        <div className="mt-2 space-y-1 empty:hidden">
+          <AvisoEventos from={rangoFrom} to={today} />
         </div>
       </div>
-
-      <AvisoEventos from={rangoFrom} to={today} />
 
       {!sd.length ? (
         <Card><CardContent className="pt-5 text-sm text-muted-foreground">Sin datos todavía.</CardContent></Card>

@@ -14,7 +14,7 @@ import { claseSemaforo, nivel, percentil, pnlColor } from "@/lib/semaforo";
 import { SELECT_EVENTOS, type Evento } from "@/lib/eventos";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
-import { PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
+import { EYEBROW, PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { TIP_ADS_ML, TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO, TIP_PERCEP } from "@/lib/tips";
 
@@ -232,69 +232,64 @@ export default async function Ventas({
       </div>
       </div>
 
-      <AvisoEventos from={from} to={to} />
+      {/* Un solo control: qué recorte estás mirando. Mismo orden y mismo cuerpo que el Resumen —
+          canal · rango · ver— para que cambiar de pantalla no obligue a buscar los filtros de nuevo. */}
+      <div className="rounded-xl border bg-card p-2.5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          <div className="flex items-center gap-2">
+            <span className={EYEBROW}>Canal</span>
+            <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+              {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
+                <Link key={val} href={hrefWith({ courier: val })}
+                      aria-current={(courier ?? "") === val ? "page" : undefined}
+                      className={cn(PILL, (courier ?? "") === val ? PILL_ON : PILL_OFF)}>
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
-          {presets.map(([label, d, h]) => {
-            const active = from === d && to === h;
-            return (
-              <Link
-                key={label}
-                href={hrefWith({ desde: d, hasta: h })}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  PILL,
-                  active ? PILL_ON : PILL_OFF,
-                )}
-              >
-                {label}
-              </Link>
-            );
-          })}
-        </div>
-        <form method="get" className="inline-flex items-center gap-1.5">
-          {courier && <input type="hidden" name="courier" value={courier} />}
-          {vista === "meses" && <input type="hidden" name="v" value="meses" />}
-          <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
-            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <span className="text-muted-foreground">→</span>
-          <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
-            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent">Aplicar</button>
-        </form>
-      </div>
+          <span aria-hidden className="hidden h-5 w-px bg-border lg:block" />
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
-          {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
-            <Link
-              key={val}
-              href={hrefWith({ courier: val })}
-              aria-current={(courier ?? "") === val ? "page" : undefined}
-              className={cn(
-                PILL,
-                (courier ?? "") === val ? PILL_ON : PILL_OFF,
-              )}
-            >
-              {label}
-            </Link>
-          ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={EYEBROW}>Rango</span>
+            <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+              {presets.map(([label, d, h]) => (
+                <Link key={label} href={hrefWith({ desde: d, hasta: h })}
+                      aria-current={from === d && to === h ? "page" : undefined}
+                      className={cn(PILL, from === d && to === h ? PILL_ON : PILL_OFF)}>
+                  {label}
+                </Link>
+              ))}
+            </div>
+            <form method="get" className="inline-flex items-center gap-1.5">
+              {courier && <input type="hidden" name="courier" value={courier} />}
+              {vista === "meses" && <input type="hidden" name="v" value="meses" />}
+              <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
+                className="rounded-md border bg-background px-2 py-1 tabular-nums outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-ring" />
+              <span aria-hidden className="text-muted-foreground">→</span>
+              <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
+                className="rounded-md border bg-background px-2 py-1 tabular-nums outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-ring" />
+              <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent motion-safe:active:scale-95">Aplicar</button>
+            </form>
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            <span className={EYEBROW}>Ver</span>
+            <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
+              {[["dias", "Días"], ["meses", "Meses"]].map(([val, label]) => (
+                <Link key={val} href={hrefWith({ v: val })}
+                      aria-current={vista === val ? "page" : undefined}
+                      className={cn(PILL, vista === val ? PILL_ON : PILL_OFF)}>
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
-          {[["dias", "Días"], ["meses", "Meses"]].map(([val, label]) => (
-            <Link
-              key={val}
-              href={hrefWith({ v: val })}
-              aria-current={vista === val ? "page" : undefined}
-              className={cn(
-                PILL,
-                vista === val ? PILL_ON : PILL_OFF,
-              )}
-            >
-              {label}
-            </Link>
-          ))}
+
+        <div className="mt-2 space-y-1 empty:hidden">
+          <AvisoEventos from={from} to={to} />
         </div>
       </div>
 
