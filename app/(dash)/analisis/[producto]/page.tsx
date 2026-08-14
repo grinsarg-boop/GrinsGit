@@ -14,6 +14,7 @@ import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { tipWaterfall } from "@/lib/tips";
 import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
+import { PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 export const revalidate = 60;
@@ -178,9 +179,9 @@ export default async function AnalisisProducto({ params, searchParams }: {
   ];
 
   const chip = (active: boolean) => cn(
-    "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-    active ? "bg-foreground text-background shadow-sm hover:shadow"
-           : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+    PILL,
+    active ? PILL_ON
+           : PILL_OFF,
   );
 
   return (
@@ -188,7 +189,7 @@ export default async function AnalisisProducto({ params, searchParams }: {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <Link href={`/analisis${qs()}`} className="text-sm text-muted-foreground hover:text-foreground">← Análisis</Link>
-          <h1 className="text-xl font-semibold">{prod.name}</h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">{prod.name}</h1>
         </div>
         <span className="text-sm tabular-nums text-muted-foreground">{rangeLabel}</span>
       </div>
@@ -213,9 +214,9 @@ export default async function AnalisisProducto({ params, searchParams }: {
           {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
             <Link key={val} href={`/analisis/${id}${qs({ courier: val })}`}
                   aria-current={(courier ?? "") === val ? "page" : undefined}
-                  className={cn("rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-                    (courier ?? "") === val ? "bg-foreground text-background shadow-sm hover:shadow"
-                                            : "text-muted-foreground hover:bg-background/70 hover:text-foreground")}>{label}</Link>
+                  className={cn(PILL,
+                    (courier ?? "") === val ? PILL_ON
+                                            : PILL_OFF)}>{label}</Link>
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-1">

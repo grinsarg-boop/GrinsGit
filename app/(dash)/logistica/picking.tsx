@@ -118,7 +118,7 @@ export function Picking() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Picking del día</h1>
+        <h1 className="font-display text-2xl font-bold tracking-tight">Picking del día</h1>
         <p className="max-w-[70ch] text-sm text-muted-foreground">
           Subí los PDF de etiquetas de cualquier courier (Correo, Fixy, Urbano). Lee el N° de orden de
           cada etiqueta, lo cruza con Shopify y te dice <b className="text-foreground">cuántas unidades

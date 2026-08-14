@@ -86,7 +86,7 @@ export default async function Stock() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Stock</h1>
+        <h1 className="font-display text-2xl font-bold tracking-tight">Stock</h1>
         <p className="text-sm text-muted-foreground">
           Inventario de producción en vivo desde la app Stock Cosmética. Las compras se cargan UNA
           vez acá: suman stock, actualizan el costo del insumo y crean solas el egreso Proveedor en

@@ -112,7 +112,7 @@ export default async function ConfigPage() {
   return (
     <main className="space-y-8">
       <div>
-        <h1 className="text-xl font-semibold">Configuración</h1>
+        <h1 className="font-display text-2xl font-bold tracking-tight">Configuración</h1>
         <p className="max-w-[70ch] text-sm text-muted-foreground">
           Variables que alimentan el P&amp;L. Editar un costo o parámetro <b className="text-foreground">recalcula el P&amp;L</b> (últimos {RECOMPUTE_DAYS} días) y pisa los valores actuales. Los fletes Fixy solo afectan estimaciones nuevas.
         </p>

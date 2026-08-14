@@ -1,16 +1,18 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo, IBM_Plex_Mono, Instrument_Sans } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+// Tres roles, tres caras. Geist (el default de Next) hacía los tres y por eso el panel se leía
+// como un starter: mismo gris, mismo ancho, misma voz para un título, una cifra de plata y un
+// número de guía.
+//   display  — Archivo variable, con el eje de ANCHO abierto: las cifras de plata van expandidas
+//              (wdth 110). Un número ancho ocupa lugar y se lee como cifra, no como dato suelto.
+//   sans     — Instrument Sans para leer: más angosta que Geist, entra mejor en 11 columnas.
+//   mono     — IBM Plex Mono solo para códigos (tracking, keys de config): ahí el ancho fijo es
+//              funcional, se comparan carácter por carácter.
+const display = Archivo({ variable: "--font-display-face", subsets: ["latin"], axes: ["wdth"] });
+const sans = Instrument_Sans({ variable: "--font-sans-ui", subsets: ["latin"] });
+const mono = IBM_Plex_Mono({ variable: "--font-code", subsets: ["latin"], weight: ["400", "500"] });
 
 export const metadata: Metadata = {
   title: "BioLabs Finanzas",
@@ -26,7 +28,7 @@ export default function RootLayout({
     <html
       lang="es"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${display.variable} ${sans.variable} ${mono.variable} h-full antialiased`}
     >
       <head>
         {/* Aplica el tema ANTES de pintar (sin flash): localStorage o preferencia del SO. */}

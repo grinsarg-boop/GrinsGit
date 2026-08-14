@@ -8,8 +8,10 @@ import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { breakEven } from "@/lib/breakeven";
 import { claseSemaforo, nivel, percentil, pnlColor } from "@/lib/semaforo";
 import { AvisoEventos } from "@/components/aviso-eventos";
+import { CintaCohortes } from "@/components/cinta-cohortes";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
+import { EYEBROW, PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { TIP_ADS_ML, TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO, TIP_PERCEP } from "@/lib/tips";
 
@@ -36,6 +38,9 @@ const monthLabel = (ym: string) => { const [y, m] = ym.split("-"); return `${MES
 const COURIER_LABEL: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML" };
 // >3 días sin guías nuevas = feo (urbano saltea domingos, así que ≤1 ok · 2-3 ámbar · >3 rojo).
 const STALE_DAYS = 3;
+
+// El vocabulario visual (EYEBROW, PILL…) vive en lib/ui.ts; las versalitas de los encabezados de
+// tabla ya las pone el primitivo TableHead, así que acá no queda nada que declarar.
 
 export default async function Resumen({
   searchParams,
@@ -91,6 +96,32 @@ export default async function Resumen({
     for (const r of (pr ?? []) as { courier: string; p_delivery: number }[]) priorByCourier.set(r.courier, Number(r.p_delivery));
   }
 
+  // Tasa de entrega COD (Urbano + Fixy), que es la única que describe una operación de entrega.
+  // En la vista "Todos" el promedio se calculaba sobre los cuatro canales y engañaba: ML entrega
+  // ~100% porque la entrega la hace ML, y Correo es prepago —ahí "entrega" ni siquiera es la
+  // pregunta, es tasa de confirmación—. El blend subía por dos canales que no se pueden empujar y
+  // tapaba justo el número sobre el que sí se opera.
+  // Se guardan desglosadas y no sumadas: Urbano y Fixy entregan distinto —y se rutea entre ellos—,
+  // así que el combinado sirve de titular pero la decisión se toma mirando los dos por separado.
+  const COD = ["urbano", "fixy"] as const;
+  let codPorCourier: { courier: string; despachadas: number; proyectadas: number }[] = [];
+  if (!courierParam) {
+    const res = await Promise.all(
+      COD.map((c) => db.rpc("dashboard_days", { p_from: from, p_courier: c })),
+    );
+    codPorCourier = COD.map((courier, i) => {
+      const filas = ((res[i].data ?? []) as Row[]).filter((r) => r.dispatch_date >= from && r.dispatch_date <= to);
+      return {
+        courier,
+        despachadas: filas.reduce((s, r) => s + r.despachadas, 0),
+        proyectadas: filas.reduce((s, r) => s + Number(r.proyectadas), 0),
+      };
+    });
+  }
+  const codRango = codPorCourier.reduce(
+    (a, c) => ({ despachadas: a.despachadas + c.despachadas, proyectadas: a.proyectadas + c.proyectadas }),
+    { despachadas: 0, proyectadas: 0 },
+  );
   // Flete Flex de ML sin cargar, por semana (solo en la vista ML o Todos). Las órdenes Flex
   // (self_service) con ship_cost null cuentan flete $0 hasta subir el xlsx de Santiago de esa semana.
   let flexPend: { semana: string; n: number }[] = [];
@@ -182,6 +213,10 @@ export default async function Resumen({
     acc.ads += d.ads; acc.adsMl += d.adsMl; acc.adsSinCohorte += d.adsSinCohorte;
     return acc;
   }, { despachadas: 0, proyectadas: 0, revenueEst: 0, profitConf: 0, profitEst: 0, ads: 0, adsMl: 0, adsSinCohorte: 0 });
+  // Con un courier elegido la tasa del rango ya es la de ese courier; en "Todos", la de COD.
+  const tasaBase = courierParam ? rango : codRango;
+  const tasaProy = tasaBase.despachadas ? tasaBase.proyectadas / tasaBase.despachadas : null;
+
   // Sin cohorte se resta del profit y suma al denominador del ROAS (§4.6, #11).
   const rProfitEst = rango.profitEst - rango.adsSinCohorte;
   const rProfitConf = rango.profitConf - rango.adsSinCohorte;
@@ -203,222 +238,267 @@ export default async function Resumen({
   const cortesRoas: [number, number] = [be.mer, p75Roas];
 
   return (
-    <main className="space-y-6">
-      <div className="space-y-1">
-      {/* El eje temporal en el título: este panel cohortea por día de DESPACHO y /ventas por día de
-          VENTA. Vivía solo en tooltips, y confundir los dos ejes es el error caro de leer el panel. */}
-      <h1 className="text-xl font-semibold">
-        Resumen <span className="font-normal text-muted-foreground">· por día de <span className="font-semibold text-foreground">despacho</span></span>
-      </h1>
-      <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-        <span><b className="text-foreground">Profit estimado</b> — lo que vas a ganar con lo ya despachado.</span>
-        <Tip
-          label="Cómo se calcula el profit estimado"
-          tip={
-            courier === "correo"
-              ? "En Correo son cuotas 3 sin interés, prepago: lo confirmado ya está cobrado y no se anula, así que no proyectamos tasa de entrega. La métrica es la tasa de confirmación (pagados / generados) y el estimado es igual al confirmado."
-              : courier === "ml"
-              ? "En MercadoLibre la venta ya está cobrada y la entrega la hace ML: no proyectamos nada, el estimado es igual al confirmado. La comisión (sale_fee) y el flete son los reales de cada orden; los envíos Flex sin liquidación cargada todavía cuentan flete $0 (ver % de flete estimado)."
-              : "Es el confirmado (profit ya cerrado, neto de envío, comisiones, producto y Ads) más una proyección de las guías que siguen en la calle, usando tu tasa de entrega histórica por zona y producto. Por eso el número puede moverse hasta que todas las guías cierren."
-          }
-        />
-      </div>
-      </div>
-
-      {stale.length > 0 && (
-        <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">
-          ⚠️ Feed de despachos frío — {stale.map((f) => `${COURIER_LABEL[f.courier]} ${f.last ? `hace ${daysSince(f.last)} días` : "sin datos"}`).join(" · ")}. Puede estar cortado; revisá el sync.
+    <main className="space-y-5">
+      {/* Título y estado del feed en la MISMA línea. Eran dos bloques apilados y la frescura —que es
+          un chequeo de un vistazo, no una lectura— se comía el segundo lugar de la página. */}
+      <header className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3">
+        <div className="space-y-1">
+          {/* El eje temporal en el título: este panel cohortea por día de DESPACHO y /ventas por día de
+              VENTA. Vivía solo en tooltips, y confundir los dos ejes es el error caro de leer el panel. */}
+          <h1 className="font-display text-2xl font-bold tracking-tight">
+            Resumen <span className="font-medium text-muted-foreground">· por día de <span className="text-foreground">despacho</span></span>
+          </h1>
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <span><b className="text-foreground">Profit estimado</b> — lo que vas a ganar con lo ya despachado.</span>
+            <Tip
+              label="Cómo se calcula el profit estimado"
+              tip={
+                courier === "correo"
+                  ? "En Correo son cuotas 3 sin interés, prepago: lo confirmado ya está cobrado y no se anula, así que no proyectamos tasa de entrega. La métrica es la tasa de confirmación (pagados / generados) y el estimado es igual al confirmado."
+                  : courier === "ml"
+                  ? "En MercadoLibre la venta ya está cobrada y la entrega la hace ML: no proyectamos nada, el estimado es igual al confirmado. La comisión (sale_fee) y el flete son los reales de cada orden; los envíos Flex sin liquidación cargada todavía cuentan flete $0 (ver % de flete estimado)."
+                  : "Es el confirmado (profit ya cerrado, neto de envío, comisiones, producto y Ads) más una proyección de las guías que siguen en la calle, usando tu tasa de entrega histórica por zona y producto. Por eso el número puede moverse hasta que todas las guías cierren."
+              }
+            />
+          </div>
         </div>
-      )}
 
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
-        <span className="inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-          Frescura del feed
-          <Tip label="Qué es la frescura del feed" tip="Fecha de la última guía que entró por cada courier. Si un courier quedó viejo, puede faltar sincronizar." />
-        </span>
-        {freshness.map((f) => {
-          const n = f.last ? daysSince(f.last) : Infinity;
-          const color = n <= 1 ? "text-emerald-600 dark:text-emerald-400" : n <= STALE_DAYS ? "text-amber-600 dark:text-amber-500" : "text-destructive";
-          const rel = !f.last ? "sin datos" : n === 0 ? "hoy" : n === 1 ? "ayer" : `hace ${n} días`;
-          return (
-            <span key={f.courier} className={color}>
-              {COURIER_LABEL[f.courier]}: última guía <span className="tabular-nums">{f.last ? fmtDate(f.last) : "—"}</span> <span className="text-xs opacity-80">({rel})</span>
-            </span>
-          );
-        })}
-      </div>
-
-      <AvisoEventos from={from} to={to} />
-
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
-          {presets.map(([label, d, h]) => {
-            const active = from === d && to === h;
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+            Feed
+            <Tip label="Qué es la frescura del feed" tip="Fecha de la última guía que entró por cada courier. Si un courier quedó viejo, puede faltar sincronizar." />
+          </span>
+          {freshness.map((f) => {
+            const n = f.last ? daysSince(f.last) : Infinity;
+            const tono = n <= 1
+              ? "border-emerald-600/30 text-emerald-700 dark:border-emerald-400/30 dark:text-emerald-400"
+              : n <= STALE_DAYS
+              ? "border-amber-600/30 text-amber-700 dark:border-amber-500/30 dark:text-amber-500"
+              : "border-destructive/40 text-destructive";
+            const rel = !f.last ? "sin datos" : n === 0 ? "hoy" : n === 1 ? "ayer" : `hace ${n} días`;
             return (
-              <Link
-                key={label}
-                href={hrefWith({ desde: d, hasta: h })}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-                  active ? "bg-foreground text-background shadow-sm hover:shadow" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
-                )}
-              >
-                {label}
-              </Link>
+              <span key={f.courier}
+                    title={f.last ? `Última guía: ${fmtDate(f.last)}` : "Sin guías registradas"}
+                    className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", tono)}>
+                <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current" />
+                {COURIER_LABEL[f.courier]} <span className="tabular-nums opacity-75">{rel}</span>
+              </span>
             );
           })}
         </div>
-        <form method="get" className="inline-flex items-center gap-1.5">
-          {courier && <input type="hidden" name="courier" value={courier} />}
-          {vista === "meses" && <input type="hidden" name="v" value="meses" />}
-          <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
-            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <span className="text-muted-foreground">→</span>
-          <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
-            className="rounded-md border bg-background px-2 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-          <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent">Aplicar</button>
-        </form>
-      </div>
+      </header>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
-          {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
-            <Link
-              key={val}
-              href={hrefWith({ courier: val })}
-              aria-current={(courier ?? "") === val ? "page" : undefined}
-              className={cn(
-                "rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-                (courier ?? "") === val
-                  ? "bg-foreground text-background shadow-sm hover:shadow"
-                  : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
-              )}
-            >
-              {label}
-            </Link>
-          ))}
+      {stale.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">
+          <span aria-hidden>⚠</span>
+          Feed de despachos frío — {stale.map((f) => `${COURIER_LABEL[f.courier]} ${f.last ? `hace ${daysSince(f.last)} días` : "sin datos"}`).join(" · ")}. Puede estar cortado.
+          <Link href="/sync" className="underline underline-offset-2">Revisar el sync</Link>
         </div>
-        <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
-          {[["dias", "Días"], ["meses", "Meses"]].map(([val, label]) => (
-            <Link
-              key={val}
-              href={hrefWith({ v: val })}
-              aria-current={vista === val ? "page" : undefined}
-              className={cn(
-                "rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-                vista === val
-                  ? "bg-foreground text-background shadow-sm hover:shadow"
-                  : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
-              )}
-            >
-              {label}
-            </Link>
-          ))}
-        </div>
-      </div>
-
-      {flexPend.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          <span className="font-medium text-amber-700 dark:text-amber-500">⚑ Flete Flex de ML sin cargar</span> — {flexPend.reduce((s, w) => s + w.n, 0)} órdenes cuentan flete $0 hasta subir la liquidación de Santiago (en <Link href="/sync" className="underline">Sync</Link>). Semanas: {flexPend.map((w) => `${fmtDate(w.semana)} (${w.n})`).join(" · ")}.
-        </p>
       )}
 
-      <Card>
-        <CardContent className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 pt-5">
-          <div>
-            <div className="mb-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
-              Profit confirmado · <span className="tabular-nums normal-case">{rangeLabel}</span>
+      {/* Los tres filtros en un solo control. Vivían en tres filas separadas —presets, canal, vista—
+          que se leían como tres cosas distintas cuando son la misma: qué recorte estás mirando. */}
+      <div className="rounded-xl border bg-card p-2.5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          <div className="flex items-center gap-2">
+            <span className={EYEBROW}>Canal</span>
+            <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+              {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
+                <Link key={val} href={hrefWith({ courier: val })}
+                      aria-current={(courier ?? "") === val ? "page" : undefined}
+                      className={cn(PILL, (courier ?? "") === val ? PILL_ON : PILL_OFF)}>
+                  {label}
+                </Link>
+              ))}
             </div>
-            {/* El hero es el CONFIRMADO, no el estimado: el número grande y de color tiene que ser
-                plata que existe. El estimado baja a la línea de apoyo, con lo que falta madurar. */}
-            <div className={cn("text-3xl font-bold tabular-nums tracking-tight", rango.despachadas ? pnlColor(rProfitEst, rProfitConf) : "text-muted-foreground")}>
-              {rango.despachadas ? fmtMoney(rProfitConf) : "—"}
-            </div>
-            {rango.despachadas ? (
-              <div className="pt-1 text-sm text-muted-foreground">
-                estimado <span className="tabular-nums">{fmtMoney(rProfitEst)}</span>
-                <span className="mx-1.5">·</span>
-                <span className="font-medium tabular-nums text-amber-600 dark:text-amber-500">{fmtMoney(rEnCamino)} en camino</span>
-              </div>
-            ) : (
-              <div className="pt-1 text-sm text-muted-foreground">Sin despachos en el rango</div>
-            )}
           </div>
-          <div className="flex gap-8">
-            <div>
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Despachos</div>
-              <div className="text-base font-semibold tabular-nums">{rango.despachadas}</div>
+
+          <span aria-hidden className="hidden h-5 w-px bg-border lg:block" />
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={EYEBROW}>Rango</span>
+            <div className="inline-flex flex-wrap gap-0.5 rounded-lg bg-muted p-0.5">
+              {presets.map(([label, d, h]) => (
+                <Link key={label} href={hrefWith({ desde: d, hasta: h })}
+                      aria-current={from === d && to === h ? "page" : undefined}
+                      className={cn(PILL, from === d && to === h ? PILL_ON : PILL_OFF)}>
+                  {label}
+                </Link>
+              ))}
             </div>
+            <form method="get" className="inline-flex items-center gap-1.5">
+              {courier && <input type="hidden" name="courier" value={courier} />}
+              {vista === "meses" && <input type="hidden" name="v" value="meses" />}
+              <input type="date" name="desde" defaultValue={from} max={to} aria-label="Desde"
+                className="rounded-md border bg-background px-2 py-1 tabular-nums outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-ring" />
+              <span aria-hidden className="text-muted-foreground">→</span>
+              <input type="date" name="hasta" defaultValue={to} max={today} aria-label="Hasta"
+                className="rounded-md border bg-background px-2 py-1 tabular-nums outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-ring" />
+              <button type="submit" className="rounded-md bg-secondary px-3 py-1 font-medium text-secondary-foreground transition-colors hover:bg-accent motion-safe:active:scale-95">Aplicar</button>
+            </form>
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            <span className={EYEBROW}>Ver</span>
+            <div className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
+              {[["dias", "Días"], ["meses", "Meses"]].map(([val, label]) => (
+                <Link key={val} href={hrefWith({ v: val })}
+                      aria-current={vista === val ? "page" : undefined}
+                      className={cn(PILL, vista === val ? PILL_ON : PILL_OFF)}>
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Salvedades del rango elegido, al pie del control que las provoca. */}
+        <div className="mt-2 space-y-1 empty:hidden">
+          <AvisoEventos from={from} to={to} />
+          {flexPend.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-amber-700 dark:text-amber-500">⚑ Flete Flex de ML sin cargar</span> — {flexPend.reduce((s, w) => s + w.n, 0)} órdenes cuentan flete $0 hasta subir la liquidación de Santiago (en <Link href="/sync" className="underline">Sync</Link>). Semanas: {flexPend.map((w) => `${fmtDate(w.semana)} (${w.n})`).join(" · ")}.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <Card>
+        <CardContent className="space-y-6 pt-5">
+          <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
             <div>
-              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
-                Tasa proy.
-                {!courierParam && priorByCourier.size > 0 && (
-                  <Tip tip={`Es el blend proyectado de TODOS los canales, y engaña: sube porque ML entrega ~100% y Fixy ~${fmtPct(priorByCourier.get("fixy") ?? 0)}. Urbano —que es el grueso de las guías— entrega ~${fmtPct(priorByCourier.get("urbano") ?? 0)} ya maduro (cohortes resueltas). El promedio tapa esa brecha; filtrá por courier arriba para ver cada uno sin mezcla.`} />
-                )}
+              <div className={cn(EYEBROW, "mb-1.5")}>
+                Profit confirmado · <span className="normal-case tabular-nums">{rangeLabel}</span>
               </div>
-              <div className="text-base font-semibold tabular-nums">{rango.despachadas ? fmtPct(rango.proyectadas / rango.despachadas) : "—"}</div>
-              {!courierParam && priorByCourier.has("urbano") && (
-                <div className="pt-0.5 text-[0.7rem] tabular-nums text-amber-600 dark:text-amber-500">
-                  Urbano maduro {fmtPct(priorByCourier.get("urbano")!)}
+              {/* El hero es el CONFIRMADO, no el estimado: el número grande y de color tiene que ser
+                  plata que existe. El estimado baja a la línea de apoyo, con lo que falta madurar. */}
+              <div className={cn("cifra glow text-[2.75rem] font-bold leading-none sm:text-5xl", rango.despachadas ? pnlColor(rProfitEst, rProfitConf) : "text-muted-foreground")}>
+                {rango.despachadas ? fmtMoney(rProfitConf) : "—"}
+              </div>
+              {rango.despachadas ? (
+                <div className="pt-2 text-sm text-muted-foreground">
+                  estimado <span className="tabular-nums">{fmtMoney(rProfitEst)}</span>
+                  <span className="mx-1.5">·</span>
+                  <span className="font-medium tabular-nums text-amber-600 dark:text-amber-500">{fmtMoney(rEnCamino)} en camino</span>
                 </div>
+              ) : (
+                <div className="pt-2 text-sm text-muted-foreground">Sin despachos en el rango</div>
               )}
             </div>
-            <div>
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">ROAS est.</div>
-              <div className="text-base font-semibold tabular-nums">{adsTot > 0 ? fmtRatio(rango.revenueEst / adsTot) : "—"}</div>
+            <div className="flex divide-x divide-border">
+              <div className="pr-6">
+                <div className={EYEBROW}>Despachos</div>
+                <div className="cifra pt-0.5 text-xl font-semibold">{rango.despachadas}</div>
+              </div>
+              <div className="px-6">
+                <div className={cn(EYEBROW, "flex items-center gap-1")}>
+                  {courierParam ? "Tasa proy." : "Tasa proy. COD"}
+                  {!courierParam && (
+                    <Tip tip={`Solo Urbano + Fixy: son los canales donde la entrega es nuestra y se puede empujar. ML queda afuera porque la entrega la hace ML y cuenta ~100%, y Correo también porque es prepago —ahí la métrica es la tasa de confirmación, no de entrega—. Mezclados daban un promedio que subía por dos canales que no se operan y tapaba el número real.${
+                      priorByCourier.size > 0
+                        ? ` De referencia, ya maduro: Urbano ~${fmtPct(priorByCourier.get("urbano") ?? 0)}, Fixy ~${fmtPct(priorByCourier.get("fixy") ?? 0)}. Filtrá por courier arriba para ver cada uno solo.`
+                        : ""
+                    }`} />
+                  )}
+                </div>
+                <div className="cifra pt-0.5 text-xl font-semibold">{tasaProy === null ? "—" : fmtPct(tasaProy)}</div>
+                {!courierParam && (
+                  <div className="flex flex-wrap gap-x-2 pt-0.5 text-[0.7rem] tabular-nums text-muted-foreground">
+                    {codPorCourier.filter((c) => c.despachadas).map((c) => (
+                      <Link key={c.courier} href={hrefWith({ courier: c.courier })}
+                            title={`${c.despachadas.toLocaleString("es-AR")} guías — ver solo ${COURIER_LABEL[c.courier]}`}
+                            className="underline-offset-2 hover:text-foreground hover:underline">
+                        {COURIER_LABEL[c.courier]} <b className="font-semibold">{fmtPct(c.proyectadas / c.despachadas)}</b>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="pl-6">
+                <div className={EYEBROW}>ROAS est.</div>
+                <div className="cifra pt-0.5 text-xl font-semibold">{adsTot > 0 ? fmtRatio(rango.revenueEst / adsTot) : "—"}</div>
+              </div>
             </div>
           </div>
+
+          {/* La mecánica del panel, dibujada: cuánto de cada día ya es plata y cuánto sigue siendo
+              proyección. Antes esto solo se podía deducir leyendo la columna Madurez fila por fila. */}
+          <CintaCohortes
+            dias={vista === "meses"
+              ? meses.map((m) => ({ fecha: `${m.month}-01`, label: monthLabel(m.month), conf: m.profitConf, est: m.profitEst }))
+              : list.map((d) => ({ fecha: d.date, conf: d.profitConf, est: d.profitEst }))}
+            href={vista === "meses" ? undefined : diaHref}
+          />
         </CardContent>
       </Card>
 
       <Card>
         <CardContent className="space-y-3 pt-5">
           <div className="flex items-baseline justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Gastos en Ads · <span className="normal-case tabular-nums">{rangeLabel}</span></span>
-            <span className="text-sm text-muted-foreground">total <b className="tabular-nums text-foreground">{fmtMoney(adsTot)}</b></span>
+            <span className={EYEBROW}>Gastos en Ads · <span className="normal-case tabular-nums">{rangeLabel}</span></span>
+            <span className="text-sm text-muted-foreground">total <b className="cifra text-foreground">{fmtMoney(adsTot)}</b></span>
           </div>
-          {/* F1-11: por FUENTE, en columnas paralelas. Un cuarto de la pauta es MercadoLibre y hasta
-              acá se leía fusionada con Meta en un solo número — dos plataformas con economías
-              distintas (ML se puja por publicación, Meta por conjunto) que no se pueden mover igual. */}
-          <div className="flex flex-wrap gap-x-8 gap-y-3 border-b pb-3">
-            <div>
-              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
-                Meta
-                <Tip tip="Pauta de Facebook/Instagram: la atribuida a cohortes más la que no ancló a ningún pedido. Es la que se maneja desde /anuncios." />
-              </div>
-              <div className="text-lg font-semibold tabular-nums">{fmtMoney(adsMeta)}</div>
-              <div className="text-xs text-muted-foreground">{adsTot ? fmtPct(adsMeta / adsTot) : "—"} del total</div>
+          {/* F1-11: por FUENTE. Un cuarto de la pauta es MercadoLibre y hasta acá se leía fusionada
+              con Meta en un solo número — dos plataformas con economías distintas (ML se puja por
+              publicación, Meta por conjunto) que no se pueden mover igual. El reparto va como barra:
+              la proporción es la lectura, y en dos números sueltos había que calcularla de cabeza. */}
+          <div className="space-y-2.5 border-b pb-4">
+            <div className="flex h-2.5 w-full gap-px overflow-hidden rounded-full bg-muted"
+                 role="img" aria-label={`Reparto de la pauta: Meta ${adsTot ? fmtPct(adsMeta / adsTot) : "—"}, MercadoLibre ${adsTot ? fmtPct(adsMl / adsTot) : "—"}`}>
+              {adsTot > 0 && (
+                <>
+                  <div className="barra bg-gradient-to-r from-slate-400 to-slate-200 dark:from-slate-500 dark:to-slate-300"
+                       style={{ width: `${(adsMeta / adsTot) * 100}%` }} />
+                  <div className="barra bg-gradient-to-r from-amber-600 to-amber-400 shadow-[0_0_12px_-2px_var(--color-amber-500)]"
+                       style={{ width: `${(adsMl / adsTot) * 100}%` }} />
+                </>
+              )}
             </div>
-            <div>
-              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
-                MercadoLibre
-                <Tip tip={TIP_ADS_ML} />
+            <div className="flex flex-wrap gap-x-8 gap-y-3">
+              <div className="flex gap-2">
+                <span aria-hidden className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-slate-400 dark:bg-slate-300" />
+                <div>
+                  <div className={cn(EYEBROW, "flex items-center gap-1")}>
+                    Meta
+                    <Tip tip="Pauta de Facebook/Instagram: la atribuida a cohortes más la que no ancló a ningún pedido. Es la que se maneja desde /anuncios." />
+                  </div>
+                  <div className="cifra text-lg font-semibold">{fmtMoney(adsMeta)}</div>
+                  <div className="text-xs text-muted-foreground">{adsTot ? fmtPct(adsMeta / adsTot) : "—"} del total</div>
+                </div>
               </div>
-              <div className="text-lg font-semibold tabular-nums">{fmtMoney(adsMl)}</div>
-              <div className="text-xs text-muted-foreground">{adsTot ? fmtPct(adsMl / adsTot) : "—"} del total</div>
+              <div className="flex gap-2">
+                <span aria-hidden className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" />
+                <div>
+                  <div className={cn(EYEBROW, "flex items-center gap-1")}>
+                    MercadoLibre
+                    <Tip tip={TIP_ADS_ML} />
+                  </div>
+                  <div className="cifra text-lg font-semibold">{fmtMoney(adsMl)}</div>
+                  <div className="text-xs text-muted-foreground">{adsTot ? fmtPct(adsMl / adsTot) : "—"} del total</div>
+                </div>
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap gap-x-8 gap-y-3">
             <div>
-              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+              <div className={cn(EYEBROW, "flex items-center gap-1")}>
                 Atribuido a cohortes
                 <Tip tip="Gasto repartido entre productos y canales según los despachos de cada día." />
               </div>
-              <div className="text-lg font-semibold tabular-nums">{fmtMoney(adsAtrib)}</div>
+              <div className="cifra text-lg font-semibold">{fmtMoney(adsAtrib)}</div>
               <div className="text-xs text-muted-foreground">repartido por producto y canal</div>
             </div>
             <div>
-              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+              <div className={cn(EYEBROW, "flex items-center gap-1")}>
                 Sin cohorte
                 <Tip tip="Gasto de Meta que no pudimos atribuir a ningún producto ni pedido. Se resta directo del profit y suma al denominador del ROAS." />
               </div>
-              <div className="text-lg font-semibold tabular-nums text-amber-600 dark:text-amber-500">{fmtMoney(adsSin)}</div>
+              <div className="cifra text-lg font-semibold text-amber-600 dark:text-amber-500">{fmtMoney(adsSin)}</div>
               <div className="text-xs text-muted-foreground">{adsTot ? fmtPct(adsSin / adsTot) : "—"} del total · se resta del profit</div>
             </div>
             <div>
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">ROAS estimado</div>
-              <div className="text-lg font-semibold tabular-nums">{adsTot > 0 ? fmtRatio(list.reduce((s, d) => s + d.revenueEst, 0) / adsTot) : "—"}</div>
+              <div className={EYEBROW}>ROAS estimado</div>
+              <div className="cifra text-lg font-semibold">{adsTot > 0 ? fmtRatio(list.reduce((s, d) => s + d.revenueEst, 0) / adsTot) : "—"}</div>
               <div className="text-xs text-muted-foreground">revenue est. / gasto total</div>
             </div>
           </div>
@@ -445,6 +525,7 @@ export default async function Resumen({
 
       <RitmoCouriers courier={courierParam} />
 
+      <Card className="overflow-hidden py-0">
       {vista === "dias" ? (
       <Table>
         <TableHeader>
@@ -514,7 +595,7 @@ export default async function Resumen({
                 <TableCell>
                   <div className="flex items-center gap-2">
                     <div className="h-1.5 w-[74px] flex-none rounded bg-muted">
-                      <div className="h-1.5 rounded bg-foreground" style={{ width: `${pct * 100}%` }} />
+                      <div className="barra h-1.5 rounded bg-brand" style={{ width: `${pct * 100}%` }} />
                     </div>
                     <span className="w-8 text-xs tabular-nums text-muted-foreground">{fmtPct(pct)}</span>
                   </div>
@@ -617,6 +698,7 @@ export default async function Resumen({
         </TableBody>
       </Table>
       )}
+      </Card>
     </main>
   );
 }

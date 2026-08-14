@@ -25,7 +25,7 @@ export function CajaFlujo({ movs, cajas }: { movs: Mov[]; cajas: Caja[] }) {
     <button key={id ?? "todas"} type="button" onClick={() => { setSel(id); setHi(null); }}
       className={cn(
         "rounded-full border px-2.5 py-0.5 text-xs transition-colors",
-        sel === id ? "border-foreground bg-foreground text-background" : "text-muted-foreground hover:bg-accent",
+        sel === id ? "border-brand bg-brand text-white dark:text-background" : "text-muted-foreground hover:bg-accent",
       )}>
       {nombre}
     </button>

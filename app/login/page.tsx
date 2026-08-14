@@ -12,15 +12,21 @@ export default function LoginPage() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   );
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function login(e: React.FormEvent) {
+  // Los campos NO son controlados: el valor se lee del form al enviar. Con useState + value={},
+  // el autocompletado de Chrome rompía el login — Chrome pinta el valor pero lo esconde de JS hasta
+  // que tocás la página, así que el estado de React quedaba vacío y se enviaba "" / "", con
+  // "Mail o contraseña incorrectos" arriba de un formulario que se veía completo.
+  async function login(e: React.FormEvent<HTMLFormElement>) {
+    const fd = new FormData(e.currentTarget); // antes del await: después, currentTarget ya es null
     e.preventDefault();
     setBusy(true); setError(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email: String(fd.get("email") ?? ""),
+      password: String(fd.get("password") ?? ""),
+    });
     setBusy(false);
     if (error) setError("Mail o contraseña incorrectos");
     else router.push("/");
@@ -29,17 +35,15 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
       <form onSubmit={login} className="w-full max-w-sm space-y-4">
-        <h1 className="text-xl font-semibold">BioLabs Finanzas</h1>
+        <h1 className="font-display text-2xl font-bold tracking-tight">BioLabs Finanzas</h1>
         <input
-          type="email" required value={email} placeholder="tu@mail.com"
+          type="email" name="email" required placeholder="tu@mail.com"
           autoComplete="email"
-          onChange={(e) => setEmail(e.target.value)}
           className="w-full rounded-md border px-3 py-2 text-sm"
         />
         <input
-          type="password" required value={password} placeholder="contraseña"
+          type="password" name="password" required placeholder="contraseña"
           autoComplete="current-password"
-          onChange={(e) => setPassword(e.target.value)}
           className="w-full rounded-md border px-3 py-2 text-sm"
         />
         {error && <p className="text-sm text-destructive">{error}</p>}

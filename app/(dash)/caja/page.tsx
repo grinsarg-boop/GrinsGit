@@ -95,7 +95,7 @@ export default async function Caja() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Caja</h1>
+        <h1 className="font-display text-2xl font-bold tracking-tight">Caja</h1>
         <p className="text-sm text-muted-foreground">
           Plata real de la app Cashflow (percibido) cruzada con el margen del panel (devengado). Acá vive
           el único número que el resto del panel no tiene: el neto DESPUÉS de la estructura.

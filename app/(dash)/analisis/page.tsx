@@ -13,6 +13,7 @@ import { daysAgoIso, fmtDate, fmtMoney, fmtPct } from "@/lib/format";
 import { claseSemaforo, nivel, percentil, pnlColor } from "@/lib/semaforo";
 import { tipWaterfall } from "@/lib/tips";
 import { supabaseAdmin } from "@/lib/supabase";
+import { PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 export const revalidate = 60;
@@ -219,15 +220,15 @@ export default async function Analisis({
     : ` Sin color: hacen falta al menos 5 filas de ${MIN_N}+ guías para que un cuartil signifique algo.`;
 
   const chip = (active: boolean) => cn(
-    "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-    active ? "bg-foreground text-background shadow-sm hover:shadow"
-           : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+    PILL,
+    active ? PILL_ON
+           : PILL_OFF,
   );
 
   return (
     <main className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Análisis</h1>
+        <h1 className="font-display text-2xl font-bold tracking-tight">Análisis</h1>
         <span className="text-sm tabular-nums text-muted-foreground">{rangeLabel}</span>
       </div>
 
@@ -252,9 +253,9 @@ export default async function Analisis({
           {[["", "Todos"], ["urbano", "Urbano"], ["fixy", "Fixy"], ["correo", "Correo"], ["ml", "ML"]].map(([val, label]) => (
             <Link key={val} href={hrefWith({ courier: val })}
                   aria-current={(courier ?? "") === val ? "page" : undefined}
-                  className={cn("rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-                    (courier ?? "") === val ? "bg-foreground text-background shadow-sm hover:shadow"
-                                            : "text-muted-foreground hover:bg-background/70 hover:text-foreground")}>{label}</Link>
+                  className={cn(PILL,
+                    (courier ?? "") === val ? PILL_ON
+                                            : PILL_OFF)}>{label}</Link>
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-1">

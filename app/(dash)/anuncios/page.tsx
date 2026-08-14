@@ -7,6 +7,7 @@ import { adLabel, campaignLabel } from "@/lib/ad-label";
 import { daysAgoIso, fmtDate, fmtMoney, fmtPct, fmtRatio } from "@/lib/format";
 import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
+import { PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 export const revalidate = 60;
@@ -139,8 +140,8 @@ export default async function Anuncios({
     return s ? `/anuncios?${s}` : "/anuncios";
   };
   const chip = (active: boolean) => cn(
-    "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-    active ? "bg-foreground text-background shadow-sm hover:shadow" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+    PILL,
+    active ? PILL_ON : PILL_OFF,
   );
 
   // las 6 métricas de decisión de una fila, alineadas al grid ROW (columnas 2..7)
@@ -160,7 +161,7 @@ export default async function Anuncios({
     </>
   );
   const headRow = (primera: string) => (
-    <div className={cn(ROW, "border-b pb-2 text-[0.7rem] uppercase tracking-wide text-muted-foreground")}>
+    <div className={cn(ROW, "border-b pb-2 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground")}>
       <span>{primera}</span>
       <span className="text-right">Entr.</span><span className="text-right">Tasa</span>
       <span className="text-right">CPA</span><span className="text-right">Gasto</span>
@@ -172,7 +173,7 @@ export default async function Anuncios({
     <main className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1.5">
-          <h1 className="text-xl font-semibold">Anuncios</h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Anuncios</h1>
           <Tip tip="Cada venta cruzada con la campaña/anuncio de Meta que la trajo (utm_content = ad_id, del form COD) y con su desenlace real de courier. Mide CALIDAD del cliente: COD entregado y cobrado, no el pedido que entra. Dos capas: Negocio (todo el COD ÷ gasto, siempre real) y Atribuido (lo que se puede abrir por campaña). Cohortea por día de venta; el gasto se suma sobre el mismo rango." />
         </div>
         <span className="text-sm tabular-nums text-muted-foreground">{rangeLabel}</span>
@@ -233,7 +234,7 @@ export default async function Anuncios({
                 { label: "Entregadas", value: bus.entregadas.toLocaleString("es-AR"), sub: `tasa ${fmtPct(bus.tasaMad)} · ${bus.enCalle.toLocaleString("es-AR")} en calle` },
               ].map((k) => (
                 <div key={k.label} className="sube rounded-lg bg-muted/40 p-3">
-                  <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{k.label}</div>
+                  <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">{k.label}</div>
                   <div className={cn("text-lg font-semibold tabular-nums", k.cls ?? "text-foreground")}>{k.value}</div>
                   <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">{k.sub}</div>
                 </div>
@@ -256,7 +257,7 @@ export default async function Anuncios({
                 { label: "Contribución", value: fmtMoney(glob.contrib), sub: "cobrado − flete − ads", cls: pnlColor(glob.contrib) },
               ].map((k) => (
                 <div key={k.label} className="sube rounded-lg bg-muted/40 p-3">
-                  <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">{k.label}</div>
+                  <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">{k.label}</div>
                   <div className={cn("text-lg font-semibold tabular-nums", (k as { cls?: string }).cls ?? "text-foreground")}>{k.value}</div>
                   <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">{(k as { sub?: string }).sub ?? " "}</div>
                 </div>
@@ -368,7 +369,7 @@ export default async function Anuncios({
               })}
               {peores.length > 0 && (
                 <>
-                  <div className="pt-3 text-[0.7rem] uppercase tracking-wide text-destructive/80">Peores (gastando)</div>
+                  <div className="pt-3 text-[0.65rem] font-semibold uppercase tracking-wider text-destructive/80">Peores (gastando)</div>
                   {peores.map((a) => {
                     const al = adLabel(a.name ?? a.k);
                     return (

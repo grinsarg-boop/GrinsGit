@@ -1,4 +1,5 @@
 import { Tip } from "@/components/ui/tooltip";
+import { EYEBROW } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 // La capa KPI del panel, escrita una sola vez. Estaba copiada en cinco lugares con dos escalas
@@ -21,12 +22,12 @@ export function Kpis({ items }: { items: Kpi[] }) {
   return (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
       {items.map((k) => (
-        <div key={k.label} className="sube rounded-lg bg-muted/40 p-3">
-          <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+        <div key={k.label} className="sube rounded-lg border bg-muted/40 p-3 transition-colors hover:bg-muted/60">
+          <div className={cn(EYEBROW, "flex items-center gap-1")}>
             {k.label}
             {k.tip && <Tip tip={k.tip} />}
           </div>
-          <div className={cn("text-xl font-semibold tabular-nums tracking-tight", k.color)}>{k.value}</div>
+          <div className={cn("cifra pt-0.5 text-xl font-semibold", k.color)}>{k.value}</div>
           {k.delta && <div className="pt-0.5">{k.delta}</div>}
           {k.pie && <div className="pt-0.5 text-xs tabular-nums text-muted-foreground">{k.pie}</div>}
         </div>

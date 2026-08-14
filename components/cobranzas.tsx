@@ -100,10 +100,10 @@ export async function Cobranzas() {
               const abierto = urbanoSaldo.find((m) => m.estimado > 0.005 * m.total);
               return abierto ? (
                 <div className="rounded-md border bg-muted/40 px-3 py-2.5">
-                  <div className="text-[0.7rem] uppercase tracking-wide text-amber-700 dark:text-amber-500">
+                  <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-500">
                     A facturar · {monthLabel(abierto.mes)}
                   </div>
-                  <div className="text-2xl font-bold tabular-nums tracking-tight text-amber-700 dark:text-amber-400">
+                  <div className="cifra text-2xl font-bold text-amber-700 dark:text-amber-400">
                     {fmtMoney(abierto.total)}
                   </div>
                   <div className="pt-0.5 text-xs text-muted-foreground">
@@ -193,10 +193,10 @@ export async function Cobranzas() {
               const abierta = cobranza.find((c) => c.fecha_pago >= today);
               return abierta ? (
                 <div className="rounded-md border bg-muted/40 px-3 py-2.5">
-                  <div className="text-[0.7rem] uppercase tracking-wide text-emerald-700 dark:text-emerald-500">
+                  <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-500">
                     A cobrar el {fmtDate(abierta.fecha_pago)}
                   </div>
-                  <div className="text-2xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400">
+                  <div className="cifra text-2xl font-bold text-emerald-700 dark:text-emerald-400">
                     {fmtMoney(Number(abierta.neto))}
                   </div>
                   <div className="pt-0.5 text-xs text-muted-foreground">
@@ -326,15 +326,15 @@ export async function Cobranzas() {
 
             <div className="flex flex-wrap gap-6">
               <div>
-                <div className="text-[0.7rem] uppercase tracking-wide text-emerald-700 dark:text-emerald-500">Sobres por cobrar</div>
-                <div className="text-2xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400">
+                <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-500">Sobres por cobrar</div>
+                <div className="cifra text-2xl font-bold text-emerald-700 dark:text-emerald-400">
                   {fmtMoney(fixyCob.pendienteCobro)}
                 </div>
                 <div className="pt-0.5 text-xs text-muted-foreground">cargados en la caja, todavía sin cobrar</div>
               </div>
               <div>
-                <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Entregado sin sobre (techo)</div>
-                <div className={cn("text-2xl font-bold tabular-nums tracking-tight", fixyCob.gap > 0 ? "text-amber-600 dark:text-amber-500" : "")}>
+                <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Entregado sin sobre (techo)</div>
+                <div className={cn("cifra text-2xl font-bold", fixyCob.gap > 0 ? "text-amber-600 dark:text-amber-500" : "")}>
                   {fmtMoney(fixyCob.gap)}
                 </div>
                 <div className="pt-0.5 text-xs text-muted-foreground">
@@ -342,8 +342,8 @@ export async function Cobranzas() {
                 </div>
               </div>
               <div>
-                <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Último sobre</div>
-                <div className="text-2xl font-bold tabular-nums tracking-tight">
+                <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Último sobre</div>
+                <div className="cifra text-2xl font-bold">
                   {fixyCob.ultimoSobre ? fmtDate(fixyCob.ultimoSobre) : "—"}
                 </div>
                 {fixyCob.ultimoSobre && fixyCob.ultimoSobre < daysAgoIso(FIXY_LAG_DIAS) && (
@@ -368,10 +368,10 @@ export async function Cobranzas() {
             </div>
 
             <div className="rounded-md border bg-muted/40 px-3 py-2.5">
-              <div className="text-[0.7rem] uppercase tracking-wide text-emerald-700 dark:text-emerald-500">
+              <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-500">
                 Pendiente de liberar
               </div>
-              <div className="text-2xl font-bold tabular-nums tracking-tight text-emerald-700 dark:text-emerald-400">
+              <div className="cifra text-2xl font-bold text-emerald-700 dark:text-emerald-400">
                 {fmtMoney(mlLiq.reduce((s, w) => s + Number(w.neto), 0))}
               </div>
               <div className="pt-0.5 text-xs text-muted-foreground">

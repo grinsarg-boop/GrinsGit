@@ -13,6 +13,7 @@ import { SELECT_EVENTOS, type Evento } from "@/lib/eventos";
 import { AvisoEventos } from "@/components/aviso-eventos";
 import { pnlColor } from "@/lib/semaforo";
 import { supabaseAdmin } from "@/lib/supabase";
+import { PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 export const revalidate = 60;
@@ -221,9 +222,9 @@ export default async function Tendencias({
   };
 
   const chip = (active: boolean) => cn(
-    "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-    active ? "bg-foreground text-background shadow-sm hover:shadow"
-           : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+    PILL,
+    active ? PILL_ON
+           : PILL_OFF,
   );
 
   const mesLabel = MESES[m - 1];
@@ -233,7 +234,7 @@ export default async function Tendencias({
     <main className="space-y-6">
       <div className="space-y-1">
       {/* Todo este panel cohortea por día de VENTA, igual que /ventas y a diferencia del Resumen. */}
-      <h1 className="text-xl font-semibold">
+      <h1 className="font-display text-2xl font-bold tracking-tight">
         Tendencias <span className="font-normal text-muted-foreground">· por día de <span className="font-semibold text-foreground">venta</span></span>
       </h1>
       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">

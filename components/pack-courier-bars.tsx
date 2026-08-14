@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { fmtMoney, fmtPct } from "@/lib/format";
+import { PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 // Barras agrupadas: por cada pack (×1, ×2, …) una barra por courier COD (Urbano/Fixy). La altura es el
@@ -57,8 +58,8 @@ export function PackCourierBars({ data }: { data: PC[] }) {
   const toggle = (m: "est" | "cerr", label: string) => (
     <button type="button" onClick={() => setModo(m)}
             aria-pressed={modo === m}
-            className={cn("rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-              modo === m ? "bg-foreground text-background shadow-sm" : "text-muted-foreground hover:bg-background/70 hover:text-foreground")}>
+            className={cn(PILL,
+              modo === m ? PILL_ON : PILL_OFF)}>
       {label}
     </button>
   );

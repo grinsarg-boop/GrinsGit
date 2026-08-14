@@ -4,11 +4,15 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+// El contenedor scrollea en horizontal, y hasta acá no lo decía: en una tabla de 11 columnas la
+// última —ROAS, la que más se mira— quedaba cortada contra el borde sin ninguna señal de que
+// hubiera más. `.tabla-scroll` pone una sombra en el filo que solo aparece si hay algo más para
+// ver, y se apaga sola al llegar al extremo. Es CSS puro (background-attachment), sin JS.
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      className="tabla-scroll relative w-full overflow-x-auto"
     >
       <table
         data-slot="table"
@@ -70,7 +74,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "h-10 px-2 text-left align-middle text-[0.65rem] font-semibold tracking-wider uppercase whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className
       )}
       {...props}

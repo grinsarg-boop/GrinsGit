@@ -309,7 +309,7 @@ function CargaMasiva() {
 export function CorreoTools() {
   return (
     <div className="space-y-10">
-      <h1 className="text-xl font-semibold">Correo Argentino</h1>
+      <h1 className="font-display text-2xl font-bold tracking-tight">Correo Argentino</h1>
       <CargaMasiva />
       <Etiquetas />
     </div>

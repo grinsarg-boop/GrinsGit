@@ -14,6 +14,7 @@ import { claseSemaforo, nivel, percentil, pnlColor } from "@/lib/semaforo";
 import { SELECT_EVENTOS, type Evento } from "@/lib/eventos";
 import { RitmoCouriers } from "@/components/ritmo-couriers";
 import { supabaseAdmin } from "@/lib/supabase";
+import { PILL, PILL_OFF, PILL_ON } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { TIP_ADS_ML, TIP_FLETE, TIP_COMIS, TIP_CONFIRMADO, TIP_ESTIMADO, TIP_PERCEP } from "@/lib/tips";
 
@@ -219,7 +220,7 @@ export default async function Ventas({
       <div className="space-y-1">
       {/* El eje va en el título: el Resumen cohortea por día de DESPACHO y este panel por día de
           VENTA. Estaba solo en el tooltip, que ya no necesita gastar su primera mitad en decirlo. */}
-      <h1 className="text-xl font-semibold">
+      <h1 className="font-display text-2xl font-bold tracking-tight">
         Ventas <span className="font-normal text-muted-foreground">· por día de <span className="font-semibold text-foreground">venta</span></span>
       </h1>
       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -243,8 +244,8 @@ export default async function Ventas({
                 href={hrefWith({ desde: d, hasta: h })}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "rounded-md px-2.5 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-                  active ? "bg-foreground text-background shadow-sm hover:shadow" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                  PILL,
+                  active ? PILL_ON : PILL_OFF,
                 )}
               >
                 {label}
@@ -272,8 +273,8 @@ export default async function Ventas({
               href={hrefWith({ courier: val })}
               aria-current={(courier ?? "") === val ? "page" : undefined}
               className={cn(
-                "rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-                (courier ?? "") === val ? "bg-foreground text-background shadow-sm hover:shadow" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                PILL,
+                (courier ?? "") === val ? PILL_ON : PILL_OFF,
               )}
             >
               {label}
@@ -287,8 +288,8 @@ export default async function Ventas({
               href={hrefWith({ v: val })}
               aria-current={vista === val ? "page" : undefined}
               className={cn(
-                "rounded-md px-3 py-1 font-medium transition-all duration-150 ease-out motion-safe:active:scale-95",
-                vista === val ? "bg-foreground text-background shadow-sm hover:shadow" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                PILL,
+                vista === val ? PILL_ON : PILL_OFF,
               )}
             >
               {label}
@@ -319,12 +320,12 @@ export default async function Ventas({
       <Card>
         <CardContent className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 pt-5">
           <div>
-            <div className="mb-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+            <div className="mb-1 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
               Profit confirmado · <span className="tabular-nums normal-case">{rangeLabel}</span>
             </div>
             {/* El hero es el CONFIRMADO, no el estimado: el número grande y de color tiene que ser
                 plata que existe. El estimado baja a la línea de apoyo, con lo que falta madurar. */}
-            <div className={cn("text-3xl font-bold tabular-nums tracking-tight", rango.generadas ? pnlColor(rProfitEst, rProfitConf) : "text-muted-foreground")}>
+            <div className={cn("cifra glow text-3xl font-bold", rango.generadas ? pnlColor(rProfitEst, rProfitConf) : "text-muted-foreground")}>
               {rango.generadas ? fmtMoney(rProfitConf) : "—"}
             </div>
             {rango.generadas ? (
@@ -345,12 +346,12 @@ export default async function Ventas({
           </div>
           <div className="flex gap-8">
             <div>
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">Ventas generadas</div>
+              <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">Ventas generadas</div>
               <div className="text-base font-semibold tabular-nums">{rango.generadas}</div>
               <div className="text-xs text-muted-foreground">{rango.generadas ? `${fmtPct(rango.despachadas / rango.generadas)} despachadas` : ""}</div>
             </div>
             <div>
-              <div className="flex items-center gap-1 text-[0.7rem] uppercase tracking-wide text-muted-foreground">
+              <div className="flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">
                 CPA adquisición
                 <Tip tip="Gasto total en Ads del rango (incluido el que no ancló a ninguna venta) dividido las ventas generadas. Cuánto te costó generar cada venta." />
               </div>
@@ -362,7 +363,7 @@ export default async function Ventas({
               )}
             </div>
             <div>
-              <div className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">ROAS est.</div>
+              <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-muted-foreground">ROAS est.</div>
               <div className="text-base font-semibold tabular-nums">{roas > 0 ? fmtRatio(roas) : "—"}</div>
             </div>
           </div>

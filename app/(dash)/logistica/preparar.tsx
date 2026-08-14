@@ -128,7 +128,7 @@ export function Preparar() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Preparar etiquetas COD</h1>
+      <h1 className="font-display text-2xl font-bold tracking-tight">Preparar etiquetas COD</h1>
       <p className="max-w-[75ch] text-sm text-muted-foreground">
         Subí los PDF de etiquetas de <b className="text-foreground">Correo, Urbano y Fixy</b> mezclados
         como vengan. Lee el N° de pedido de cada una, busca en Shopify qué lleva, le estampa el código
