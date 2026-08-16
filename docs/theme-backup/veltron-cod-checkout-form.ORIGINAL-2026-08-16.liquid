@@ -1,0 +1,757 @@
+{%- comment -%}
+  cod-checkout-form.liquid — BioLabs v1 (port del COD form Domotech v4.2)
+
+  Diferencias vs Domotech:
+  - Envío GRATIS siempre (BioLabs absorbe el costo) → sin lógica de costo de envío.
+  - 3 métodos de pago con routing automático por CP (TRANSFERENCIA APAGADA 2026-07-10):
+      · cod_efectivo  → Fixy   (solo AMBA, paga efectivo al recibir)
+      · cod_qr_mp     → Fixy en AMBA (el cadete cobra con QR de Mercado Pago o efectivo)
+                        Urbano en el interior (paga con QR de Mercado Pago al recibir)
+                        [cambio 2026-07-17: en zona Fixy el QR lo cobra Fixy, ya no Urbano]
+      · cuotas_3      → Andreani/Correo Argentino (nacional, 3 cuotas s/i link MP)
+  - Webhook, fallback WA, número de WhatsApp y % de descuento se configuran en el
+    customizer (defaults BioLabs ya cargados). El número de WA puede quedar vacío:
+    si está vacío, el botón de WhatsApp del final se oculta y el form igual funciona.
+  - DNI obligatorio (7-8 dígitos) + Google Places Autocomplete (lazy, AR) — igual que Domotech.
+  - Payload al webhook: mismo contrato que Domotech + payment_method puede ser cod_qr_mp
+    y carrier puede ser 'urbano'. source = 'cod_checkout_form_biolabs_v1'.
+
+  IMPORTANTE: NO hardcodear API keys reales en este archivo (Google Maps va por setting).
+{%- endcomment -%}
+
+{%- assign wa = section.settings.whatsapp_number -%}
+{%- assign webhook = section.settings.webhook_url | default: 'https://n8n.srv1817785.hstgr.cloud/webhook/cod-checkout?tenant=biolabs&t=9b6f9d5cd45ef76e40d29b141e03b73464ee5a86a50ac1ed' -%}
+{%- assign fallback_webhook = section.settings.fallback_webhook_url | default: 'https://n8n.srv1817785.hstgr.cloud/webhook/mp-fallback-wa?tenant=biolabs' -%}
+{%- assign gmaps_api_key = section.settings.google_maps_api_key -%}
+
+<style>
+.cod-overlay{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:16px;opacity:0;transition:opacity .25s ease}
+.cod-overlay.active{display:flex;opacity:1}
+.cod-modal{background:#fff;border-radius:16px;width:100%;max-width:460px;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25);position:relative;animation:codUp .3s ease}
+@keyframes codUp{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}
+.cod-modal::-webkit-scrollbar{width:4px}
+.cod-modal::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:4px}
+.cod-hdr{padding:20px 20px 16px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:flex-start}
+.cod-hdr h3{font-size:16px;font-weight:700;color:#111827;margin:0;line-height:1.3}
+.cod-x{width:32px;height:32px;border:none;background:#f3f4f6;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;color:#6b7280;transition:background .2s}
+.cod-x:hover{background:#e5e7eb}
+.cod-prod{display:flex;gap:12px;padding:16px 20px;background:#f9fafb;border-bottom:1px solid #f0f0f0}
+.cod-prod img{width:56px;height:56px;border-radius:10px;object-fit:cover;border:1px solid #e5e7eb}
+.cod-prod-info{flex:1}
+.cod-prod-name{font-size:13px;font-weight:600;color:#111827;margin:0 0 2px}
+.cod-prod-var{font-size:12px;color:#6b7280;margin:0}
+.cod-prod-price{font-size:15px;font-weight:700;color:#111827;white-space:nowrap}
+.cod-body{padding:20px}
+.cod-lbl{font-size:11px;font-weight:600;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid #f3f4f6}
+.cod-lbl:not(:first-child){margin-top:20px}
+.cod-f{margin-bottom:12px}
+.cod-f label{display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:5px}
+.cod-f label .req{color:#ef4444}
+.cod-f input,.cod-f select,.cod-f textarea{width:100%;padding:11px 14px;border:1.5px solid #d1d5db;border-radius:10px;font-size:14px;color:#111827;outline:none;transition:border-color .2s;box-sizing:border-box}
+.cod-f input:focus,.cod-f select:focus,.cod-f textarea:focus{border-color:#97a159}
+.cod-f textarea{resize:vertical;min-height:56px}
+.cod-f .cod-f-error{color:#ef4444;font-size:11px;margin-top:4px;display:none}
+.cod-f input.input-error{border-color:#ef4444!important}
+.cod-f input.input-error:focus{border-color:#ef4444!important;box-shadow:0 0 0 2px rgba(239,68,68,.15)}
+.cod-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.cod-row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.cod-cp-wrap{position:relative}
+.cod-cp-wrap .cp-status{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:18px;display:none}
+.cod-dynamic{display:none;animation:codFade .3s ease}
+@keyframes codFade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.cod-ship-badge{display:flex;align-items:center;gap:8px;padding:12px 14px;border-radius:10px;font-size:13px;margin-bottom:12px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46}
+.cod-pay{border:1.5px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:all .2s;display:flex;align-items:flex-start;gap:12px}
+.cod-pay:hover{border-color:#97a159;background:#f6f7ee}
+.cod-pay.sel{border-color:#97a159;background:#f1f4e3}
+.cod-pay input[type=radio]{margin-top:3px;accent-color:#97a159}
+.cod-pay .pay-t{font-size:13px;font-weight:600;color:#111827;margin:0 0 2px}
+.cod-pay .pay-d{font-size:12px;color:#6b7280;margin:0;line-height:1.4}
+.cod-badge{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:6px}
+.bg-g{background:#d1fae5;color:#065f46}
+.bg-b{background:#dbeafe;color:#1e40af}
+.cod-sum{padding:12px 16px;background:#f9fafb;border-radius:10px;margin:16px 0;font-size:13px}
+.cod-sum-r{display:flex;justify-content:space-between;padding:3px 0;color:#374151}
+.cod-sum-r.tot{font-weight:700;font-size:15px;border-top:1px solid #e5e7eb;padding-top:8px;margin-top:4px;color:#111827}
+.cod-sum-r .disc{color:#059669;font-weight:600}
+.cod-billing{display:none;margin-top:12px;padding-top:12px;border-top:1px solid #f0f0f0}
+.cod-btn{width:100%;padding:14px;background:#ff2e7e;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px}
+.cod-btn:hover{background:#e01a68;transform:translateY(-1px);box-shadow:0 4px 12px rgba(255,46,126,.35)}
+.cod-btn:disabled{background:#d1d5db;cursor:not-allowed;transform:none;box-shadow:none}
+.spin{width:18px;height:18px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:sp .6s linear infinite;display:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+.cod-mkt{display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:12px;color:#6b7280}
+.cod-mkt input{margin-top:2px;accent-color:#97a159}
+.cod-ok{text-align:center;padding:40px 20px;display:none}
+.cod-ok .chk{width:56px;height:56px;background:#d1fae5;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:28px}
+.cod-ok h3{font-size:18px;font-weight:700;color:#111827;margin:0 0 8px}
+.cod-ok p{font-size:14px;color:#6b7280;margin:0 0 20px;line-height:1.5}
+.cod-ok .wa{display:inline-flex;align-items:center;gap:8px;padding:12px 24px;background:#25d366;color:#fff;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px;transition:background .2s}
+.cod-ok .wa:hover{background:#1ebe57}
+@media(max-width:480px){
+  .cod-modal{border-radius:12px 12px 0 0;max-height:88vh;align-self:flex-end}
+  .cod-row,.cod-row3{grid-template-columns:1fr}
+}
+/* DNI + Google Places */
+.cod-addr-warn{display:none;align-items:flex-start;gap:6px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:11.5px;line-height:1.4;padding:8px 10px;border-radius:8px;margin-top:6px}
+.cod-addr-warn.show{display:flex}
+.cod-addr-ok{display:none;align-items:center;gap:6px;color:#059669;font-size:11.5px;margin-top:4px;font-weight:600}
+.cod-addr-ok.show{display:flex}
+.pac-container{border-radius:10px!important;border:1.5px solid #d1d5db!important;box-shadow:0 8px 24px rgba(0,0,0,.12)!important;font-family:inherit!important;margin-top:4px;z-index:10000}
+.pac-item{padding:10px 12px!important;font-size:13px!important;border-top:1px solid #f3f4f6;cursor:pointer}
+.pac-item:hover,.pac-item-selected{background:#f1f4e3!important}
+.pac-item-query{font-size:13px!important;color:#111827;font-weight:600}
+.pac-icon{margin-top:2px}
+</style>
+
+<div class="cod-overlay" id="codOverlay" role="dialog" aria-modal="true" aria-label="Formulario de compra">
+<div class="cod-modal">
+  <div class="cod-hdr">
+    <h3>Completá tus datos para<br>realizar el pedido.</h3>
+    <button class="cod-x" id="codClose" aria-label="Cerrar">&times;</button>
+  </div>
+  <div class="cod-prod">
+    <img id="codImg" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="" width="56" height="56">
+    <div class="cod-prod-info">
+      <p class="cod-prod-name" id="codName"></p>
+      <p class="cod-prod-var" id="codVar"></p>
+    </div>
+    <div class="cod-prod-price" id="codPrice"></div>
+  </div>
+  <div class="cod-body" id="codForm">
+    <div class="cod-lbl">Datos personales</div>
+    <div class="cod-f">
+      <label>Nombre completo <span class="req">*</span></label>
+      <input type="text" id="fName" required autocomplete="name" placeholder="Nombre y apellido">
+    </div>
+    <div class="cod-row">
+      <div class="cod-f">
+        <label>Celular con WhatsApp <span class="req">*</span></label>
+        <input type="tel" id="fPhone" required autocomplete="tel" placeholder="Ej: 1155443322">
+        <div class="cod-f-error" id="phoneError">Número de teléfono inválido</div>
+      </div>
+      <div class="cod-f">
+        <label>Correo electrónico <span class="req">*</span></label>
+        <input type="email" id="fEmail" required autocomplete="email" placeholder="tu@email.com">
+      </div>
+    </div>
+    <div class="cod-f">
+      <label>DNI <span class="req">*</span></label>
+      <input
+        type="text"
+        id="fDni"
+        required
+        inputmode="numeric"
+        maxlength="8"
+        pattern="\d{7,8}"
+        autocomplete="off"
+        placeholder="Sólo números, sin puntos (ej. 38456789)">
+      <div class="cod-f-error" id="dniError">El DNI debe tener 7 u 8 dígitos sin puntos</div>
+    </div>
+    <div class="cod-lbl">Dirección de envío</div>
+    <div class="cod-row">
+      <div class="cod-f">
+        <label>Calle <span class="req">*</span></label>
+        <input type="text" id="fStreet" required placeholder="Empezá a tipear y elegí del menú" autocomplete="off">
+        <div class="cod-addr-ok" id="addrOk">✓ Dirección validada con Google Maps</div>
+        <div class="cod-addr-warn" id="addrWarn">⚠️ No se validó la dirección con Google Maps. Verificá que esté correcta.</div>
+      </div>
+      <div class="cod-f">
+        <label>Altura <span class="req">*</span></label>
+        <input type="text" id="fNum" required placeholder="Número">
+      </div>
+    </div>
+    <input type="hidden" id="fLat" value="">
+    <input type="hidden" id="fLng" value="">
+    <input type="hidden" id="fAddrValidated" value="0">
+    <div class="cod-f">
+      <label>Piso / Depto / Referencia</label>
+      <input type="text" id="fFloor" placeholder="Ej: 3°B — Dejarlo en portería">
+    </div>
+    <div class="cod-row3">
+      <div class="cod-f">
+        <label>Código Postal <span class="req">*</span></label>
+        <div class="cod-cp-wrap">
+          <input type="text" id="fCP" maxlength="5" inputmode="numeric" autocomplete="postal-code" placeholder="Ej: 1640">
+          <span class="cp-status" id="cpStatus"></span>
+        </div>
+      </div>
+      <div class="cod-f">
+        <label>Provincia <span class="req">*</span></label>
+        <select id="fProv" required>
+          <option value="">Seleccioná</option>
+          <option>Buenos Aires</option><option>CABA</option><option>Catamarca</option><option>Chaco</option><option>Chubut</option><option>Córdoba</option><option>Corrientes</option><option>Entre Ríos</option><option>Formosa</option><option>Jujuy</option><option>La Pampa</option><option>La Rioja</option><option>Mendoza</option><option>Misiones</option><option>Neuquén</option><option>Río Negro</option><option>Salta</option><option>San Juan</option><option>San Luis</option><option>Santa Cruz</option><option>Santa Fe</option><option>Santiago del Estero</option><option>Tierra del Fuego</option><option>Tucumán</option>
+        </select>
+      </div>
+      <div class="cod-f">
+        <label>Localidad <span class="req">*</span></label>
+        <input type="text" id="fCity" required placeholder="Ciudad">
+      </div>
+    </div>
+    <div class="cod-dynamic" id="dynSection">
+      <div id="shipBadge"></div>
+      <div class="cod-lbl">Medio de pago</div>
+      <div id="payOpts"></div>
+      <div class="cod-sum" id="codSum">
+        <div class="cod-sum-r"><span>Subtotal</span><span id="sS"></span></div>
+        <div class="cod-sum-r" id="sDiscRow" style="display:none"><span>Descuento (<span id="sDiscP"></span>%)</span><span class="disc" id="sDisc"></span></div>
+        <div class="cod-sum-r"><span>Envío</span><span id="sShip">Gratis</span></div>
+        <div class="cod-sum-r tot"><span>Total</span><span id="sTot"></span></div>
+      </div>
+      <div class="cod-billing" id="billingSection">
+        <div class="cod-f">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="diffBilling" style="width:auto;flex:0 0 auto;margin:0;accent-color:#97a159">Usar una dirección de facturación distinta</label>
+        </div>
+        <div id="billingFields" style="display:none">
+          <div class="cod-f"><label>Dirección de facturación</label><input type="text" id="bAddr" placeholder="Calle y número"></div>
+          <div class="cod-row">
+            <div class="cod-f"><label>Ciudad</label><input type="text" id="bCity" placeholder="Ciudad"></div>
+            <div class="cod-f"><label>Provincia</label><input type="text" id="bProv" placeholder="Provincia"></div>
+          </div>
+        </div>
+      </div>
+      <div class="cod-f" style="margin-top:12px">
+        <label>¿Alguna consideración para tu entrega?</label>
+        <textarea id="fNotes" placeholder="Ej: Llamar antes de entregar"></textarea>
+      </div>
+      <div class="cod-mkt">
+        <input type="checkbox" id="fMkt" checked>
+        <label for="fMkt">Suscribite para recibir novedades y ofertas.</label>
+      </div>
+      <button class="cod-btn" id="codSubmit" disabled>
+        <span class="spin" id="codSpin"></span>
+        Realizar pedido
+      </button>
+    </div>
+  </div>
+  <div class="cod-ok" id="codSuccess">
+    <div class="chk">✓</div>
+    <h3>¡Pedido recibido!</h3>
+    <p id="okMsg"></p>
+    <a class="wa" id="okWA" href="#" target="_blank">💬 Contactanos por WhatsApp</a>
+  </div>
+</div>
+</div>
+
+<script>
+(function(){
+/* API key Google Maps Places. Se lee desde el customizer (settings.google_maps_api_key).
+   Si está vacía, el autocomplete se deshabilita silenciosamente y el form sigue funcionando manual. */
+const GMAPS_KEY = {{ gmaps_api_key | default: '' | json }};
+/* Mapa de CPs AMBA con cobertura Fixy (efectivo al recibir). Si el CP no está acá → interior → Urbano (QR MP). */
+const FIXY={"1001":"CABA","1002":"CABA","1003":"CABA","1004":"CABA","1005":"CABA","1006":"CABA","1007":"CABA","1008":"CABA","1009":"CABA","1010":"CABA","1011":"CABA","1012":"CABA","1013":"CABA","1014":"CABA","1015":"CABA","1016":"CABA","1017":"CABA","1018":"CABA","1019":"CABA","1020":"CABA","1021":"CABA","1022":"CABA","1023":"CABA","1024":"CABA","1025":"CABA","1026":"CABA","1027":"CABA","1028":"CABA","1029":"CABA","1030":"CABA","1031":"CABA","1032":"CABA","1033":"CABA","1034":"CABA","1035":"CABA","1036":"CABA","1037":"CABA","1038":"CABA","1039":"CABA","1040":"CABA","1041":"CABA","1042":"CABA","1043":"CABA","1044":"CABA","1045":"CABA","1046":"CABA","1047":"CABA","1048":"CABA","1049":"CABA","1050":"CABA","1051":"CABA","1052":"CABA","1053":"CABA","1054":"CABA","1055":"CABA","1056":"CABA","1057":"CABA","1058":"CABA","1059":"CABA","1060":"CABA","1061":"CABA","1062":"CABA","1063":"CABA","1064":"CABA","1065":"CABA","1066":"CABA","1067":"CABA","1068":"CABA","1069":"CABA","1070":"CABA","1071":"CABA","1072":"CABA","1073":"CABA","1074":"CABA","1075":"CABA","1076":"CABA","1077":"CABA","1078":"CABA","1079":"CABA","1080":"CABA","1081":"CABA","1082":"CABA","1083":"CABA","1084":"CABA","1085":"CABA","1086":"CABA","1087":"CABA","1088":"CABA","1089":"CABA","1090":"CABA","1091":"CABA","1092":"CABA","1093":"CABA","1094":"CABA","1095":"CABA","1096":"CABA","1097":"CABA","1098":"CABA","1099":"CABA","1100":"CABA","1101":"CABA","1102":"CABA","1103":"CABA","1104":"CABA","1105":"CABA","1106":"CABA","1107":"CABA","1108":"CABA","1109":"CABA","1110":"CABA","1111":"CABA","1112":"CABA","1113":"CABA","1114":"CABA","1115":"CABA","1116":"CABA","1117":"CABA","1118":"CABA","1119":"CABA","1120":"CABA","1121":"CABA","1122":"CABA","1123":"CABA","1124":"CABA","1125":"CABA","1126":"CABA","1127":"CABA","1128":"CABA","1129":"CABA","1130":"CABA","1131":"CABA","1132":"CABA","1133":"CABA","1134":"CABA","1135":"CABA","1136":"CABA","1137":"CABA","1138":"CABA","1139":"CABA","1140":"CABA","1141":"CABA","1142":"CABA","1143":"CABA","1144":"CABA","1145":"CABA","1146":"CABA","1147":"CABA","1148":"CABA","1149":"CABA","1150":"CABA","1151":"CABA","1152":"CABA","1153":"CABA","1154":"CABA","1155":"CABA","1156":"CABA","1157":"CABA","1158":"CABA","1159":"CABA","1160":"CABA","1161":"CABA","1162":"CABA","1163":"CABA","1164":"CABA","1165":"CABA","1166":"CABA","1167":"CABA","1168":"CABA","1169":"CABA","1170":"CABA","1171":"CABA","1172":"CABA","1173":"CABA","1174":"CABA","1175":"CABA","1176":"CABA","1177":"CABA","1178":"CABA","1179":"CABA","1180":"CABA","1181":"CABA","1182":"CABA","1183":"CABA","1184":"CABA","1185":"CABA","1186":"CABA","1187":"CABA","1188":"CABA","1189":"CABA","1190":"CABA","1191":"CABA","1192":"CABA","1193":"CABA","1194":"CABA","1195":"CABA","1196":"CABA","1197":"CABA","1198":"CABA","1199":"CABA","1200":"CABA","1201":"CABA","1202":"CABA","1203":"CABA","1204":"CABA","1205":"CABA","1206":"CABA","1207":"CABA","1208":"CABA","1209":"CABA","1210":"CABA","1211":"CABA","1212":"CABA","1213":"CABA","1214":"CABA","1215":"CABA","1216":"CABA","1217":"CABA","1218":"CABA","1219":"CABA","1220":"CABA","1221":"CABA","1222":"CABA","1223":"CABA","1224":"CABA","1225":"CABA","1226":"CABA","1227":"CABA","1228":"CABA","1229":"CABA","1230":"CABA","1231":"CABA","1232":"CABA","1233":"CABA","1234":"CABA","1235":"CABA","1236":"CABA","1237":"CABA","1238":"CABA","1239":"CABA","1240":"CABA","1241":"CABA","1242":"CABA","1243":"CABA","1244":"CABA","1245":"CABA","1246":"CABA","1247":"CABA","1248":"CABA","1249":"CABA","1250":"CABA","1251":"CABA","1252":"CABA","1253":"CABA","1254":"CABA","1255":"CABA","1256":"CABA","1257":"CABA","1258":"CABA","1259":"CABA","1260":"CABA","1261":"CABA","1262":"CABA","1263":"CABA","1264":"CABA","1265":"CABA","1266":"CABA","1267":"CABA","1268":"CABA","1269":"CABA","1270":"CABA","1271":"CABA","1272":"CABA","1273":"CABA","1274":"CABA","1275":"CABA","1276":"CABA","1277":"CABA","1278":"CABA","1279":"CABA","1280":"CABA","1281":"CABA","1282":"CABA","1283":"CABA","1284":"CABA","1285":"CABA","1286":"CABA","1287":"CABA","1288":"CABA","1289":"CABA","1290":"CABA","1291":"CABA","1292":"CABA","1293":"CABA","1294":"CABA","1295":"CABA","1296":"CABA","1298":"CABA","1300":"CABA","1301":"CABA","1302":"CABA","1303":"CABA","1304":"CABA","1305":"CABA","1306":"CABA","1307":"CABA","1308":"CABA","1309":"CABA","1310":"CABA","1311":"CABA","1312":"CABA","1313":"CABA","1314":"CABA","1315":"CABA","1316":"CABA","1317":"CABA","1318":"CABA","1319":"CABA","1320":"CABA","1321":"CABA","1322":"CABA","1323":"CABA","1324":"CABA","1325":"CABA","1326":"CABA","1327":"CABA","1328":"CABA","1329":"CABA","1330":"CABA","1331":"CABA","1332":"CABA","1333":"CABA","1334":"CABA","1335":"CABA","1336":"CABA","1337":"CABA","1338":"CABA","1339":"CABA","1340":"CABA","1341":"CABA","1342":"CABA","1343":"CABA","1344":"CABA","1345":"CABA","1346":"CABA","1347":"CABA","1348":"CABA","1349":"CABA","1350":"CABA","1351":"CABA","1352":"CABA","1353":"CABA","1354":"CABA","1355":"CABA","1356":"CABA","1357":"CABA","1358":"CABA","1359":"CABA","1360":"CABA","1361":"CABA","1362":"CABA","1363":"CABA","1364":"CABA","1365":"CABA","1366":"CABA","1367":"CABA","1368":"CABA","1369":"CABA","1370":"CABA","1371":"CABA","1372":"CABA","1373":"CABA","1374":"CABA","1375":"CABA","1376":"CABA","1377":"CABA","1378":"CABA","1379":"CABA","1380":"CABA","1381":"CABA","1382":"CABA","1383":"CABA","1384":"CABA","1385":"CABA","1386":"CABA","1387":"CABA","1388":"CABA","1389":"CABA","1390":"CABA","1391":"CABA","1392":"CABA","1393":"CABA","1394":"CABA","1395":"CABA","1396":"CABA","1397":"CABA","1398":"CABA","1399":"CABA","1400":"CABA","1401":"CABA","1402":"CABA","1405":"CABA","1406":"CABA","1407":"CABA","1408":"CABA","1409":"CABA","1410":"CABA","1411":"CABA","1412":"CABA","1413":"CABA","1414":"CABA","1416":"CABA","1417":"CABA","1419":"CABA","1420":"CABA","1421":"CABA","1422":"CABA","1423":"CABA","1424":"CABA","1425":"CABA","1426":"CABA","1427":"CABA","1428":"CABA","1429":"CABA","1430":"CABA","1431":"CABA","1432":"CABA","1433":"CABA","1434":"CABA","1435":"CABA","1436":"CABA","1437":"CABA","1439":"CABA","1440":"CABA","1453":"CABA","1599":"CABA","1870":"GBA2","1874":"GBA2","1872":"GBA2","1875":"GBA2","1752":"GBA2","1704":"GBA2","1766":"GBA2","1768":"GBA2","1825":"GBA2","1822":"GBA2","1826":"GBA2","1824":"GBA2","1828":"GBA2","1836":"GBA2","1832":"GBA2","1834":"GBA2","1835":"GBA2","1831":"GBA2","1829":"GBA2","1773":"GBA2","1657":"GBA2","1655":"GBA2","1650":"GBA2","1651":"GBA2","1672":"GBA2","1653":"GBA2","1678":"GBA2","1702":"GBA2","1676":"GBA2","1682":"GBA2","1674":"GBA2","1684":"GBA1","1602":"GBA2","1636":"GBA2","1606":"GBA2","1605":"GBA2","1638":"GBA2","1603":"GBA2","1846":"GBA1","1856":"GBA1","1852":"GBA1","1847":"GBA1","1854":"GBA1","1849":"GBA1","1884":"GBA1","1890":"GBA1","1885":"GBA1","1886":"GBA1","1893":"GBA1","1776":"GBA1","1842":"GBA1","1838":"GBA1","1625":"GBA1","1619":"GBA1","1623":"GBA1","1620":"GBA1","1627":"GBA1","1802":"GBA1","1804":"GBA1","1806":"GBA1","1812":"GBA1","1888":"GBA1","1889":"GBA1","1891":"GBA1","1686":"GBA1","1688":"GBA1","1665":"GBA1","1761":"GBA1","1770":"GBA1","1757":"GBA1","1759":"GBA1","1763":"GBA1","1765":"GBA1","1772":"GBA2","1778":"GBA1","1755":"GBA1","1774":"GBA1","1771":"GBA1","1754":"GBA1","1612":"GBA1","1667":"GBA1","1615":"GBA1","1613":"GBA1","1614":"GBA1","1722":"GBA1","1723":"GBA1","1716":"GBA1","1718":"GBA1","1746":"GBA1","1744":"GBA1","1742":"GBA1","1664":"GBA1","1708":"GBA1","1712":"GBA1","1706":"GBA1","1629":"GBA1","1669":"GBA1","1633":"GBA1","1635":"GBA1","1631":"GBA1","1881":"GBA1","1879":"GBA1","1882":"GBA1","1878":"GBA1","1876":"GBA1","1649":"GBA1","1646":"GBA1","1644":"GBA1","1640":"GBA1","1642":"GBA1","1607":"GBA1","1643":"GBA1","1609":"GBA1","1663":"GBA1","1659":"GBA1","1661":"GBA1","1617":"GBA1","1611":"GBA1","1621":"GBA1","1618":"GBA1","1670":"GBA1","1648":"GBA1","1923":"GBA3","1929":"GBA3","2805":"GBA3","2804":"GBA3","2812":"GBA3","1808":"GBA3","1814":"GBA3","1816":"GBA3","1815":"GBA3","1986":"GBA3","1980":"GBA3","1981":"GBA3","1983":"GBA3","1931":"GBA3","1925":"GBA3","1927":"GBA3","2764":"GBA3","6703":"GBA3","2814":"GBA3","1741":"GBA3","1739":"GBA3","1737":"GBA3","1731":"GBA3","1748":"GBA3","1903":"GBA3","1901":"GBA3","1909":"GBA3","1895":"GBA3","1894":"GBA3","1896":"GBA3","1900":"GBA3","1907":"GBA3","1601":"GBA3","1905":"GBA3","1897":"GBA3","1906":"GBA3","6700":"GBA3","6701":"GBA3","6708":"GBA3","6712":"GBA3","6706":"GBA3","6608":"GBA3","1727":"GBA3","1862":"GBA3","1858":"GBA3","1864":"GBA3","1984":"GBA3","1865":"GBA3","2801":"GBA3","2800":"GBA3","1647":"GBA3","2808":"GBA3","2806":"GBA3","2802":"GBA3","1869":"GBA2","1880":"GBA1","1714":"GBA1","1877":"GBA1","1675":"GBA2","1641":"GBA1","1662":"GBA1","1758":"GBA1","1715":"GBA1","1764":"GBA1","1445":"CABA","1604":"GBA2","1480":"CABA","1637":"GBA2","1848":"GBA1","1707":"GBA1","1683":"GBA2","1867":"GBA1","1645":"GBA1","1701":"GBA2","1841":"GBA1","1753":"GBA1","1630":"GBA1","1839":"GBA1","1738":"GBA1","1736":"GBA1","1751":"GBA2","1524":"CABA","1703":"GBA2","1844":"GBA1","1610":"GBA1","1745":"GBA1","1624":"GBA1","1762":"GBA2","1685":"GBA1","1713":"GBA1","1740":"GBA1","1853":"GBA1","1660":"GBA1","1843":"GBA1","1985":"GBA3","1805":"GBA1","1868":"GBA2","1902":"GBA3","1807":"GBA1","1507":"CABA","1845":"GBA1","1914":"GBA3","1450":"CABA","1785":"GBA1","1904":"GBA3","1827":"GBA2","2714":"GBA3","1689":"GBA1","1000":"CABA","1297":"CABA","1299":"CABA","1403":"CABA","1404":"CABA","1415":"CABA","1418":"CABA","1438":"CABA","1441":"CABA","1442":"CABA","1443":"CABA","1444":"CABA","1446":"CABA","1447":"CABA","1448":"CABA","1449":"CABA","1451":"CABA","1452":"CABA","1454":"CABA","1455":"CABA","1456":"CABA","1458":"CABA","1459":"CABA","1460":"CABA","1461":"CABA","1462":"CABA","1463":"CABA","1464":"CABA","1465":"CABA","1487":"CABA","1527":"CABA","1616":"GBA1","1622":"GBA1","1628":"GBA1","1634":"GBA1","1639":"GBA1","1658":"GBA2","1666":"GBA1","1671":"GBA1","1681":"GBA1","1850":"GBA1","1873":"GBA2","1837":"GBA1","1924":"GBA3","1918":"GBA3","1926":"GBA3","2707":"GBA1","2763":"GBA3","1775":"GBA1","1801":"GBA1","1803":"GBA1","1863":"GBA1","1887":"GBA1","1733":"GBA3","1747":"GBA3","1749":"GBA3","1750":"GBA3","1769":"GBA2","1898":"GBA3","1908":"GBA3","1910":"GBA3","1912":"GBA3","1916":"GBA3","1823":"GBA2","1833":"GBA2","1721":"GBA1","1724":"GBA1","1743":"GBA1","1840":"GBA1","1855":"GBA1","1883":"GBA1","1687":"GBA2","1861":"GBA1","1608":"GBA1","1482":"GBA1","1821":"GBA2","1710":"GBA1","1782":"CABA","1654":"GBA2","1851":"GBA1","1632":"GBA1","1860":"GBA1","1859":"GBA1","1626":"GBA1","1652":"GBA2","1690":"GBA1","1691":"GBA1","1692":"GBA2","1717":"GBA3","1756":"GBA2","1780":"GBA2","1781":"GBA2","1783":"GBA3","1784":"GBA3","1786":"GBA1","1787":"GBA3","1788":"GBA3","1789":"GBA1","1790":"GBA3","1791":"GBA3","1792":"GBA2","1793":"GBA3","1809":"GBA1","1811":"GBA3","1813":"GBA1","1857":"GBA1","1866":"GBA3","1871":"GBA2","1892":"GBA1","6702":"GBA3","6730":"GBA3","1820":"GBA2","1920":"GBA3","1818":"GBA1","1767":"GBA2","1516":"GBA1","6709":"GBA3","1777":"GBA1","1656":"GBA2","1960":"GBA1","1479":"CABA","1732":"CABA","1472":"CABA","1800":"GBA2","1705":"GBA2"};
+const WEBHOOK={{ webhook | json }};
+const FALLBACK_WA_URL={{ fallback_webhook | json }};
+const WA={{ wa | default: '' | json }};
+
+let S={cp:'',zone:'',carrier:'',payment:'',price:0,unitPrice:0,bundleLabel:'',title:'',variant:'',image:'',handle:'',variantId:'',sku:'',qty:1,shipCost:0,amba:false};
+const $=id=>document.getElementById(id);
+const fmt=n=>'$'+Math.round(n).toLocaleString('es-AR');
+
+/* ─── Kaching Bundles: lee la oferta seleccionada (cantidad + precio total) ───
+   Las definiciones (dealBars con quantity, discountType y discountValue) vienen server-rendered en
+   <script class="kaching-bundles-deal-block-settings">. El bar elegido en el DOM lleva
+   data-deal-bar-id + la clase .kaching-bundles__bar--selected. Mapeamos id→oferta.
+
+   IMPORTANTE: discountValue NO siempre es el precio total del pack. Depende de discountType:
+     · 'specific'/'fixed_price'  → discountValue ES el total del pack (ej. 45000).
+     · 'percentage'             → discountValue es un % OFF sobre el precio regular (unit*qty).
+                                  ej. un 2x1 configurado como percentage 50 → 45000*2*(1-.5)=45000.
+     · 'amount'/'fixed_amount'  → discountValue es un monto fijo a descontar del precio regular.
+   Si tomáramos discountValue directo como total (bug histórico), una oferta en % mostraría "$50".
+   Por eso computamos el total real con computeBundleTotal(), usando el precio unitario del variant.
+   Degradación: si no hay Kaching o no se puede leer, devuelve null y se usa el precio unitario. */
+function computeBundleTotal(deal,unitPrice,qty){
+  var v=Number(deal.value)||0;
+  var regular=(Number(unitPrice)||0)*qty;
+  var type=String(deal.type||'').toLowerCase();
+  if(type==='percentage'||type==='percent'){
+    if(regular>0)return Math.round(regular*(1-v/100));
+    return 0;
+  }
+  if(type==='amount'||type==='fixed_amount'||type==='fixed'){
+    if(regular>0)return Math.max(0,Math.round(regular-v));
+    return 0;
+  }
+  /* 'specific'/'fixed_price'/'price' y cualquier otro: discountValue = total fijo del pack */
+  return Math.round(v);
+}
+function getKachingSelection(unitPrice){
+  try{
+    var cfgEl=document.querySelector('script.kaching-bundles-deal-block-settings');
+    if(!cfgEl)return null;
+    var cfg=JSON.parse(cfgEl.textContent||'{}');
+    var bars=cfg.dealBars||[];
+    if(!bars.length)return null;
+    var byId={};bars.forEach(function(b){byId[b.id]={qty:b.quantity||1,type:b.discountType,value:b.discountValue,title:b.title||''};});
+    var selId=null;
+    /* 1) bar marcado como seleccionado en el DOM */
+    var selEl=document.querySelector('.kaching-bundles__bar--selected, .kaching-bundles__bar[selected]');
+    if(selEl){
+      var host=selEl.matches('[data-deal-bar-id]')?selEl:(selEl.closest('[data-deal-bar-id]')||selEl.querySelector('[data-deal-bar-id]'));
+      if(host)selId=host.getAttribute('data-deal-bar-id');
+    }
+    /* 2) fallback: radio chequeado dentro de un bar */
+    if(!selId){
+      var checked=document.querySelector('.kaching-bundles__bar-radio:checked, .kaching-bundles__bar input[type=radio]:checked');
+      if(checked){var h2=checked.closest('[data-deal-bar-id]');if(h2)selId=h2.getAttribute('data-deal-bar-id');}
+    }
+    /* 3) fallback: preseleccionado de la config */
+    if(!selId)selId=cfg.preselectedDealBarId;
+    var deal=selId&&byId[selId];
+    if(!deal)return null;
+    var qty=deal.qty||1;
+    var total=computeBundleTotal(deal,unitPrice,qty);
+    if(!(total>0))return null;
+    return {quantity:qty,total:total,label:deal.title};
+  }catch(e){return null;}
+}
+
+function open(d){
+  Object.assign(S,d);
+  $('codImg').src=S.image;$('codName').textContent=S.title;
+  $('codVar').textContent=(S.qty>1)?('1 pack de '+S.qty):'1 unidad';
+  $('codPrice').textContent=fmt(S.price);
+  $('fCP').value='';$('dynSection').style.display='none';$('codSuccess').style.display='none';$('codForm').style.display='block';$('codSubmit').disabled=true;
+  if($('fDni')){$('fDni').value='';$('fDni').classList.remove('input-error');}
+  if($('dniError'))$('dniError').style.display='none';
+  if($('fLat'))$('fLat').value='';
+  if($('fLng'))$('fLng').value='';
+  if($('fAddrValidated'))$('fAddrValidated').value='0';
+  if($('addrOk'))$('addrOk').classList.remove('show');
+  if($('addrWarn'))$('addrWarn').classList.remove('show');
+  $('codOverlay').classList.add('active');document.body.style.overflow='hidden';
+  _submitting=false;
+  setTimeout(()=>$('fName').focus(),300);
+}
+function close(){$('codOverlay').classList.remove('active');document.body.style.overflow='';}
+$('codClose').addEventListener('click',close);
+$('codOverlay').addEventListener('click',e=>{if(e.target===$('codOverlay'))close();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')close();});
+
+function validatePhone(){
+  const raw=$('fPhone').value.trim();const errEl=$('phoneError');const input=$('fPhone');
+  if(!raw){input.classList.remove('input-error');errEl.style.display='none';return false;}
+  let p=raw.replace(/[\s\-\+\(\)]/g,'');
+  if(p.startsWith('54'))p=p.substring(2);if(p.startsWith('9')&&p.length===11)p=p.substring(1);
+  if(p.length===10&&p.startsWith('15'))p='11'+p.substring(2);
+  const valid=/^\d+$/.test(p)&&p.length>=8&&p.length<=12;
+  if(!valid){input.classList.add('input-error');
+    if(p.length<8)errEl.textContent='El número es muy corto, verificalo';
+    else if(p.length>12)errEl.textContent='El número es muy largo, verificalo';
+    else if(!/^\d+$/.test(p))errEl.textContent='Solo podés usar números';
+    else errEl.textContent='Número de teléfono inválido';
+    errEl.style.display='block';
+  }else{input.classList.remove('input-error');errEl.style.display='none';}
+  return valid;
+}
+$('fPhone').addEventListener('blur',validatePhone);
+$('fPhone').addEventListener('input',function(){if(this.classList.contains('input-error'))validatePhone();});
+
+/* DNI (7-8 dígitos, sin puntos) */
+function validateDni(){
+  const input=$('fDni');const errEl=$('dniError');
+  if(!input)return false;
+  const raw=input.value.trim();
+  const clean=raw.replace(/\D/g,'');
+  if(clean!==raw)input.value=clean;
+  if(!clean){input.classList.remove('input-error');if(errEl)errEl.style.display='none';return false;}
+  const valid=/^\d{7,8}$/.test(clean);
+  if(!valid){
+    input.classList.add('input-error');
+    if(errEl){errEl.textContent='El DNI debe tener 7 u 8 dígitos sin puntos';errEl.style.display='block';}
+  }else{
+    input.classList.remove('input-error');
+    if(errEl)errEl.style.display='none';
+  }
+  return valid;
+}
+if($('fDni')){
+  $('fDni').addEventListener('blur',validateDni);
+  $('fDni').addEventListener('input',function(){
+    const c=this.value.replace(/\D/g,'');
+    if(c!==this.value)this.value=c;
+    if(this.classList.contains('input-error'))validateDni();
+  });
+}
+
+/* Google Places Autocomplete (lazy load on first focus) */
+let _gmapsLoading=false, _gmapsReady=false, _autocomplete=null;
+window.__codInitAutocomplete=function(){
+  _gmapsReady=true;
+  try{
+    const streetEl=$('fStreet');
+    if(!streetEl||!window.google||!window.google.maps||!window.google.maps.places)return;
+    _autocomplete=new google.maps.places.Autocomplete(streetEl,{
+      componentRestrictions:{country:'ar'},
+      fields:['address_components','geometry','formatted_address'],
+      types:['address']
+    });
+    _autocomplete.addListener('place_changed',onPlaceSelected);
+  }catch(e){}
+};
+function loadGmapsLazy(){
+  if(_gmapsReady||_gmapsLoading)return;
+  if(!GMAPS_KEY){return;}
+  _gmapsLoading=true;
+  if(window.google&&window.google.maps&&window.google.maps.places){window.__codInitAutocomplete();return;}
+  const s=document.createElement('script');
+  s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(GMAPS_KEY)+'&libraries=places&callback=__codInitAutocomplete&loading=async';
+  s.async=true;s.defer=true;
+  s.onerror=function(){_gmapsLoading=false;};
+  document.head.appendChild(s);
+}
+function onPlaceSelected(){
+  if(!_autocomplete)return;
+  let place;
+  try{place=_autocomplete.getPlace();}catch(e){return;}
+  if(!place||!place.address_components)return;
+  const get=(type,short)=>{
+    const c=place.address_components.find(x=>x.types&&x.types.indexOf(type)>-1);
+    return c?(short?c.short_name:c.long_name):'';
+  };
+  const route=get('route');
+  const streetNum=get('street_number');
+  const city=get('locality')||get('sublocality')||get('administrative_area_level_2');
+  const prov=get('administrative_area_level_1');
+  const cp=get('postal_code');
+  if(route)$('fStreet').value=route;
+  if(streetNum)$('fNum').value=streetNum;
+  if(city)$('fCity').value=city;
+  if(prov){
+    const provNorm=normalizeProv(prov);
+    const sel=$('fProv');
+    const found=Array.from(sel.options).find(o=>o.value===provNorm||o.text===provNorm);
+    if(found)sel.value=found.value||found.text;
+    sel.dispatchEvent(new Event('change'));
+  }
+  if(cp){
+    $('fCP').value=cp;
+    $('fCP').dispatchEvent(new Event('input'));
+  }
+  if(place.geometry&&place.geometry.location){
+    try{
+      $('fLat').value=place.geometry.location.lat();
+      $('fLng').value=place.geometry.location.lng();
+    }catch(_){}
+  }
+  $('fAddrValidated').value='1';
+  if($('addrOk'))$('addrOk').classList.add('show');
+  if($('addrWarn'))$('addrWarn').classList.remove('show');
+}
+function normalizeProv(p){
+  if(!p)return '';
+  const x=p.toLowerCase();
+  if(x.indexOf('ciudad aut')>-1||x.indexOf('buenos aires city')>-1||x==='caba')return 'CABA';
+  if(x==='provincia de buenos aires'||x==='buenos aires province')return 'Buenos Aires';
+  return p.replace(/^provincia de /i,'').replace(/^\w/u,c=>c.toUpperCase());
+}
+if($('fStreet')){
+  $('fStreet').addEventListener('focus',loadGmapsLazy,{once:false});
+  $('fStreet').addEventListener('input',function(){
+    if($('fAddrValidated').value==='1'){
+      $('fAddrValidated').value='0';
+      $('fLat').value='';$('fLng').value='';
+      if($('addrOk'))$('addrOk').classList.remove('show');
+    }
+  });
+  $('fStreet').addEventListener('blur',function(){
+    setTimeout(function(){
+      const hasText=$('fStreet').value.trim().length>0;
+      const validated=$('fAddrValidated').value==='1';
+      if(hasText&&!validated&&GMAPS_KEY){
+        if($('addrWarn'))$('addrWarn').classList.add('show');
+      }else{
+        if($('addrWarn'))$('addrWarn').classList.remove('show');
+      }
+    },250);
+  });
+}
+
+let cpTimer;
+$('fCP').addEventListener('input',function(){clearTimeout(cpTimer);const cp=this.value.trim();if(cp.length<4){$('dynSection').style.display='none';$('cpStatus').style.display='none';return;}cpTimer=setTimeout(()=>detectCP(cp),400);});
+
+function detectCP(cp){
+  /* Se normaliza ANTES de rutear: el CP es el primer bloque de 4 dígitos que no arranca
+     en 0, con espacios colapsados ("B1636ABC" → 1636, "18 32" → 1832). Sin esto un CPA
+     de AMBA no matchea la tabla FIXY y el pedido se rutea al interior, y un CP basura
+     ("S200", "COMUNA 3") viaja crudo al server, que ahora lo rechaza. */
+  var cpn=(String(cp).replace(/\s+/g,'').match(/[1-9]\d{3}/)||[])[0];
+  if(cpn)cp=cpn;
+  S.cp=cp;S.shipCost=0;
+  /* Envío gratis siempre. Sólo determinamos AMBA (Fixy efectivo) vs interior (Urbano QR MP). */
+  if(FIXY[cp]){S.zone=FIXY[cp];S.amba=true;showStatus('✓','#059669');showShipBadge('🚚 Envío gratis — entrega en 24-72hs hábiles');buildPayOpts(true);}
+  else{S.zone='';S.amba=false;showStatus('✓','#2563eb');showShipBadge('🚚 Envío gratis — Andreani/Urbano 48-96hs hábiles');buildPayOpts(false);}
+  $('dynSection').style.display='block';updateSum();
+}
+$('fProv').addEventListener('change',()=>{const cp=$('fCP').value.trim();if(cp.length>=4)detectCP(cp);});
+function showStatus(icon,color){const el=$('cpStatus');el.textContent=icon;el.style.color=color;el.style.display='block';}
+function showShipBadge(text){$('shipBadge').innerHTML='<div class="cod-ship-badge">'+text+'</div>';}
+
+function buildPayOpts(isAmba){
+  let h='';
+  /* Efectivo al recibir vía Fixy — SOLO AMBA (Fixy no opera en el interior) */
+  if(isAmba){
+    h+='<label class="cod-pay" data-p="cod_efectivo"><input type="radio" name="pay" value="cod_efectivo"><div><p class="pay-t">Efectivo — Pagás al recibir <span class="cod-badge bg-g">COD</span></p><p class="pay-d">El cadete cobra en tu puerta en efectivo. Solo CABA y AMBA (Fixy).</p></div></label>';
+  }
+  /* QR de Mercado Pago al recibir — SIEMPRE. En AMBA lo cobra Fixy; en el interior, Urbano. */
+  if(isAmba){
+    h+='<label class="cod-pay" data-p="cod_qr_mp"><input type="radio" name="pay" value="cod_qr_mp"><div><p class="pay-t">QR — Pagás al recibir <span class="cod-badge bg-g">COD</span></p><p class="pay-d">Escaneás el QR de Mercado Pago cuando el cadete te entrega. Cualquier billetera o tarjeta en 1 pago. CABA y AMBA (Fixy).</p></div></label>';
+  } else {
+    h+='<label class="cod-pay" data-p="cod_qr_mp"><input type="radio" name="pay" value="cod_qr_mp"><div><p class="pay-t">QR — Pagás al recibir <span class="cod-badge bg-g">COD</span></p><p class="pay-d">Escaneás el QR de Mercado Pago cuando te llega el pedido. Envío Urbano a todo el país.</p></div></label>';
+  }
+  /* Mercado Pago — 3 cuotas sin interés (Correo Argentino, link MP) — RECOMENDADO */
+  var cuotaVal=Math.round(S.price/3).toLocaleString('es-AR');
+  var mpIcon='<img src="https://cdn.shopify.com/s/files/1/0806/1386/7760/files/descarga.png?v=1781542459" alt="Mercado Pago" width="22" height="22" style="flex:0 0 auto;object-fit:contain" loading="lazy">';
+  h+='<label class="cod-pay" data-p="cuotas_3"><input type="radio" name="pay" value="cuotas_3"><div><p class="pay-t" style="display:flex;align-items:center;gap:6px">'+mpIcon+'Mercado Pago <span class="cod-badge" style="background:#ff2e7e1f;color:#ff2e7e">🔥 Recomendado</span></p><p class="pay-d">Hasta 3 cuotas sin interés de $'+cuotaVal+'/mes con tarjeta.</p></div></label>';
+  $('payOpts').innerHTML=h;
+  /* Transferencia APAGADA (2026-07-10). Default: primera opción disponible (COD según zona). */
+  $('billingSection').style.display='none';
+  var firstOpt=$('payOpts').querySelector('.cod-pay');
+  if(firstOpt){
+    firstOpt.classList.add('sel');
+    var firstInput=firstOpt.querySelector('input');firstInput.checked=true;
+    S.payment=firstInput.value;S.carrier=carrierFor(S.payment);
+    $('codSubmit').disabled=false;
+  }
+  $('payOpts').querySelectorAll('.cod-pay').forEach(opt=>{
+    opt.addEventListener('click',()=>{
+      $('payOpts').querySelectorAll('.cod-pay').forEach(o=>o.classList.remove('sel'));
+      opt.classList.add('sel');opt.querySelector('input').checked=true;S.payment=opt.dataset.p;$('codSubmit').disabled=false;
+      S.carrier=carrierFor(S.payment);
+      updateSum();
+    });
+  });
+}
+/* Routing carrier por método de pago.
+   cod_qr_mp: en AMBA (zona Fixy) lo cobra Fixy con QR; en el interior lo cobra Urbano.
+   (cambio 2026-07-17: Fixy habilitó cobro con QR MercadoPago en la entrega) */
+function carrierFor(payment){
+  if(payment==='cod_efectivo')return 'fixy';
+  if(payment==='cod_qr_mp')return S.amba?'fixy':'urbano';
+  return 'andreani'; /* cuotas_3 → Correo Argentino (link MP) */
+}
+$('diffBilling').addEventListener('change',function(){$('billingFields').style.display=this.checked?'block':'none';});
+
+function updateSum(){
+  const sub=S.price;const isCuotas=S.payment==='cuotas_3';
+  const total=sub; /* envío gratis siempre; sin descuento prepago (transferencia apagada 2026-07-10) */
+  $('sS').textContent=fmt(sub);$('sDiscRow').style.display='none';
+  $('sShip').textContent='Gratis';$('sShip').style.color='#059669';$('sTot').textContent=fmt(total);
+  var cuotasRow=document.getElementById('sCuotasRow');
+  if(!cuotasRow){var sumEl=$('codSum');var div=document.createElement('div');div.className='cod-sum-r';div.id='sCuotasRow';div.innerHTML='<span>3 cuotas de</span><span id="sCuotas" style="color:#7c3aed;font-weight:700"></span>';sumEl.appendChild(div);cuotasRow=div;}
+  if(isCuotas){cuotasRow.style.display='flex';document.getElementById('sCuotas').textContent=fmt(Math.round(total/3))+'/mes';}else{cuotasRow.style.display='none';}
+}
+
+function waLink(text){return WA?('https://wa.me/'+WA+'?text='+encodeURIComponent(text)):'';}
+function setOkWA(text){
+  const btn=$('okWA');
+  const link=waLink(text);
+  if(link){btn.href=link;btn.style.display='inline-flex';}
+  else{btn.style.display='none';}
+}
+
+/* ═══ SUBMIT — con guard anti-duplicación ═══ */
+let _submitting = false;
+$('codSubmit').addEventListener('click', async () => {
+  if (_submitting) return;
+  _submitting = true;
+
+  const name=$('fName').value.trim();
+  const phone=(function(p){p=p.replace(/[\s\-\+\(\)]/g,'');if(p.startsWith('54'))p=p.substring(2);if(p.startsWith('9')&&p.length===11)p=p.substring(1);if(p.length===10&&p.startsWith('15'))p='11'+p.substring(2);return p;})($('fPhone').value.trim());
+  const email=$('fEmail').value.trim();const street=$('fStreet').value.trim();const num=$('fNum').value.trim();const floor=$('fFloor').value.trim();const prov=$('fProv').value;const city=$('fCity').value.trim();const notes=$('fNotes').value.trim();
+  const dni=($('fDni')?$('fDni').value:'').replace(/\D/g,'');
+  const addrLat=$('fLat')?$('fLat').value:'';
+  const addrLng=$('fLng')?$('fLng').value:'';
+  const addrValidated=$('fAddrValidated')&&$('fAddrValidated').value==='1';
+
+  if(!name||!phone||!email||!street||!num||!prov||!city){alert('Completá todos los campos obligatorios.');_submitting=false;return;}
+  /* CP: misma regla que el server (bloque de 4 dígitos que no arranca en 0; acepta CPA y
+     espacios). El server lo rechaza igual — acá se corta antes para que el comprador lo
+     corrija en el momento en vez de perder la venta: pedidos con CP basura ("S200",
+     "COMUNA 3") quedaban confirmados e imposibles de despachar. */
+  const cpm=String(S.cp||$('fCP').value||'').replace(/\s+/g,'').match(/[1-9]\d{3}/);
+  if(!cpm){alert('Revisá el código postal: son 4 números (por ejemplo 1640).');if($('fCP'))$('fCP').focus();_submitting=false;return;}
+  S.cp=cpm[0];
+  if(!dni||!/^\d{7,8}$/.test(dni)){
+    validateDni();
+    if($('fDni'))$('fDni').focus();
+    $('codSubmit').disabled=false;$('codSpin').style.display='none';_submitting=false;
+    return;
+  }
+  if(phone.length<8||phone.length>12||!/^\d+$/.test(phone)){validatePhone();$('fPhone').focus();$('codSubmit').disabled=false;$('codSpin').style.display='none';_submitting=false;return;}
+
+  $('codSubmit').disabled=true;$('codSpin').style.display='inline-block';
+
+  const isCuotas=S.payment==='cuotas_3';
+  const total=S.price; /* envío gratis; sin descuento prepago (transferencia apagada 2026-07-10) */
+  const carrier=carrierFor(S.payment);
+
+  const data={
+    product_title:S.title,product_handle:S.handle,variant_id:S.variantId,
+    quantity:S.qty,price:S.price,
+    unit_price:S.unitPrice||S.price,bundle_label:S.bundleLabel||'',
+    discount_pct:0,discount_amount:0,
+    shipping_cost:0,total:total,
+    carrier:carrier,
+    payment_method:S.payment,
+    cp:S.cp,fixy_zone:S.zone||null,
+    customer_name:name,customer_phone:phone,customer_email:email,
+    customer_dni:dni,
+    address_street:street,address_number:num,address_floor:floor,
+    address_province:prov,address_city:city,address_cp:S.cp,
+    address_lat:addrLat?parseFloat(addrLat):null,
+    address_lng:addrLng?parseFloat(addrLng):null,
+    address_validated_google:!!addrValidated,
+    billing_address:$('diffBilling')&&$('diffBilling').checked?{address:$('bAddr').value,city:$('bCity').value,province:$('bProv').value}:null,
+    notes:notes,accepts_marketing:$('fMkt').checked,
+    sku:S.sku||'',source:'cod_checkout_form_biolabs_v1',timestamp:new Date().toISOString()
+  };
+
+  /* Pre-abrir ventana ANTES de cualquier await (popup blocker bypass) — solo cuotas_3 */
+  var mpWin = null;
+  if (isCuotas) {
+    mpWin = window.open('about:blank', '_blank');
+    if (mpWin && mpWin.document) {
+      mpWin.document.write('<title>Redirigiendo a Mercado Pago…</title><style>body{font-family:system-ui,sans-serif;text-align:center;padding:60px 20px;color:#374151}.s{width:42px;height:42px;border:3px solid #e5e7eb;border-top-color:#97a159;border-radius:50%;animation:r 1s linear infinite;margin:0 auto 24px}@keyframes r{to{transform:rotate(360deg)}}</style><div class="s"></div><h2 style="font-weight:600">Generando tu link de pago…</h2><p>Te redirigimos a Mercado Pago en un instante.</p>');
+    }
+  }
+
+  try{
+    var payload=JSON.stringify(data);
+    var resp = null;
+    var initPoint = null;
+
+    if (isCuotas) {
+      /* Cuotas_3: espera respuesta sincrónica del webhook (responseMode=responseNode) para obtener init_point */
+      try{
+        var r=await fetch(WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:payload});
+        if (r.ok) { resp = await r.json(); if (resp && resp.init_point) initPoint = resp.init_point; }
+      }catch(e1){}
+
+      var popupBlocked = (!mpWin || mpWin.closed);
+
+      if (initPoint && !popupBlocked) {
+        mpWin.location.href = initPoint;
+        let msg='Te abrimos Mercado Pago en una nueva ventana para que termines tu compra en <strong>3 cuotas sin interés de '+fmt(Math.round(total/3))+'</strong>. Si la ventana no se abrió, <a href="'+initPoint+'" target="_blank" rel="noopener" style="color:#97a159;font-weight:700">tocá acá para pagar</a>.';
+        $('okMsg').innerHTML=msg;
+        setOkWA('Hola! Acabo de hacer un pedido de '+S.title+' por $'+total+' en 3 cuotas. Mi nombre es '+name+', tel: '+phone+'.');
+        $('codForm').style.display='none';$('codSuccess').style.display='block';
+        if(typeof fbq==='function'){fbq('track','Purchase',{content_name:S.title,content_ids:[S.handle],value:total,currency:'ARS',content_type:'product'});}
+      } else if (initPoint && popupBlocked) {
+        try {
+          var fbPayload = JSON.stringify({
+            cliente_telefono: (resp && resp.cliente_telefono) || phone,
+            cliente_nombre: (resp && resp.cliente_nombre) || name,
+            producto_titulo: (resp && resp.producto_titulo) || S.title,
+            cuota_display: (resp && resp.cuota_display) || ('$'+Math.round(total/3).toLocaleString('es-AR')),
+            init_point: initPoint,
+            preference_id: (resp && resp.preference_id) || null
+          });
+          fetch(FALLBACK_WA_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:fbPayload,keepalive:true}).catch(function(_){});
+        } catch(_) {}
+        let msg='No pudimos abrir Mercado Pago automáticamente (tu navegador bloqueó la ventana). <a href="'+initPoint+'" target="_blank" rel="noopener" style="color:#fff;background:#97a159;padding:12px 20px;border-radius:10px;display:inline-block;font-weight:700;text-decoration:none;margin-top:8px">💳 Pagar ahora</a><br><br><small>También te enviamos el link por WhatsApp al <strong>'+phone+'</strong>.</small>';
+        $('okMsg').innerHTML=msg;
+        setOkWA('Hola! Acabo de hacer un pedido de '+S.title+' por $'+total+' en 3 cuotas. Mi nombre es '+name+', tel: '+phone+'.');
+        $('codForm').style.display='none';$('codSuccess').style.display='block';
+        if(typeof fbq==='function'){fbq('track','Purchase',{content_name:S.title,content_ids:[S.handle],value:total,currency:'ARS',content_type:'product'});}
+      } else {
+        if (mpWin && !mpWin.closed) { try{mpWin.close();}catch(_){} }
+        try {
+          var fbPayload2 = JSON.stringify({
+            cliente_telefono: phone,
+            cliente_nombre: name,
+            producto_titulo: S.title,
+            cuota_display: '$'+Math.round(total/3).toLocaleString('es-AR'),
+            init_point: '',
+            preference_id: null
+          });
+          fetch(FALLBACK_WA_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:fbPayload2,keepalive:true}).catch(function(_){});
+        } catch(_) {}
+        $('okMsg').innerHTML='Recibimos tu pedido. Te enviamos el link de pago por WhatsApp al <strong>'+phone+'</strong> en unos minutos. Si no llega, <strong>tocá WhatsApp acá abajo</strong>.';
+        setOkWA('Hola! Hice un pedido de '+S.title+' por $'+total+' en 3 cuotas pero no pude generar el link de pago. Mi nombre es '+name+', tel: '+phone+'.');
+        $('codForm').style.display='none';$('codSuccess').style.display='block';
+      }
+    } else {
+      /* COD efectivo o QR MP: flujo async (fetch + sendBeacon + XHR fallback) */
+      var sent=false;
+      try{var r=await fetch(WEBHOOK,{method:'POST',headers:{'Content-Type':'text/plain'},body:payload,keepalive:true});if(r.ok){sent=true;}}catch(e1){}
+      if(!sent){try{if(navigator.sendBeacon){sent=navigator.sendBeacon(WEBHOOK,new Blob([payload],{type:'text/plain'}));}}catch(e3){}}
+      if(!sent){try{var xhr=new XMLHttpRequest();xhr.open('POST',WEBHOOK,true);xhr.setRequestHeader('Content-Type','text/plain');xhr.send(payload);sent=true;}catch(e4){}}
+
+      if(sent){
+        let msg;
+        if(S.payment==='cod_qr_mp'){msg='Te contactamos por WhatsApp al <strong>'+phone+'</strong> para confirmar el envío. Pagás <strong>'+fmt(total)+' escaneando el QR de Mercado Pago</strong> al recibir tu pedido.';}
+        else{msg='Te contactamos por WhatsApp al <strong>'+phone+'</strong> para confirmar el envío. Pagás <strong>'+fmt(total)+' en efectivo</strong> al recibir.';}
+        $('okMsg').innerHTML=msg;
+        setOkWA('Hola! Acabo de hacer un pedido de '+S.title+' por $'+total+'. Mi nombre es '+name+', tel: '+phone+', dirección: '+street+' '+num+', '+city+', '+prov+' ('+S.cp+').');
+        $('codForm').style.display='none';$('codSuccess').style.display='block';
+        if(typeof fbq==='function'){fbq('track','Purchase',{content_name:S.title,content_ids:[S.handle],value:total,currency:'ARS',content_type:'product'});}
+      }else{
+        var waData='[REGISTRO_PENDIENTE] Producto: '+S.title+' | SKU: '+(S.sku||'')+' | Cant: '+S.qty+' | Total: $'+total+' | Carrier: '+carrier+' | Pago: '+S.payment+' | Nombre: '+name+' | DNI: '+dni+' | Tel: '+phone+' | Email: '+email+' | Dir: '+street+' '+num+(floor?' '+floor:'')+' | Ciudad: '+city+' | Prov: '+prov+' | CP: '+S.cp;
+        let fallbackMsg='Te contactamos por WhatsApp al <strong>'+phone+'</strong> para confirmar tu pedido.';
+        fallbackMsg+='<br><strong>Tocá el botón de WhatsApp</strong> para enviarnos el comprobante y confirmar tu pedido.';
+        $('okMsg').innerHTML=fallbackMsg;setOkWA(waData);$('codForm').style.display='none';$('codSuccess').style.display='block';
+      }
+    }
+  }catch(e){
+    if (mpWin && !mpWin.closed) { try{mpWin.close();}catch(_){} }
+    alert('Error al enviar pedido:\n\n'+e.message);
+    $('codSubmit').disabled=false;$('codSpin').style.display='none';
+    _submitting=false;
+  }
+});
+
+document.addEventListener('click',e=>{
+  const btn=e.target.closest('[data-cod-trigger]');if(!btn)return;e.preventDefault();
+  const unit=parseFloat(btn.dataset.price)||0;
+  const d={title:btn.dataset.title||'',handle:btn.dataset.handle||'',variant:btn.dataset.variant||'',variantId:btn.dataset.variantId||'',price:unit,unitPrice:unit,image:btn.dataset.image||'',qty:parseInt(btn.dataset.qty)||1,sku:btn.dataset.sku||'',bundleLabel:''};
+  /* Si Kaching Bundles tiene una oferta seleccionada, reflejar cantidad + precio TOTAL de la oferta.
+     Pasamos el precio unitario del variant para poder resolver ofertas en % o monto fijo. */
+  const kb=getKachingSelection(unit);
+  if(kb){d.qty=kb.quantity;d.price=kb.total;d.bundleLabel=kb.label||('x'+kb.quantity);}
+  if(typeof fbq==='function'){fbq('track','InitiateCheckout',{content_name:d.title,content_ids:[d.handle],value:d.price,currency:'ARS'});}
+  open(d);
+});
+})();
+</script>
+
+<span data-cod-webhook="{{ webhook }}" data-cod-wa="{{ wa }}" style="display:none"></span>
+
+{% schema %}
+{
+  "name": "COD Checkout Form",
+  "class": "cod-checkout-section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "webhook_url",
+      "label": "Webhook URL (n8n)",
+      "default": "https://n8n.srv1817785.hstgr.cloud/webhook/cod-checkout?tenant=biolabs&t=9b6f9d5cd45ef76e40d29b141e03b73464ee5a86a50ac1ed",
+      "info": "URL del webhook de n8n que recibe los pedidos."
+    },
+    {
+      "type": "text",
+      "id": "fallback_webhook_url",
+      "label": "Webhook fallback WA (cuotas)",
+      "default": "https://n8n.srv1817785.hstgr.cloud/webhook/mp-fallback-wa?tenant=biolabs",
+      "info": "Webhook que envía el link de pago por WhatsApp si el popup de Mercado Pago se bloquea."
+    },
+    {
+      "type": "text",
+      "id": "whatsapp_number",
+      "label": "Número de WhatsApp",
+      "info": "Con código de país, sin + ni espacios (ej. 5491134567890). Si se deja vacío, el botón de WhatsApp del final se oculta."
+    },
+    {
+      "type": "header",
+      "content": "Google Places Autocomplete"
+    },
+    {
+      "type": "text",
+      "id": "google_maps_api_key",
+      "label": "Google Maps API key",
+      "info": "API key con Places API habilitada y restringida por HTTP referrer a *.biolabsarg.com y *.myshopify.com. Dejar vacío deshabilita el autocomplete (el form sigue funcionando manual)."
+    }
+  ]
+}
+{% endschema %}
