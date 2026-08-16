@@ -77,8 +77,7 @@ Original del theme antes del cambio, para diff o restore:
 **El theme** (es lo único que puede afectar la venta, y por eso va primero):
 
 ```bash
-node scripts/theme-asset.mjs put sections/veltron-cod-checkout-form.liquid \
-  docs/theme-backup/veltron-cod-checkout-form.ORIGINAL-2026-08-16.liquid
+node --env-file=.env.local scripts/theme-asset.mjs put sections/veltron-cod-checkout-form.liquid docs/theme-backup/veltron-cod-checkout-form.ORIGINAL-2026-08-16.liquid
 ```
 
 Restaura el archivo tal cual estaba. No hace falta tocar nada más: sin el beacon, la tabla deja de
@@ -102,3 +101,28 @@ En el bloque del theme, borrar la condición `if (S.handle !== CANARY) return;`.
 Cuando eso pase, hay que acordarse de `salud_sistema()` (migración 068): la alerta de atribución
 cuenta `utm_content` en `note_attributes`, así que va a seguir gritando "0 pedidos con utm_content"
 aunque el cruce funcione. Mientras sea canary la alerta es correcta y no hay que tocarla.
+
+## Qué se verificó el 16/08/2026
+
+Contra la landing real, con `?utm_content=120251177936560257` (un ad de Pureza con gasto, elegido
+para que el cruce muestre nombre):
+
+- El `ad_id` de la URL queda en `sessionStorage`. Sin errores en consola.
+- En **Altus**, al completar el teléfono el beacon sale y la fila entra con `ad_id`, `handle` y
+  `phone_tail` correctos.
+- En **Bee Venom** (que sí tiene pauta corriendo), el mismo recorrido **no dispara nada**: el candado
+  por handle corta antes. Es la prueba de que el resto de las landings quedó inerte.
+- El endpoint responde 204 al payload válido y 400 a las tres formas inválidas (sin `ad_id`, body que
+  no es JSON, teléfono corto).
+- `anuncios_check.sql` pasa los 3 asserts nuevos: cruce por teléfono con formatos distintos,
+  precedencia de `note_attributes`, y beacon fuera de ventana que no atribuye.
+
+**Falta la última milla:** un pedido de verdad entrando por el form de Altus, para ver el cruce
+completo en `/anuncios`. Eso necesita una compra real.
+
+## Deuda conocida
+
+`npm run test:db` está rojo desde la migración 074 por un drift de `shipment_events` que no tiene que
+ver con esto (prod no tiene la columna `status_canonical` que declara `001_init.sql`). La 075 se
+verificó corriendo `anuncios_check.sql` sola contra la base embebida. Mientras eso siga rojo, el
+candado de "test verde antes de aplicar" no está disponible para nadie.
