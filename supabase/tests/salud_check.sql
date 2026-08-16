@@ -68,4 +68,23 @@ do $$ begin
     'con atribución sana no tiene que gritar';
 end $$;
 
+-- 4b (076). El camino de note_attributes está muerto desde el 06/07: hoy la cobertura la da el
+-- beacon del form. Sin este caso, la alerta gritaría todos los días con el arreglo funcionando —
+-- que es la forma más común de apagar una alerta sin darse cuenta.
+update orders set raw = jsonb_build_object('note_attributes', '[]'::jsonb),
+                  phone = '11' || lpad((id - 900000)::text, 8, '0')
+where id between 900001 and 900025;
+do $$ begin
+  assert (select count(*) from salud_sistema() where area = 'atribución') = 1,
+    '076: sin note_attributes y sin beacon, sigue gritando';
+end $$;
+
+insert into atribucion_form (phone, ad_id, created_at)
+select '11' || lpad(g::text, 8, '0'), 'AD-SALUD', now() - interval '1 day'
+from generate_series(1, 25) g;
+do $$ begin
+  assert (select count(*) from salud_sistema() where area = 'atribución') = 0,
+    '076: el beacon cuenta como atribución — la alerta se calla sin necesitar note_attributes';
+end $$;
+
 rollback;

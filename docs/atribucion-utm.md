@@ -1,6 +1,7 @@
 # Atribución venta ↔ anuncio (el UTM del form COD)
 
-**Estado:** canary en la landing de ALTUS, desde el 16/08/2026. No está vivo para el resto.
+**Estado:** vivo en todas las landings desde el 16/08/2026. Se probó primero solo en ALTUS (pedido
+20031, cruzado y visto en `/anuncios`) y se abrió el mismo día.
 
 ## Qué se rompió y cuándo
 
@@ -94,13 +95,41 @@ La 051 es la definición vieja, sin el `coalesce`. Es un `create or replace`, as
 **La tabla** se puede dejar donde está: no la lee nadie más que la RPC. Si molesta,
 `drop table atribucion_form;` después de revertir la RPC, nunca antes.
 
-## Ampliar de Altus a todas las landings
+## Cómo se chequea que siga funcionando
 
-En el bloque del theme, borrar la condición `if (S.handle !== CANARY) return;`. Nada más.
+No hay que acordarse de mirar nada: quedó colgado de las alertas que ya existen.
 
-Cuando eso pase, hay que acordarse de `salud_sistema()` (migración 068): la alerta de atribución
-cuenta `utm_content` en `note_attributes`, así que va a seguir gritando "0 pedidos con utm_content"
-aunque el cruce funcione. Mientras sea canary la alerta es correcta y no hay que tocarla.
+**`salud_sistema()`, bloque `atribución`** (migración 076). Antes contaba `utm_content` en
+`note_attributes` — con el arreglo vivo eso da 0% para siempre y grita todos los días, que es la forma
+más común de apagar una alerta sin darse cuenta. Ahora mide la **cobertura real**: pedidos de ayer a
+los que se les puede poner un anuncio por cualquiera de los dos caminos. Salta en AMARILLO bajo 40%
+(el histórico sano era ~90%) y pide más de 20 pedidos para no gritar por un día flojo. La corrida
+horaria de salud ya la levanta.
+
+Si esa alerta se enciende de ahora en adelante, lo que se rompió es el beacon: el bloque del theme,
+`/api/atribucion` o la tabla. Ese es el diagnóstico, no hay que buscarlo.
+
+**El panel `/anuncios`** tiene su propio aviso, independiente: si la cobertura baja de 60% con más de
+30 pedidos, dibuja la banda de atribución rota arriba del desglose. Sirve de segundo par de ojos con
+otro umbral.
+
+**A mano, si hace falta el número exacto:**
+
+```sql
+select count(*) as pedidos,
+       count(*) filter (where ad_id_atribuido(raw, phone, created_at) is not null) as atribuidos
+from orders where created_at::date = current_date - 1 and cancelled_at is null;
+```
+
+`ad_id_atribuido()` es la regla completa y es **la única copia**: la usan el panel y la alerta. Si
+algún día cambia el criterio, se toca ahí y los dos se enteran.
+
+### Qué esperar los primeros días
+
+El día que se abrió (16/08) la alerta seguía en 0%: mide *ayer*, y ayer no había beacon. El primer
+número real es el del 18/08. Si a las 48 h la cobertura no se parece al ~90% histórico, el beacon está
+saliendo pero no cruzando — mirar primero si `atribucion_form` recibe filas (si no recibe, es el
+theme; si recibe y no cruzan, es el teléfono o la ventana).
 
 ## Qué se verificó el 16/08/2026
 
