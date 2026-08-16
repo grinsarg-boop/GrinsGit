@@ -28,9 +28,24 @@ Shopify**. n8n no reenvía el payload crudo: lee una lista fija de campos. La pr
 que escribe en cada pedido —`Canal: … | Pago: … | Oferta: …`— compuesto a partir de
 `carrier` / `payment_method` / `bundle_label`. Un campo nuevo en el payload no aparece en ningún lado.
 
-El arreglo prolijo es un campo en ese nodo de n8n. No se hizo porque el `N8N_API_KEY` de `.env.local`
-devuelve **401** y no hay forma de entrar desde acá. Si algún día se renueva, esa sigue siendo la
-mejor versión: es exacta y no necesita cruzar por teléfono.
+Agregar ese campo en n8n tampoco es una opción: **esa instancia es de Veltron y no se toca**
+(decidido por Pancho, 16/08/2026). No es un problema de credenciales que se destrabe consiguiendo una
+key — es infraestructura de un tercero.
+
+Hay dos n8n distintos, y conviene tenerlo claro porque el 401 engaña:
+
+| instancia | qué es | la key de `.env.local` |
+|---|---|---|
+| `biolabs.app.n8n.cloud` | la nuestra (botones AppAds, Fábrica, reportes) | **200** — anda |
+| `n8n.srv1817785.hstgr.cloud` | la de Veltron, **crea todos los pedidos COD** | **401** — no es nuestra |
+
+Renovar el `N8N_API_KEY` no cambia nada: está viva, es de la otra instancia.
+
+⇒ **Cruzar por afuera no es un rodeo temporal, es la solución.** Cualquier cosa que en el futuro
+necesite que el pedido nazca con un dato nuevo se resuelve de nuestro lado, igual que esto.
+
+Y queda dicho aparte, porque es un riesgo que no controlamos: la instancia de Veltron está en el
+camino crítico de toda la facturación COD. Si se cae, no entra ningún pedido.
 
 ## Cómo funciona lo que sí se hizo
 
@@ -146,8 +161,16 @@ para que el cruce muestre nombre):
 - `anuncios_check.sql` pasa los 3 asserts nuevos: cruce por teléfono con formatos distintos,
   precedencia de `note_attributes`, y beacon fuera de ventana que no atribuye.
 
-**Falta la última milla:** un pedido de verdad entrando por el form de Altus, para ver el cruce
-completo en `/anuncios`. Eso necesita una compra real.
+**La última milla, cerrada.** Pedido real 20031 por el form de Altus: el beacon guardó
+`5491157712384` y el pedido quedó con `1157712384` —la normalización del form se comió el `+54` y el
+`9`— y cruzó igual, porque el join va por los últimos 8. Era la hipótesis más frágil del diseño y se
+validó con datos de verdad, no de test. `anuncios_pnl` lo devolvió bajo
+`120251177936560257 · pureza-02-mix-base-v02 · cbo-sinx1-pureza-02-50k`.
+
+Después de abrir el candado se verificó que Bee Venom (que antes no disparaba) sí manda el beacon con
+su propio handle, y que Pureza abre el form con los cuatro campos clave y sin errores de consola. La
+primera carga tras escribir el theme vino cacheada por el CDN de Shopify: al probar un cambio de
+theme, forzar una copia fresca con un parámetro de query.
 
 ## Deuda conocida
 
