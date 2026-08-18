@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import { buildPdf, sortOrder, type SortKey } from "./label-prep";
+import { buildPdf, parseFixyBox, sortOrder, type SortKey } from "./label-prep";
 import { extractLabels } from "./label-picking";
 
 const CORREO: [number, number] = [841.89, 595.276]; // A4 apaisada, la geometría real de MiCorreo
@@ -100,6 +100,45 @@ describe("buildPdf", () => {
     const urbano = await pdfCorreo([16003], [425.2, 283.5]);
     const r2 = await buildPdf([urbano], [{ file: 0, page: 1, courier: "urbano" as const, code: "B2" }]);
     expect((await PDFDocument.load(r2.pdf)).getPage(0).getSize().width).toBeCloseTo(425.2, 0);
+  });
+
+  // Fixy manda A4 con la etiqueta adentro y el borde dibujado como un rectángulo gris: ese
+  // rectángulo es el recorte. Los 3 trozos son content stream REAL, copiados de los PDFs de Fixy.
+  describe("parseFixyBox", () => {
+    const stream = (cm: string, re: string) =>
+      `.23999999 0 0 -.23999999 0 841.91998 cm\nq\n46.875 46.875 2385.4492 3413.4766 re\nW* n\nq\n` +
+      `${cm} cm\n.8275 .8275 .8275 RG .8275 .8275 .8275 rg\n/G3 gs\n${re} re\nS\nQ\n`;
+
+    it("layout FIXYPAY QR (17/08): la etiqueta ya viene a 10×15 sobre la A4", () => {
+      const box = parseFixyBox(stream("2.9375 0 0 2.9375 46.875 46.875", "218.5 5.5 376 566"), 841.92)!;
+      expect(box.right - box.left).toBeCloseTo(265.1, 0);
+      expect(box.top - box.bottom).toBeCloseTo(399.0, 0);
+      expect(box.left).toBeCloseTo(165.3, 0);
+    });
+
+    // El offset cambia entre páginas del mismo PDF y a partir de la 2 el translate es negativo:
+    // con /(\d+)/ en vez de /(-?\d+)/ solo recortaba la primera página de cada archivo.
+    it("página con translate negativo: mismo tamaño, corrido 3,5 pt", () => {
+      const box = parseFixyBox(stream("2.9375 0 0 2.9375 46.875 -3369.4375", "218.5 1163.5 376 566"), 841.92)!;
+      expect(box.right - box.left).toBeCloseTo(265.1, 0);
+      expect(box.top).toBeCloseTo(830.3, 0);
+    });
+
+    it("layout viejo (A4 entera): sale el recuadro grande, buildPdf lo achica", () => {
+      const box = parseFixyBox(stream("5.7187505 0 0 5.7187505 46.875 46.875", "20.5 5.5 376 566"), 841.92)!;
+      expect(box.right - box.left).toBeCloseTo(516.1, 0);
+      expect(box.top - box.bottom).toBeCloseTo(776.8, 0);
+    });
+
+    it("sin borde gris (layout del 06/07, que lo dibuja relleno) no recorta", () => {
+      const s = `.23999999 0 0 -.23999999 0 841.91998 cm\nq\n6.18 0 0 6.18 46.875 46.875 cm\n` +
+        `.8275 .8275 .8275 RG\n4 5 378 1 re\nf\n381 5 1 547 re\nf\n`;
+      expect(parseFixyBox(s, 841.92)).toBeNull();
+    });
+
+    it("un recuadro más alto que la hoja es un falso positivo", () => {
+      expect(parseFixyBox(stream("5.7187505 0 0 5.7187505 46.875 46.875", "20.5 5.5 376 900"), 841.92)).toBeNull();
+    });
   });
 
   it("no estampa si la geometría no es la validada para ese courier", { timeout: 30000 }, async () => {

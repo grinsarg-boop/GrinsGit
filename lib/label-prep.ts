@@ -1,7 +1,7 @@
 // Preparador de etiquetas: ordena las páginas de uno o varios PDFs por producto y unidades, y
 // estampa el código de producto (B3 = BeeVenom x3) para no tener que ordenar los bultos a mano.
 // pdf-lib puro, corre en el navegador — el PDF nunca sale de la máquina.
-import { PDFDocument, StandardFonts, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFArray, PDFDocument, StandardFonts, decodePDFRawStream, type PDFFont, type PDFPage, type PDFRawStream } from "pdf-lib";
 import type { LabelCourier } from "./label-picking";
 
 // Dónde va el código, por courier. Cada posición está validada mirando el PDF rasterizado de
@@ -25,6 +25,13 @@ const STAMP: Spot[] = [
   // las 24 páginas medidas — a la derecha del bloque REMITENTE, lejos de todo borde.
   { courier: "correo", w: 283.46, h: 425.2, x: 0, y: 252, size: 30, center: true },
   { courier: "fixy", w: 595.0, h: 841.9, x: 460, y: 380, size: 32 }, // A4 vertical — columna libre a la derecha del domicilio
+  // Fixy ya recortada a 10×15 (ver fixyCrop): la columna libre de la A4 queda FUERA de la etiqueta,
+  // así que el código se mudó adentro. El hueco se buscó uniendo la tinta de las 544 páginas de los
+  // 3 layouts que hay a mano YA RECORTADAS (que es donde se estampa) y quedándose con la caja libre
+  // en las 544: la franja de abajo a la derecha, entre la fecha de venta y el código de barras.
+  // Con el peor caso de 3 caracteres ("B12") quedan 7 pt de aire alrededor; más grande que 26 el
+  // aire baja a 5 y no vale la pena.
+  { courier: "fixy", w: 283.46, h: 425.2, x: 198, y: 56, size: 26 },
   // Urbano 15×10 apaisada: chico y centrado en la franja de arriba (pedido de Pancho 09/08 — antes
   // iba grande al medio derecha y quedaba invadiendo la etiqueta). Es la ÚNICA franja libre a todo
   // el ancho: y 272-284, medida uniendo la tinta de 112 páginas de las dos plantillas.
@@ -96,10 +103,69 @@ const OUT_H = 15 * CM;
 // Con el recuadro habría que encogerla a 0,92 y el barcode con ella.
 const CORREO_CROP = { left: 56, bottom: 132, right: 300, top: 537 }; // 244 × 405 pt
 
-// Recorta la etiqueta de la A4 y la centra en una hoja de 10×15 para la impresora térmica.
-async function correoA10x15(out: PDFDocument, orig: PDFPage): Promise<PDFPage> {
-  const emb = await out.embedPage(orig, CORREO_CROP, [1, 0, 0, 1, -CORREO_CROP.left, -CORREO_CROP.bottom]);
-  // Nunca agrandar: 1 es el tamaño con el que Correo diseñó el barcode.
+type Crop = { left: number; bottom: number; right: number; top: number };
+
+// Fixy manda A4 vertical con la etiqueta adentro y el resto en blanco. Desde el layout "FIXYPAY QR"
+// (17/08/2026) la etiqueta ya viene dibujada a 9,4 × 14,1 cm, o sea una 10×15 pegada en una hoja A4:
+// recortada entra en la térmica SIN escalar, igual que Correo.
+// El recorte no puede ser una constante porque conviven 3 layouts (265×399, 516×777 y 537×807 pt) y
+// los tres usan la MISMA medida de página, así que no hay forma de distinguirlos por geometría. Pero
+// los tres son el mismo generador y dibujan el borde de la etiqueta como un rectángulo gris
+// (0,8275) trazado: ese rectángulo ES la etiqueta, y sale del content stream. Se lee por página
+// porque el offset cambia de página a página (±3,5 pt entre la 1 y las demás del mismo PDF).
+// Sin match (el layout del 06/07 dibuja el borde con 3 rectángulos rellenos) → null → la página sale
+// A4 tal cual, que es como salía hasta ahora.
+const N = String.raw`(-?[\d.]+)`;
+const RE_FLIP = new RegExp(String.raw`([\d.]+) 0 0 -\1 0 ${N} cm`);                    // el volteo de coordenadas del generador
+const RE_BORDE = new RegExp(                                                          // el borde gris de la etiqueta
+  String.raw`([\d.]+) 0 0 \1 ${N} ${N} cm\s+0?\.8275 0?\.8275 0?\.8275 RG[^]{0,60}?${N} ${N} ${N} ${N} re\s+S`,
+);
+
+// Exportada para poder probarla contra los content streams reales sin arrastrar los PDFs al repo.
+export function parseFixyBox(contenido: string, alto: number): Crop | null {
+  const flip = contenido.match(RE_FLIP), borde = contenido.match(RE_BORDE);
+  if (!flip || !borde) return null;
+  const f = +flip[1];
+  const [, k, tx, ty, x, y, w, h] = borde.map(Number);
+  const box = {
+    left: f * (k * x + tx),
+    right: f * (k * (x + w) + tx),
+    top: +flip[2] - f * (k * y + ty),
+    bottom: +flip[2] - f * (k * (y + h) + ty),
+  };
+  // Un recuadro que no cierra o que no entra en la hoja es un falso positivo: mejor no recortar.
+  const ancho = box.right - box.left, altoBox = box.top - box.bottom;
+  if (ancho <= 0 || altoBox <= 0 || altoBox > alto) return null;
+  return box;
+}
+
+function fixyCrop(page: PDFPage): Crop | null {
+  let box: Crop | null = null;
+  try {
+    const c = page.node.Contents();
+    const partes = c instanceof PDFArray ? c.asArray().map((r) => page.doc.context.lookup(r)) : [c];
+    let s = "";
+    for (const st of partes) {
+      if (!st) continue;
+      s += new TextDecoder("latin1").decode(decodePDFRawStream(st as PDFRawStream).decode());
+    }
+    box = parseFixyBox(s, page.getSize().height);
+  } catch {
+    // Un content stream que no se puede leer no puede tirar abajo la preparación entera: sin
+    // recorte la etiqueta sale A4, que es como salía antes.
+    return null;
+  }
+  if (!box) return null;
+  // 2 pt de sangrado: el borde es un trazo centrado en el rectángulo, sin esto se corta al medio.
+  return { left: box.left - 2, bottom: box.bottom - 2, right: box.right + 2, top: box.top + 2 };
+}
+
+// Recorta la etiqueta de la hoja y la centra en una de 10×15 para la impresora térmica.
+async function recortarA10x15(out: PDFDocument, orig: PDFPage, crop: Crop): Promise<PDFPage> {
+  const emb = await out.embedPage(orig, crop, [1, 0, 0, 1, -crop.left, -crop.bottom]);
+  // Nunca agrandar: 1 es el tamaño con el que el courier diseñó el barcode. Achicar sí, y es lo que
+  // pasa con los layouts viejos de Fixy (A4 entera → 0,53): el propio Fixy imprime hoy el barcode a
+  // ese tamaño en el layout nuevo, así que es una medida que ya está probada en la calle.
   const s = Math.min(1, OUT_W / emb.width, OUT_H / emb.height);
   const hoja = out.addPage([OUT_W, OUT_H]);
   hoja.drawPage(emb, {
@@ -116,9 +182,9 @@ const esA4Apaisada = (p: PDFPage) => {
   return Math.abs(width - 841.89) <= TOL && Math.abs(height - 595.28) <= TOL;
 };
 
-// Arma el PDF de salida con las páginas en el orden pedido. Las de Correo se recortan a la etiqueta
-// y se llevan a 10×15; el resto se copia tal cual, porque copyPages preserva tamaño y orientación y
-// reescalar de más rompe el escaneo del código de barras.
+// Arma el PDF de salida con las páginas en el orden pedido. Las de Correo y Fixy se recortan a la
+// etiqueta y se llevan a 10×15; el resto se copia tal cual, porque copyPages preserva tamaño y
+// orientación y reescalar de más rompe el escaneo del código de barras.
 // `sinEstampar` = páginas con código pero geometría no validada para su courier (ver STAMP).
 export async function buildPdf(
   sources: ArrayBuffer[],
@@ -139,13 +205,15 @@ export async function buildPdf(
   for (const p of pages) {
     const copia = copied[p.file]?.[p.page - 1];
     if (!copia) continue;
+    // embedPage necesita la página del documento ORIGEN, no la copiada.
+    const orig = docs[p.file].getPage(p.page - 1);
+    const crop =
+      p.courier === "correo" && esA4Apaisada(copia) ? CORREO_CROP
+      : p.courier === "fixy" ? fixyCrop(orig)
+      : null;
     let page = copia;
-    if (p.courier === "correo" && esA4Apaisada(copia)) {
-      // embedPage necesita la página del documento ORIGEN, no la copiada.
-      page = await correoA10x15(out, docs[p.file].getPage(p.page - 1));
-    } else {
-      out.addPage(copia);
-    }
+    if (crop) page = await recortarA10x15(out, orig, crop);
+    else out.addPage(copia);
     if (p.code && !stampPage(page, p.code, p.courier ?? "?", font)) sinEstampar++;
   }
   return { pdf: await out.save(), sinEstampar };
