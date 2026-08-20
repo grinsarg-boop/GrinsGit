@@ -12,6 +12,11 @@ export type AdSpendRow = {
   campaign_name: string;
   spend: number;
   purchases: number;
+  // Cuál de las "Tienda R" pagó. Se perdía al aplanar las cuentas y hacía falta para el impuesto de
+  // la tarjeta, que NO es parejo entre cuentas: el 36,4% es de R3 (débito AstroPay de Fran, sin CUIT
+  // que lo recupere) y R2 no lo tiene. Sin esta columna el único grossing-up posible era uno plano
+  // sobre toda la pauta, que reparte el costo a los productos equivocados.
+  account_id: string;
 };
 
 // Las cuentas se queman (UNSETTLED) y se rota a la siguiente (R1 → R2 → R3 → …). Mantener la lista
@@ -82,6 +87,7 @@ async function fetchAccountInsights(account: string, sinceArg?: string, untilArg
     if (!res.ok) throw new Error(`Meta API ${res.status}: ${JSON.stringify(body.error ?? body)}`);
     for (const r of body.data ?? []) {
       rows.push({
+        account_id: account,
         date: r.date_start,
         ad_id: r.ad_id,
         ad_name: r.ad_name ?? "",
