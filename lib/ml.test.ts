@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
-import { flexPriceForCP, groupBonifByDay, mapMlOrder, parseOrderRef, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
+import { flexPriceForCP, groupBonifByDay, mapMlOrder, reEnrichFilter, parseOrderRef, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
 
 const NOW = 1_700_000_000_000;
 
@@ -236,5 +236,25 @@ describe("flexPriceForCP", () => {
   });
   it("sin tabla no inventa un precio", () => {
     expect(flexPriceForCP({}, "1188")).toBeNull();
+  });
+});
+
+// El filtro de re-consulta a MP: si el segundo conjunto se cae, "A liquidar de ML" vuelve a contar
+// como pendiente la plata ya liberada (era $99,4M contra ~$41,9M reales, 20/08/2026).
+describe("reEnrichFilter", () => {
+  const f = reEnrichFilter("2026-08-20", "2026-08-13");
+
+  it("sigue levantando las que nunca se consultaron (tax_withheld null)", () => {
+    expect(f).toContain("tax_withheld.is.null");
+  });
+
+  it("agrega las de liberación futura con ≥7 días de vida", () => {
+    expect(f).toContain("and(mp_release_date.gte.2026-08-20,created_at.lte.2026-08-13)");
+  });
+
+  it("por default usa la fecha de negocio ART, no toISOString", () => {
+    // daysAgoIso(0) en ART: entre las 21 y las 24 hs UTC ya es "mañana" y el filtro se correría
+    // un día, dejando fuera justo las que liberan hoy.
+    expect(reEnrichFilter()).toMatch(/mp_release_date\.gte\.\d{4}-\d{2}-\d{2},/);
   });
 });

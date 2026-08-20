@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { today } from "@/lib/couriers/sync";
+import { daysAgoIso } from "@/lib/format";
 import { supabaseAdmin } from "@/lib/supabase";
 import { matchProduct } from "@/lib/product-match";
 
@@ -235,11 +236,29 @@ export function sumWithholdings(charges: { name?: string; amounts?: { original?:
 // (nada de esto viene en /orders). null = pendiente; 0 = consultado sin retención. Solo marca la
 // orden si TODOS sus pagos aprobados respondieron (si no, reintenta en la próxima corrida).
 // Requiere token OAuth (scope payments); con el estático MP da 401 → queda todo pendiente, sin romper.
+// A quién se le vuelve a pedir el pago a MP. Dos conjuntos:
+//  - tax_withheld null: nunca se consultó (retención + neto, que son P&L).
+//  - fecha de liberación guardada TODAVÍA FUTURA y la venta con ≥7 días: al aprobarse el pago MP
+//    devuelve la fecha de peor caso (+28 días) y recién la adelanta cuando se entrega (~+11 real).
+//    Leyéndola una sola vez quedaba clavada en el +28 y "A liquidar de ML" contaba como pendiente
+//    plata que MP ya había liberado: $99,4M declarados contra ~$41,9M reales (20/08/2026; 20 de 20
+//    órdenes de agosto muestreadas habían movido la fecha, 18 ya en "released"). Antes del día 8 no
+//    libera ninguna (mínimo observado sobre 864 órdenes), así que preguntar antes es gastar llamadas.
+export const RELEASE_MIN_DIAS = 7;
+
+export const reEnrichFilter = (hoy = daysAgoIso(0), desde = daysAgoIso(RELEASE_MIN_DIAS)) =>
+  `tax_withheld.is.null,and(mp_release_date.gte.${hoy},created_at.lte.${desde})`;
+
 export async function enrichMlTaxes(db: Db = supabaseAdmin(), limit = 300): Promise<{ taxed: number }> {
   const { data } = await db
     .from("ml_orders")
     .select("ml_id, raw")
-    .eq("status", "paid").is("tax_withheld", null)
+    .eq("status", "paid")
+    .or(reEnrichFilter())
+    // Las que nunca se consultaron van primero: son las del P&L (tax_withheld) y no pueden quedar
+    // hambreadas por el repaso de fechas. Dentro del repaso, las más viejas primero: son las que ya
+    // liberaron, así que salen del conjunto y no vuelven.
+    .order("tax_withheld", { nullsFirst: true }).order("created_at")
     .limit(limit);
   if (!data?.length) return { taxed: 0 };
   const token = await getMlAccessToken(db);

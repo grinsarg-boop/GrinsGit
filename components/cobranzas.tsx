@@ -355,16 +355,16 @@ export async function Cobranzas() {
         </Card>
       )}
 
-      {/* A liquidar de ML: la plata retenida en el MP hasta la fecha de liberación (~28 días). */}
+      {/* A liquidar de ML: la plata retenida en el MP hasta la fecha de liberación (mediana ~11 días). */}
       {mlLiq.length > 0 && (
         <Card>
           <CardContent className="space-y-3 pt-5">
             <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
               <span className="text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
                 A liquidar de ML
-                <Tip tip="Ventas de MercadoLibre ya pagadas cuya plata todavía está retenida en el MercadoPago (MP Santi = MP DERMATECH). ML libera a ~28 días de la aprobación del pago. El neto ya viene descontado de comisión, flete y retenciones impositivas — es plata que cae tal cual. Verificado contra el detalle de liberaciones de MP." />
+                <Tip tip="Ventas de MercadoLibre ya pagadas cuya plata todavía está retenida en el MercadoPago (MP Santi = MP DERMATECH). ML libera CONTRA ENTREGA, no a plazo fijo: la mediana real son 11 días desde la venta (mínimo 8). Mientras el pedido no se entrega, MP informa su fecha de peor caso (+28 días), así que las semanas más lejanas de la tabla son proyección: esas ventas van a liberar antes. El neto ya viene descontado de comisión, flete y retenciones impositivas — es plata que cae tal cual. Verificado contra el detalle de liberaciones de MP (20/08/2026)." />
               </span>
-              <span className="text-xs text-muted-foreground">libera en el MP a ~28 días</span>
+              <span className="text-xs text-muted-foreground">libera en el MP contra entrega (~11 días)</span>
             </div>
 
             <div className="rounded-md border bg-muted/40 px-3 py-2.5">
