@@ -112,8 +112,10 @@ begin
 
   select ads, ads_sin_cohorte, profit_confirmado into s_ads, s_sin, s_pc
     from sales_days(d2, null) where sale_date = d2;
-  assert round(s_ads, 2) = 20000, format('028 ads: todo el spend con producto va a las ventas del día (got %s)', s_ads);
-  assert round(s_sin, 2) = 5000, format('028 ads: el spend sin producto es sin cohorte (got %s)', s_sin);
+  -- 081: los $5.000 sin producto ya no quedan afuera — se reparten entre los productos que vendieron
+  -- ese día. Antes eran "sin cohorte" y el profit de /ventas no los restaba nunca.
+  assert round(s_ads, 2) = 25000, format('081 ads: TODO el spend del día se imputa a las ventas (got %s)', s_ads);
+  assert round(s_sin, 2) = 0, format('081 ads: no queda pauta sin dueño (got %s)', s_sin);
 
   -- sin cohorte es whole-business: solo aparece en la vista "Todos", no al filtrar por courier
   select ads_sin_cohorte into s_sin_urb from sales_days(d2, 'urbano') where sale_date = d2;
@@ -123,8 +125,8 @@ begin
   -- Verificación sin números mágicos: borrar el ad_spend sube el profit exactamente en el ads atribuido.
   delete from ad_spend;
   select profit_confirmado into s_pc_sin from sales_days(d2, null) where sale_date = d2;
-  assert round(s_pc_sin - s_pc, 2) = 20000,
-    format('028 ads: el ads atribuido se resta del profit (sin ads %s − con ads %s = %s, esperado 20000)', s_pc_sin, s_pc, s_pc_sin - s_pc);
+  assert round(s_pc_sin - s_pc, 2) = 25000,
+    format('081 ads: el ads imputado se resta del profit (sin ads %s − con ads %s = %s, esperado 25000)', s_pc_sin, s_pc, s_pc_sin - s_pc);
 
   raise notice '028 sales_days (ads por venta + sin cohorte): OK';
 end $t$;
@@ -438,7 +440,7 @@ update settings set value = '0' where key = 'ml_ads_iva';
 do $t$
 declare
   d4 date := current_date - 8;
-  s_ads numeric; s_sin numeric;
+  s_ads numeric; s_sin numeric; s_ml numeric;
 begin
   -- venta COD del día + spend Meta: $20.000 con producto (ancla) y $5.000 sin producto (sin cohorte real)
   perform upsert_order(jsonb_build_object('id', 2231, 'name', '#2231', 'created_at', d4::text || 'T12:00:00-03:00',
@@ -455,11 +457,13 @@ begin
   insert into ml_ad_spend (date, cost) values (d4, 3000);
   perform recompute_daily_pnl(d4, current_date);
 
-  select ads, ads_sin_cohorte into s_ads, s_sin from sales_days(d4, null) where sale_date = d4;
-  -- la columna ads del día sí suma todo lo asignado: Meta (20.000) + ML (3.000)
-  assert round(s_ads, 2) = 23000, format('037: ads del día = Meta asignada + ML (got %s)', s_ads);
-  -- ANTES del fix: 25.000 − 23.000 = 2.000 (los ads ML, que no son Meta, se comían el sin cohorte)
-  assert round(s_sin, 2) = 5000, format('037: sin cohorte = solo spend Meta sin anclar, sin restar ML (got %s)', s_sin);
+  select ads, ads_sin_cohorte, ads_ml into s_ads, s_sin, s_ml from sales_days(d4, null) where sale_date = d4;
+  -- la columna ads del día suma todo: Meta (20.000 + 5.000 repartidos por la 081) + ML (3.000)
+  assert round(s_ads, 2) = 28000, format('037/081: ads del día = toda la Meta + ML (got %s)', s_ads);
+  assert round(s_ml, 2) = 3000, format('037: los Product Ads de ML se siguen contando aparte (got %s)', s_ml);
+  -- 037 seguía vivo por otra vía: si los ads de ML volvieran a restarse del total de Meta, esto daría
+  -- negativo (25.000 imputados − 25.000 Meta + 3.000 ML mal restados).
+  assert round(s_sin, 2) = 0, format('037/081: sin cohorte = 0, y sin contaminarse con ML (got %s)', s_sin);
   raise notice '037 sin-cohorte sin ML: OK';
 end $t$;
 rollback;
