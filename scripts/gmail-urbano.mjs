@@ -43,16 +43,26 @@ if (process.argv.includes('--auth')) {
     client_id: CID, redirect_uri: REDIR, response_type: 'code', access_type: 'offline',
     prompt: 'consent', scope: 'https://www.googleapis.com/auth/gmail.readonly',
   });
-  const code = await new Promise((ok) => {
-    const srv = createServer((req, res) => {
-      const c = new URL(req.url, REDIR).searchParams.get('code');
-      res.end(c ? 'Listo, ya podés cerrar esta pestaña.' : 'Sin código.');
-      if (c) { srv.close(); ok(c); }
-    }).listen(8787, () => {
-      console.log(`\nAutorizá la casilla "${alias}" en el navegador. Si no se abre solo:\n${url}\n`);
-      execFile('open', [url.toString()], () => {});
+  // Tres formas de completar el consentimiento. La de abajo (servidor en localhost) es la cómoda,
+  // pero solo sirve sentado en la Mac: Google redirige a http://localhost:8787 y eso únicamente
+  // resuelve en la máquina que corre el script. Desde el teléfono se parte en dos pasos: `--url`
+  // imprime el link para abrir en el celular, y `--code` recibe la URL a la que Google redirigió
+  // (la que "no carga") y saca el código de ahí.
+  if (process.argv.includes('--url')) { console.log(`\n${url}\n`); process.exit(0); }
+
+  const pegado = arg('--code');
+  const code = pegado
+    ? (pegado.includes('code=') ? decodeURIComponent(pegado.match(/[?&]code=([^&]+)/)[1]) : pegado)
+    : await new Promise((ok) => {
+      const srv = createServer((req, res) => {
+        const c = new URL(req.url, REDIR).searchParams.get('code');
+        res.end(c ? 'Listo, ya podés cerrar esta pestaña.' : 'Sin código.');
+        if (c) { srv.close(); ok(c); }
+      }).listen(8787, () => {
+        console.log(`\nAutorizá la casilla "${alias}" en el navegador. Si no se abre solo:\n${url}\n`);
+        execFile('open', [url.toString()], () => {});
+      });
     });
-  });
   const t = await token({ code, redirect_uri: REDIR, grant_type: 'authorization_code' });
   if (!t.refresh_token) { console.error('❌ Google no devolvió refresh_token — revocá el acceso y reintentá'); process.exit(1); }
   appendFileSync(ENV, `\nGMAIL_TOKEN_${alias}=${t.refresh_token}\n`);
