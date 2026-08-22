@@ -191,7 +191,25 @@ Y al techo de subasta al mismo tiempo.
 | 3 | **Costo por unidad TOTAL marginal > $12.500** | **GATILLÓ** | +$243.094 de gasto por **−265** unidades. Marginal negativo |
 | 4 | `acos` > `acos_benchmark` (~19,6%) | **NO gatilla** | ACOS 9,65%. `acos_benchmark` tampoco es leíble (400 en ambos endpoints), así que se compara contra el número escrito, no contra el vivo — anotado como umbral envejecido |
 
-**Veredicto de la campaña `goteros`: FRENAR el escalón**, por el freno 3.
+> ## ⚖️ Decisión de Pancho — 21/08/2026, sobre este diagnóstico
+>
+> **Sobre el bloqueo de MLA3356284130: no hay nada que hacer.** No se puede destrabar y **no se puede
+> solicitar revisión**. Los ~$390 k/día no son una tarea pendiente: son un costo a absorber hasta que
+> ML lo libere por su cuenta. Todo paso de panel de este informe que suponga pedir revisión de esa
+> publicación está muerto.
+>
+> **Sobre `goteros`: NO se frena. La campaña queda como está.** Pancho: *"No está quemando, hoy ya van
+> 6 M brutos en ML y considero rentable."* Su criterio es el resultado del canal completo, no el
+> rendimiento del último escalón.
+>
+> Los dos pueden ser ciertos a la vez y conviene que quede claro cuál dice qué: la medición de abajo
+> es del gasto **marginal** del escalón del 14/08 (+$243.094 compraron −265 unidades totales), que es
+> compatible con que la campaña completa sea rentable. Marginal y total no son lo mismo. **La decisión
+> es de Pancho y manda**; la medición queda registrada por si el escalón se vuelve a mirar.
+
+**Veredicto de la campaña `goteros`: FRENAR el escalón**, por el freno 3. ⚠️ **NO EJECUTADO — Pancho
+decidió lo contrario el 21/08** (ver el recuadro de arriba). Lo que sigue es el análisis que sostenía
+la recomendación, no una acción pendiente.
 
 ### 4.e — La trampa que hay que no pisar
 

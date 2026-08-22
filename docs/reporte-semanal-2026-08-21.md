@@ -269,10 +269,12 @@ para escalar gasto**. La semana 08–14 corría *arriba* del breakeven.
 
 ## 7. Lectura y acciones
 
-1. **Todo el agujero es ML: −$5,17 M en una semana**, contra +$4,76 M que sumó el COD. La causa
-   está identificada: bloqueo de moderación de MLA3356284130 desde el 19/08 (~$390 k/día, y al
-   21/08 **no se puede pedir revisión**) y el escalón de pauta del 14/08. 16 pasos de panel en
-   `docs/diagnostico-ml-caida-2026-08-21.md`.
+1. **Todo el agujero es ML: −$5,17 M en una semana**, contra +$4,76 M que sumó el COD.
+   **Decidido el 21/08 (Pancho):** el bloqueo de MLA3356284130 **no se puede destrabar ni pedir
+   revisión** — los ~$390 k/día son costo a absorber, no tarea. Y la campaña `goteros` **no se
+   frena**: el canal facturó 6 M brutos ese día y se considera rentable. La medición del escalón
+   marginal (+$243.094 → −265 unidades) queda registrada en
+   `docs/diagnostico-ml-caida-2026-08-21.md`, sin acción asociada.
 2. **Urbano Interior no se rompió una semana: viene cayendo cuatro cohortes seguidas**, hasta
    ~42% proyectado. El `profit_est` inflado ya está corregido ($4,13 M) y la migración 079 hace
    que el estimado lea la cohorte en curso en vez de esperar 3 semanas al prior.
