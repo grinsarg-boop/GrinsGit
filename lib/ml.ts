@@ -270,7 +270,7 @@ export async function enrichMlTaxes(db: Db = supabaseAdmin(), limit = 300): Prom
         const ids = ((r.raw as MlOrder).payments ?? [])
           .filter((p) => p.status === "approved" && p.id).map((p) => p.id);
         if (!ids.length) return; // sin pago aprobado (raro en paid) → queda pendiente
-        let wh = 0, net = 0, rel: string | null = null;
+        let wh = 0, net = 0, rel: string | null = null, libre = true;
         for (const id of ids) {
           const res = await fetch(`https://api.mercadopago.com/v1/payments/${id}`, {
             headers: { authorization: `Bearer ${token}` },
@@ -281,8 +281,15 @@ export async function enrichMlTaxes(db: Db = supabaseAdmin(), limit = 300): Prom
           net += pay.transaction_details?.net_received_amount ?? 0;
           const rd = String(pay.money_release_date ?? "").slice(0, 10);
           if (rd && (!rel || rd > rel)) rel = rd; // multi-pago: libera cuando libera el último
+          // 082: la fecha sola no alcanza — MP libera a una HORA del día (09:38, 17:22…), y guardamos
+          // solo la fecha. Todo lo que libera HOY quedaba contado como pendiente hasta mañana:
+          // $5.267.125 en 181 órdenes el 22/08/2026. El estado es el dato exacto.
+          if (pay.money_release_status !== "released") libre = false;
         }
-        await db.from("ml_orders").update({ tax_withheld: wh, mp_net: net, mp_release_date: rel }).eq("ml_id", r.ml_id);
+        await db.from("ml_orders").update({
+          tax_withheld: wh, mp_net: net, mp_release_date: rel,
+          mp_release_status: libre ? "released" : "pending",
+        }).eq("ml_id", r.ml_id);
         taxed++;
       } catch { /* se saltea */ }
     }));
