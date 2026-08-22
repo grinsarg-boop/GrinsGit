@@ -128,13 +128,25 @@ export function sellerFlete(
 // `pack` = tamaño del listado primario (para el COGS via product_costs(product_id, pack)).
 // ponytail: multi-producto/multi-pack en una order → product y pack = el ítem primario (items[0]).
 // Raro en BioLabs; la order completa queda en raw si hay que desglosar.
-export function mapMlOrder(o: MlOrder) {
+// `productoPorItem` es el mapa ml_ad_items (publicación → producto). Hace falta porque hay títulos
+// que no nombran la marca en ningún lado: "X5 Pack Ahorro Drenaje Linfático…" es Pureza, y estuvo
+// 3 semanas con product NULL — 68 ventas y $5,8M que se caían del P&L por el inner join contra
+// products. El sync ya lo contaba en `sinProducto`, pero eso viaja como warning de sync_runs y no
+// enciende nada. Ver migración 088.
+export function mapMlOrder(o: MlOrder, productoPorItem?: Map<string, string>) {
   const items = o.order_items ?? [];
   const titles = items.map((it) => it.item?.title ?? "").join(" | ");
+  const porItem = () => {
+    for (const it of items) {
+      const p = it.item?.id ? productoPorItem?.get(it.item.id) : undefined;
+      if (p) return p;
+    }
+    return null;
+  };
   return {
     ml_id: o.id,
     created_at: o.date_created,
-    product: matchProduct(titles), // null si no matchea ninguno de los 6
+    product: matchProduct(titles) ?? porItem(),
     pack: parseMlPack(items[0]?.item?.title, items[0]?.item?.id),
     units: items.reduce((n, it) => n + (it.quantity ?? 0), 0),
     shipment_id: o.shipping?.id ?? null,
@@ -177,7 +189,13 @@ export async function fetchMlOrders(days: number, db: Db = supabaseAdmin()): Pro
 export async function syncMlOrders(days = 60, db: Db = supabaseAdmin()): Promise<{ rows: number; sinProducto: number }> {
   const orders = await fetchMlOrders(days, db);
   if (orders.length === 0) return { rows: 0, sinProducto: 0 };
-  const rows = orders.map(mapMlOrder);
+  const { data: mapa } = await db.from("ml_ad_items").select("item_id, products(name)");
+  const productoPorItem = new Map<string, string>();
+  for (const r of (mapa ?? []) as { item_id: string; products: { name: string } | { name: string }[] | null }[]) {
+    const name = Array.isArray(r.products) ? r.products[0]?.name : r.products?.name;
+    if (r.item_id && name) productoPorItem.set(r.item_id, name);
+  }
+  const rows = orders.map((o) => mapMlOrder(o, productoPorItem));
   const { error } = await db.from("ml_orders").upsert(rows, { onConflict: "ml_id" });
   if (error) throw new Error(`ml_orders upsert: ${error.message}`);
   // Ventas pagadas cuyo título no matcheó ningún producto → se caen del P&L (inner join). Hoy 0, pero
