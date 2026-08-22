@@ -10,6 +10,10 @@ insert into products (id, name) values (900, 'TestSalud') on conflict do nothing
 insert into ad_spend (date, ad_id, ad_name, campaign_name, spend, purchases)
 values (current_date - 1, 'AD-SALUD', 'x', 'c', 1000, 1);
 
+-- 083: tarifa real de Urbano fresca (si no, el flete ya estaría corriendo contra el fallback plano).
+insert into shipments (courier, tracking, province, dispatched_at, freight_tarifa)
+values ('urbano', 'TARIFA-SALUD', 'Córdoba', current_date, 8000);
+
 do $$ begin
   assert (select count(*) from salud_sistema()) = 0,
     'base sana no debería reportar nada: ' || coalesce((select string_agg(area || '=' || detalle, ' | ') from salud_sistema()), '');
@@ -85,6 +89,30 @@ from generate_series(1, 25) g;
 do $$ begin
   assert (select count(*) from salud_sistema() where area = 'atribución') = 0,
     '076: el beacon cuenta como atribución — la alerta se calla sin necesitar note_attributes';
+end $$;
+
+-- 5 (083). El flete de Urbano corriendo contra tarifas viejas. A los 45 días avisa; cuando la ventana
+-- (60 d) se vació, estimate_urbano_freight YA está devolviendo el fallback plano para todo el país.
+update shipments set dispatched_at = current_date - 50 where tracking = 'TARIFA-SALUD';
+do $$ begin
+  assert (select count(*) from salud_sistema() where area = 'flete' and severidad = 'AMARILLO') = 1,
+    '083: tarifa de 50 días avisa en AMARILLO (todavía hay ventana)';
+end $$;
+
+update shipments set dispatched_at = current_date - 70 where tracking = 'TARIFA-SALUD';
+do $$ begin
+  assert (select count(*) from salud_sistema() where area = 'flete' and severidad = 'ROJO') = 1,
+    '083: pasada la ventana es ROJO — el fallback plano ya está actuando';
+  assert estimate_urbano_freight('Córdoba')
+         = (select (value::text)::numeric from settings where key = 'urbano_freight_fallback'),
+    '083: y la alerta dice la verdad: sin tarifas en ventana, el flete ES el fallback plano';
+end $$;
+
+-- ...y con una tarifa fresca se calla (el falso positivo permanente que apaga la alerta).
+update shipments set dispatched_at = current_date where tracking = 'TARIFA-SALUD';
+do $$ begin
+  assert (select count(*) from salud_sistema() where area = 'flete') = 0,
+    '083: con facturación al día no grita';
 end $$;
 
 rollback;
