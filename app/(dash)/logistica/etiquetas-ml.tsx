@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { mlLabelsTo10x15, type MlStamp } from "@/lib/split-labels";
 import { extractLabels, mergeVenta, type Label, type MlVenta } from "@/lib/label-picking";
+import { ResumenPicking, type Bulto } from "./resumen";
 import { buildPdf, sortOrder } from "@/lib/label-prep";
 import { productoCode } from "@/lib/correo";
 import { Dropzone } from "@/components/ui/dropzone";
@@ -18,7 +19,9 @@ export function EtiquetasMl() {
   const [sinCodigo, setSinCodigo] = useState(0); // mixtas / multi-compra: ordenan al final, sin código
   // Cruce con la API de ML, cacheado por id de venta: así tocar un checkbox no vuelve a pegarle.
   const ventasRef = useRef(new Map<string, MlVenta>());
-  const [ml, setMl] = useState<{ total: number; api: number; difieren: string[]; error: string | null } | null>(null);
+  const [ml, setMl] = useState<{ total: number; api: number; difieren: string[]; motivos: string[]; error: string | null } | null>(null);
+  // Lo que hay que ir a buscar al depósito, por combo — el mismo resumen que el picking del día.
+  const [bultos, setBultos] = useState<Bulto[]>([]);
   const [url, setUrl] = useState<string | null>(null);
   const [counts, setCounts] = useState<{ labels: number; skipped: number; sinEstampar: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,9 +69,13 @@ export function EtiquetasMl() {
         setMl({
           total: cr.filter((l) => l.courier === "ml" || l.courier === "flex").length,
           api: cr.filter((l) => l.apiOk).length,
-          difieren: cr.filter((l) => l.difiere).map((l) => `p.${l.page} etiqueta ${l.titulo} vs API ${l.producto ?? "?"}×${l.unidades ?? "?"}`),
+          difieren: cr.filter((l) => l.difiere).map((l) => `p.${l.page} etiqueta ${l.titulo} vs venta ${l.producto ?? "?"}×${l.unidades ?? "?"}`),
+          // El motivo nombra la publicación que no se pudo resolver: es lo único que queda por
+          // hacer a mano, y se dice cuál, no "revisá".
+          motivos: [...new Set(cr.filter((l) => l.motivo).map((l) => `p.${l.page}: ${l.motivo}`))],
           error: apiError,
         });
+        setBultos(cr.map((l) => ({ desglose: l.desglose })));
 
         const orden = ordenar ? sortOrder(cr) : cr.map((_, i) => i);
         const { pdf: unido } = await buildPdf(
@@ -133,7 +140,7 @@ export function EtiquetasMl() {
           bufsRef.current = [...bufsRef.current, ...(await Promise.all(nuevos.map((f) => f.arrayBuffer())))];
           setFiles((p) => [...p, ...nuevos.map((f) => ({ name: f.name, size: f.size }))]);
         }}
-        onClear={() => { bufsRef.current = []; setFiles([]); setUrl(null); setCounts(null); setError(null); setMl(null); }}
+        onClear={() => { bufsRef.current = []; setFiles([]); setUrl(null); setCounts(null); setError(null); setMl(null); setBultos([]); }}
       />
 
       {files.length > 0 && (
@@ -145,8 +152,9 @@ export function EtiquetasMl() {
               onChange={(e) => setOrdenar(e.target.checked)}
             />
             Ordenar por producto y unidades, y estampar el código (<b>P2</b> = Pureza x2) al lado del
-            QR — el talón que dice el producto se recorta. Las unidades salen de la API de ML (el
-            catálogo, no el título); las mixtas y las que no cierran van al final, sin código.
+            QR — el talón que dice el producto se recorta. El producto y las unidades salen de la
+            venta en MercadoLibre, con la misma regla con la que el P&amp;L cobra el costo; las
+            mixtas y las que ninguna fuente puede resolver van al final, sin código.
           </label>
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -161,21 +169,31 @@ export function EtiquetasMl() {
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
+      {!busy && <ResumenPicking bultos={bultos} sinResolver={bultos.filter((b) => !b.desglose.length).length} />}
+
       {ml && ml.total > 0 && !busy && (
         <div className="space-y-1 text-xs">
           <p className="text-muted-foreground">
-            {ml.api} de {ml.total} etiqueta(s) ML/Flex cruzadas contra la API
-            {ml.api < ml.total && ` · ${ml.total - ml.api} por el título de la publicación (fallback)`}
+            {ml.api} de {ml.total} etiqueta(s) ML/Flex identificadas contra la venta
+            {ml.api < ml.total && ` · ${ml.total - ml.api} por el título impreso en la etiqueta (fallback)`}
           </p>
           {ml.error && (
             <p className="text-amber-600">
-              ⚠️ No pude consultar la API de ML ({ml.error}) — el pack se leyó del título, verificalo.
+              ⚠️ No pude consultar la API de ML ({ml.error}) — el pack se leyó del título impreso, verificalo.
+            </p>
+          )}
+          {ml.motivos.length > 0 && (
+            <p className="text-amber-600">
+              ⚠️ {ml.motivos.length} venta(s) que no se pudieron identificar solas — van al final sin
+              código y NO se cuentan en el resumen: {ml.motivos.join(" · ")}
             </p>
           )}
           {ml.difieren.length > 0 && (
-            <p className="text-amber-600">
-              ⚠️ {ml.difieren.length} etiqueta(s) donde la API y el título NO coinciden — van al final
-              sin código, revisalas: {ml.difieren.join(" · ")}
+            <p className="text-muted-foreground">
+              {ml.difieren.length} etiqueta(s) donde el título impreso y la venta no dicen lo mismo.
+              Manda la venta (trae el título entero; la etiqueta viene recortada), así que se
+              despachan igual — pero si esto se repite, el recorte del PDF cambió:{" "}
+              {ml.difieren.join(" · ")}
             </p>
           )}
         </div>
@@ -191,7 +209,7 @@ export function EtiquetasMl() {
               {counts.labels} etiqueta{counts.labels === 1 ? "" : "s"}
               {counts.skipped > 0 && ` · ${counts.skipped} página(s) de resumen descartada(s)`}
               {counts.sinEstampar > 0 && ` · ⚠️ ${counts.sinEstampar} sin código (medida no validada)`}
-              {ordenar && sinCodigo > 0 && ` · ⚠️ ${sinCodigo} sin código al final (mixta, o API y título que no coinciden) — contalas a mano`}
+              {ordenar && sinCodigo > 0 && ` · ${sinCodigo} sin código al final (venta mixta o publicación sin resolver)`}
             </span>
           </div>
           <iframe src={url} className="h-[70vh] w-full rounded border" title="Vista previa" />

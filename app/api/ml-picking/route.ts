@@ -1,20 +1,22 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getMlAccessToken } from "@/lib/ml";
-import { matchAllProducts } from "@/lib/product-match";
 import { sessionOk } from "@/lib/api-session";
-import type { MlVenta } from "@/lib/label-picking";
+import { supabaseAdmin } from "@/lib/supabase";
+import { resolverVenta, type Contexto, type MlVenta, type OrderItem } from "@/lib/ml-picking";
 
 // Producto + unidades REALES de una venta de ML, desde la API — el equivalente de /api/picking
-// (que cruza los pedidos COD contra Shopify) para las etiquetas de ML/Flex, que hasta ahora
-// deducían el pack leyendo el título de la publicación.
-// Las unidades salen de UNITS_PER_PACK de la publicación × quantity de la orden. Ojo: `quantity`
-// NO es el pack (es cuántas publicaciones compró), y `order_items[].item.attributes` viene vacío
-// → hay que traerse las publicaciones aparte (multiget, cacheado por request).
+// (que cruza los pedidos COD contra Shopify) para las etiquetas de ML/Flex.
+//
+// La regla de resolución vive en lib/ml-picking.ts (ahí está el porqué de no usar UNITS_PER_PACK,
+// que estaba mal o ausente en 6 de las 27 publicaciones activas el 22/08/2026). Acá solo se junta
+// lo que esa regla necesita:
+//   · la venta en vivo (/orders o /packs) — y si la API no responde, la copia de ml_orders;
+//   · ml_ad_items → producto, para los listados que no nombran la marca en el título;
+//   · ml_pack_por_item() → con qué pack se viene vendiendo cada publicación, para no asumir 1
+//     cuando el título no dice nada.
 const API = "https://api.mercadolibre.com";
 
 export const maxDuration = 60; // ~100 ventas × (1 GET /orders + a veces /packs) puede pasar los 10s
-
-type OrderItem = { quantity?: number; item?: { id?: string; title?: string } };
 
 async function mlGet(path: string, token: string) {
   const r = await fetch(`${API}${path}`, { headers: { authorization: `Bearer ${token}` } });
@@ -39,17 +41,32 @@ async function itemsDeVenta(id: string, token: string): Promise<{ items: OrderIt
   return { items };
 }
 
-// UNITS_PER_PACK por publicación. Multiget de a 20 (tope de ML); un día de despacho son ~10
-// publicaciones distintas para ~100 etiquetas, así que esto es 1 sola llamada.
-async function unidadesPorPack(ids: string[], token: string): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  for (let i = 0; i < ids.length; i += 20) {
-    const { body } = await mlGet(`/items?ids=${ids.slice(i, i + 20).join(",")}&attributes=id,attributes`, token);
-    for (const e of body ?? []) {
-      const attr = (e.body?.attributes ?? []).find((a: { id?: string }) => a.id === "UNITS_PER_PACK");
-      const n = parseInt(attr?.value_name ?? "", 10);
-      if (e.body?.id && n >= 1 && n <= 99) out.set(e.body.id, n);
-    }
+// Contexto compartido por todas las ventas del request: 2 consultas, no una por etiqueta.
+async function contexto(): Promise<Contexto> {
+  const db = supabaseAdmin();
+  const [ads, packs] = await Promise.all([
+    db.from("ml_ad_items").select("item_id, products(name)"),
+    db.rpc("ml_pack_por_item", { p_days: 90 }),
+  ]);
+  const productoPorItem = new Map<string, string>();
+  for (const r of (ads.data ?? []) as { item_id: string; products: { name: string } | { name: string }[] | null }[]) {
+    const name = Array.isArray(r.products) ? r.products[0]?.name : r.products?.name;
+    if (r.item_id && name) productoPorItem.set(r.item_id, name);
+  }
+  const packHistorico = new Map<string, number>();
+  for (const r of (packs.data ?? []) as { item_id: string; pack: number }[]) packHistorico.set(r.item_id, r.pack);
+  return { productoPorItem, packHistorico };
+}
+
+// Copia local de la venta, para cuando la API de ML no contesta. Es la misma orden (la sincroniza
+// el cron diario), así que la regla de resolución es idéntica: no hay una segunda verdad.
+async function desdeBase(ids: string[]): Promise<Map<string, OrderItem[]>> {
+  const out = new Map<string, OrderItem[]>();
+  const numericos = ids.filter((id) => /^\d+$/.test(id) && id.length <= 18);
+  if (!numericos.length) return out;
+  const { data } = await supabaseAdmin().from("ml_orders").select("ml_id, raw").in("ml_id", numericos);
+  for (const r of (data ?? []) as { ml_id: number; raw: { order_items?: OrderItem[] } }[]) {
+    out.set(String(r.ml_id), r.raw?.order_items ?? []);
   }
   return out;
 }
@@ -72,6 +89,8 @@ export async function GET(req: NextRequest) {
     return new NextResponse(`ML auth: ${e instanceof Error ? e.message : String(e)}`, { status: 502 });
   }
 
+  const ctx = await contexto();
+
   // De a 8 en paralelo: 100 secuenciales no entran en los 60s y 100 juntas es rate-limit seguro.
   const porVenta: { id: string; items: OrderItem[]; error?: string }[] = [];
   for (let i = 0; i < ids.length; i += 8) {
@@ -80,22 +99,19 @@ export async function GET(req: NextRequest) {
     ));
   }
 
-  const upp = await unidadesPorPack(
-    [...new Set(porVenta.flatMap((v) => v.items.map((it) => it.item?.id).filter((x): x is string => !!x)))],
-    token,
-  );
+  // Rescate por la base solo de las que la API no pudo dar (normalmente ninguna).
+  const fallidas = porVenta.filter((v) => v.error).map((v) => v.id);
+  const base = fallidas.length ? await desdeBase(fallidas) : new Map<string, OrderItem[]>();
 
   const ventas: Record<string, MlVenta> = {};
   for (const { id, items, error } of porVenta) {
-    if (error) { ventas[id] = { producto: null, unidades: null, mixto: false, error }; continue; }
-    const prods = matchAllProducts(items.map((it) => it.item?.title ?? "").join(" | "));
-    // Una publicación sin UNITS_PER_PACK deja las unidades en null (NO en 0 ni en quantity):
-    // suponer acá es despachar de menos en silencio, que es lo que se venía a arreglar.
-    const unidades = items.reduce<number | null>((s, it) => {
-      const n = upp.get(it.item?.id ?? "");
-      return s == null || n == null ? null : s + (it.quantity ?? 0) * n;
-    }, 0);
-    ventas[id] = { producto: prods.length === 1 ? prods[0] : null, unidades, mixto: prods.length > 1 };
+    const rescate = error ? base.get(id) : undefined;
+    if (error && !rescate?.length) {
+      ventas[id] = { items: [], producto: null, unidades: null, mixto: false, error };
+      continue;
+    }
+    const v = resolverVenta(rescate ?? items, ctx);
+    ventas[id] = rescate ? { ...v, motivo: [`${error} — resuelto con la copia de ml_orders`, v.motivo].filter(Boolean).join(" | ") } : v;
   }
   return NextResponse.json({ ventas });
 }

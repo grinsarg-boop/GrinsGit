@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { _parsePage, packBreakdown, mergeVenta, type Label } from "./label-picking";
+import { _parsePage, packBreakdown, mergeVenta, type Label, type MlVenta } from "./label-picking";
 
 describe("packBreakdown", () => {
   it("agrupa por tamaño de pack, ordenado", () => {
@@ -166,43 +166,65 @@ describe("_parsePage: id de venta de ML", () => {
   });
 });
 
-// La API manda sobre el título, salvo que se contradigan: ahí no manda nadie y va a revisar.
+// La venta manda sobre el título: las dos usan la misma regla de pack, así que una diferencia es
+// un recorte de título mal hecho en el PDF, no un empate.
 describe("mergeVenta", () => {
   const base: Label = {
     page: 1, courier: "ml", orden: null, venta: "2000017421290758",
     price: null, producto: "Pureza", unidades: 3, revisar: false,
   };
-  it("la API pisa lo que dijo el título cuando coinciden en producto", () => {
-    const r = mergeVenta({ ...base, unidades: 1 }, { producto: "Pureza", unidades: 2, mixto: false });
+  const venta = (items: { producto: string | null; unidades: number | null }[], extra: Partial<MlVenta> = {}): MlVenta => {
+    const prods = [...new Set(items.map((i) => i.producto).filter((p): p is string => !!p))];
+    return {
+      items: items.map((i, n) => ({
+        itemId: `MLA${n}`, titulo: "t", producto: i.producto, pack: i.unidades, qty: 1,
+        unidades: i.unidades, fuente: "titulo" as const,
+      })),
+      producto: prods.length === 1 ? prods[0] : null,
+      unidades: items.reduce<number | null>((s, i) => (s == null || i.unidades == null ? null : s + i.unidades), 0),
+      mixto: prods.length > 1,
+      ...extra,
+    };
+  };
+
+  it("la venta pisa lo que decía el título, y la diferencia se reporta pero no bloquea", () => {
+    const r = mergeVenta({ ...base, unidades: 1 }, venta([{ producto: "Pureza", unidades: 2 }]));
     expect(r.unidades).toBe(2);
-    expect(r.difiere).toBe(true);   // el título decía 1 → no se estampa, se revisa
-    expect(r.revisar).toBe(true);
+    expect(r.difiere).toBe(true);
+    expect(r.revisar).toBe(false);   // la venta resolvió limpio → se estampa igual
+    expect(r.desglose).toEqual([{ producto: "Pureza", unidades: 2 }]);
   });
   it("coinciden → se estampa, sin ruido", () => {
-    const r = mergeVenta(base, { producto: "Pureza", unidades: 3, mixto: false });
+    const r = mergeVenta(base, venta([{ producto: "Pureza", unidades: 3 }]));
     expect(r).toMatchObject({ producto: "Pureza", unidades: 3, revisar: false, difiere: false });
   });
-  it("multi-compra que el título no podía partir: la API la resuelve y sale del 'revisar'", () => {
+  it("multi-compra que el título no podía partir: la venta la resuelve y sale del 'revisar'", () => {
     const l = { ...base, unidades: null, revisar: true };
-    const r = mergeVenta(l, { producto: "Pureza", unidades: 6, mixto: false }); // 2 × listado x3
+    const r = mergeVenta(l, venta([{ producto: "Pureza", unidades: 6 }])); // 2 × listado x3
     expect(r.unidades).toBe(6);
     expect(r.revisar).toBe(false);
   });
   it("API caída → vale el título tal cual (fallback)", () => {
-    const r = mergeVenta(base, { producto: null, unidades: null, mixto: false, error: "orders 500" });
-    expect(r).toMatchObject({ producto: "Pureza", unidades: 3, revisar: false, difiere: false });
+    const r = mergeVenta(base, { items: [], producto: null, unidades: null, mixto: false, error: "orders 500" });
+    expect(r).toMatchObject({ producto: "Pureza", unidades: 3, revisar: false, difiere: false, apiOk: false });
+    expect(r.desglose).toEqual([{ producto: "Pureza", unidades: 3 }]);
   });
   it("sin id de venta (nunca se consultó) → vale el título", () => {
     expect(mergeVenta(base, null)).toMatchObject({ producto: "Pureza", unidades: 3, revisar: false });
   });
-  it("la API dice mixto → sin producto y a revisar, aunque el título viera uno solo", () => {
-    const r = mergeVenta(base, { producto: null, unidades: 4, mixto: true });
+  // Lo que antes se perdía: una mixta quedaba "sin identificar" y no se contaba. Ahora se cuenta
+  // entera — lo único que no tiene es un código único para estampar.
+  it("venta mixta: sin código, pero el desglose dice exactamente qué despachar", () => {
+    const r = mergeVenta(base, venta([{ producto: "Pureza", unidades: 3 }, { producto: "Veinguard", unidades: 2 }]));
     expect(r.producto).toBeNull();
+    expect(r.mixto).toBe(true);
     expect(r.revisar).toBe(true);
+    expect(r.desglose).toEqual([{ producto: "Pureza", unidades: 3 }, { producto: "Veinguard", unidades: 2 }]);
   });
-  it("publicación sin UNITS_PER_PACK → sabemos qué, no cuántos: a revisar, nunca asumir 1", () => {
-    const r = mergeVenta(base, { producto: "Pureza", unidades: null, mixto: false });
+  it("publicación que no se pudo resolver → a revisar, con el motivo que la nombra", () => {
+    const r = mergeVenta(base, venta([{ producto: null, unidades: 1 }], { motivo: "publicación sin producto reconocido: MLA0" }));
     expect(r.revisar).toBe(true);
-    expect(r.unidades).toBe(3); // queda lo del título, pero sin código: se cuenta a mano
+    expect(r.motivo).toContain("MLA0");
+    expect(r.desglose).toEqual([]);   // no se cuenta sola: no sabemos qué es
   });
 });

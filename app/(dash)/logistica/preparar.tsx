@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { extractLabels, packBreakdown, type Label, type LabelCourier } from "@/lib/label-picking";
+import { extractLabels, type Label, type LabelCourier } from "@/lib/label-picking";
+import { ResumenPicking } from "./resumen";
 import { buildPdf, sortOrder } from "@/lib/label-prep";
 import { productoCode } from "@/lib/correo";
 import { fetchOrders } from "./picking";
@@ -122,9 +123,11 @@ export function Preparar() {
   // ML/Flex acá salen ordenadas pero SIN código (otro layout) y SIN partir a 10×15. El tab
   // "Etiquetas ML" hace las dos cosas, así que hay que mandarlo ahí en vez de dejarlo pasar callado.
   const ml = rows.filter((r) => r.courier === "ml" || r.courier === "flex");
-  // Resumen del día en el mismo orden en que van a salir impresas.
-  const pilas = new Map<string, number[]>();
-  for (const r of resueltas) pilas.set(r.producto!, [...(pilas.get(r.producto!) ?? []), r.unidades ?? 1]);
+  // Resumen del día: cuántas etiquetas de cada combo y cuántas unidades salen — el mismo que el
+  // picking del día y el de ML, para poder armar todo junto.
+  const bultos = rows.map((r) => ({
+    desglose: r.producto && r.unidades != null ? [{ producto: r.producto, unidades: r.unidades }] : [],
+  }));
 
   return (
     <div className="space-y-4">
@@ -174,15 +177,7 @@ export function Preparar() {
             </p>
           )}
 
-          {pilas.size > 0 && (
-            <p className="text-sm">
-              {[...pilas.entries()].sort().map(([p, u]) => (
-                <span key={p} className="mr-4 inline-block">
-                  <b>{p}</b> <span className="tabular-nums text-muted-foreground">{packBreakdown(u)}</span>
-                </span>
-              ))}
-            </p>
-          )}
+          <ResumenPicking bultos={bultos} sinResolver={revisar.length} />
 
           <table className="w-full max-w-3xl text-sm">
             <thead>

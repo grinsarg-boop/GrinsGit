@@ -8,6 +8,7 @@
 // Todo en el navegador, nada se sube.
 
 import { matchAllProducts } from "./product-match";
+import { porProducto, type MlVenta } from "./ml-picking";
 
 export type LabelCourier = "urbano" | "fixy" | "correo" | "ml" | "flex" | "?";
 export type Label = {
@@ -128,29 +129,40 @@ function parsePage(text: string, page: number): Label {
 }
 
 // ── Cruce con la API de ML (/api/ml-picking) ──
-// Lo que la API sabe de una venta. `unidades` sale de UNITS_PER_PACK de la publicación × quantity,
-// que es el dato del catálogo — no una lectura del título.
-export type MlVenta = {
-  producto: string | null;   // null = ninguna keyword matcheó
-  unidades: number | null;   // null = alguna publicación no declara UNITS_PER_PACK
-  mixto: boolean;            // más de un producto distinto en la venta/pack
-  error?: string;            // no se pudo consultar → vale el parser del título
+// Lo que la venta dice de verdad: el desglose por ítem, resuelto en lib/ml-picking.ts con la misma
+// regla con la que el P&L cobra el COGS. Se re-exporta acá porque es el tipo que viaja al cliente.
+export type { MlVenta, VentaItem } from "./ml-picking";
+
+// Una etiqueta ya cruzada. `desglose` es lo que hay que despachar, producto por producto: una
+// venta MIXTA deja de ser "sin identificar" (la API sabe exactamente qué lleva) y pasa a contarse
+// entera; lo único que no puede tener es UN código estampado, porque son dos productos.
+export type Cruzada = Label & {
+  apiOk: boolean;
+  mixto: boolean;
+  difiere: boolean;                                        // la etiqueta y la venta no dicen lo mismo
+  motivo?: string;                                         // qué falta, nombrando la publicación
+  desglose: { producto: string; unidades: number }[];      // vacío = no se pudo identificar
 };
 
-// La API manda; el título es el fallback. Si los dos hablan y NO coinciden, nadie manda: va a
-// revisar (uno de los dos está mal y despachar de menos se paga con un reclamo).
-export function mergeVenta(l: Label, v?: MlVenta | null): Label & { difiere: boolean } {
-  if (!v || v.error) return { ...l, difiere: false };
-  if (v.mixto) return { ...l, producto: null, revisar: true, difiere: false };
-  const producto = v.producto ?? l.producto;
-  // Producto conocido pero sin unidades declaradas: sabemos qué es, no cuántos.
-  if (v.unidades == null) return { ...l, producto, revisar: true, difiere: false };
+// La venta manda sobre lo que se leyó del PDF, y no es un empate: las dos usan la MISMA función de
+// pack (parseMlPack), así que si no coinciden es porque el recorte del título en la etiqueta salió
+// mal — la venta trae el título entero. La diferencia igual se reporta, porque un recorte que
+// falla seguido es un formato de etiqueta nuevo que hay que mirar.
+export function mergeVenta(l: Label, v?: MlVenta | null): Cruzada {
+  const delTitulo = l.producto && l.unidades != null ? [{ producto: l.producto, unidades: l.unidades }] : [];
+  if (!v || v.error) {
+    return { ...l, apiOk: false, mixto: false, difiere: false, motivo: v?.error, desglose: delTitulo };
+  }
+  const desglose = porProducto(v);
+  const producto = v.producto ?? (v.mixto ? null : l.producto);
+  const unidades = v.unidades ?? (v.mixto ? null : l.unidades);
   const difiere =
     (!!l.producto && !!v.producto && l.producto !== v.producto) ||
-    (l.unidades != null && l.unidades !== v.unidades);
-  // Si la API resolvió limpio, pisa el `revisar` del título: justamente resuelve las multi-compra
-  // (2 unidades de un listado x3 = 6) que el parser no podía partir.
-  return { ...l, producto, unidades: v.unidades, revisar: difiere || (!v.producto && l.revisar), difiere };
+    (l.unidades != null && v.unidades != null && l.unidades !== v.unidades);
+  // `revisar` acá significa una sola cosa: NO estampar un código. Una mixta se despacha perfecto
+  // (el desglose dice qué lleva), pero no hay un código único que la describa.
+  const revisar = v.mixto || v.unidades == null || !!v.motivo;
+  return { ...l, producto, unidades, revisar, apiOk: true, mixto: v.mixto, difiere, motivo: v.motivo, desglose };
 }
 
 // Desglose de paquetes por tamaño de pack: dado el N° de unidades de cada pedido de un producto,

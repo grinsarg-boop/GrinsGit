@@ -1,12 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { extractLabels, packBreakdown, type Label } from "@/lib/label-picking";
+import { extractLabels, mergeVenta, type Label, type MlVenta } from "@/lib/label-picking";
+import { ResumenPicking, type Bulto } from "./resumen";
 import { Spinner } from "@/components/ui/spinner";
 import type { PickingOrder } from "@/app/api/picking/route";
 
 const COURIER_LABEL: Record<string, string> = { urbano: "Urbano", fixy: "Fixy", correo: "Correo", ml: "ML", flex: "Flex", "?": "¿?" };
 const loc = (l: Label) => `${l.file ?? "?"} p.${l.page}`;
+const ML = (l: Label) => l.courier === "ml" || l.courier === "flex";
+const COD = new Set(["urbano", "fixy", "correo"]);
 
 export async function fetchOrders(ordenes: string[]): Promise<PickingOrder[]> {
   const out: PickingOrder[] = [];
@@ -18,9 +21,22 @@ export async function fetchOrders(ordenes: string[]): Promise<PickingOrder[]> {
   return out;
 }
 
+// Lo que lleva cada venta de ML, preguntado a MercadoLibre. Es el equivalente de fetchOrders para
+// el otro canal: la etiqueta de ML no trae N° de pedido de Shopify, trae el id de la venta.
+export async function fetchVentas(ids: string[]): Promise<Record<string, MlVenta>> {
+  const out: Record<string, MlVenta> = {};
+  for (let i = 0; i < ids.length; i += 100) {
+    const res = await fetch(`/api/ml-picking?ids=${ids.slice(i, i + 100).join(",")}`);
+    if (!res.ok) throw new Error(`ML: ${await res.text()}`);
+    Object.assign(out, (await res.json()).ventas);
+  }
+  return out;
+}
+
 export function Picking() {
   const [labels, setLabels] = useState<Label[]>([]);
   const [orders, setOrders] = useState<PickingOrder[]>([]);
+  const [ventas, setVentas] = useState<Record<string, MlVenta>>({});
   const [files, setFiles] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -38,15 +54,20 @@ export function Picking() {
         setFiles((p) => [...p, `${f.name} (${ls.length} etiquetas)`]);
       }
       const tPdf = performance.now();
-      const all = [...labels, ...nuevos];
-      setLabels(all);
+      setLabels((p) => [...p, ...nuevos]);
       // cruzar los N° de orden nuevos que aún no tenemos
       const tengo = new Set(orders.map((o) => o.orden));
       const pedir = [...new Set(nuevos.map((l) => l.orden).filter((x): x is string => !!x))].filter((n) => !tengo.has(n));
-      if (pedir.length) {
-        const res = await fetchOrders(pedir);
-        setOrders((p) => [...p, ...res]);
-      }
+      // …y las ventas de ML nuevas. Si ML no contesta no se cae todo: las COD siguen cruzadas y las
+      // de ML quedan con lo que dice el título impreso, avisando.
+      const ventasNuevas = [...new Set(nuevos.filter(ML).map((l) => l.venta).filter((x): x is string => !!x))]
+        .filter((id) => !(id in ventas));
+      const [res, vs] = await Promise.all([
+        pedir.length ? fetchOrders(pedir) : Promise.resolve([]),
+        ventasNuevas.length ? fetchVentas(ventasNuevas).catch((e) => { setMsg(String(e.message ?? e)); return {}; }) : Promise.resolve({}),
+      ]);
+      if (res.length) setOrders((p) => [...p, ...res]);
+      if (Object.keys(vs).length) setVentas((p) => ({ ...p, ...vs }));
       setStats((s) => ({
         pdfMs: (s?.pdfMs ?? 0) + (tPdf - t0),
         crossMs: (s?.crossMs ?? 0) + (performance.now() - tPdf),
@@ -60,51 +81,40 @@ export function Picking() {
   }
 
   function reset() {
-    setLabels([]); setOrders([]); setFiles([]); setMsg(null); setStats(null);
+    setLabels([]); setOrders([]); setVentas({}); setFiles([]); setMsg(null); setStats(null);
   }
 
-  // ── Agregación ──
-  // packs: unidades de cada pedido del producto → packBreakdown lo vuelve "10×1 · 15×2 · 15×4".
-  const agg = new Map<string, { unidades: number; ordenes: number; packs: number[] }>();
-  const bump = (p: string, u: number) => {
-    const a = agg.get(p) ?? { unidades: 0, ordenes: 0, packs: [] };
-    a.unidades += u; a.ordenes += 1; a.packs.push(u); agg.set(p, a);
-  };
+  // ── Un bulto por etiqueta (COD: por pedido distinto, que es lo que se despacha junto) ──
+  const bultos: Bulto[] = [];
   const sinProducto: string[] = [];
   const noEncontrados: string[] = [];  // 200 pero no existe en Shopify
   const errores: string[] = [];        // 429/5xx tras reintentos → reintentable, NO es "no existe"
 
   // COD (Correo/Fixy/Urbano): por pedido distinto, cruzado con Shopify.
   const ordMap = new Map(orders.map((o) => [o.orden, o]));
-  const distintos = [...new Set(labels.map((l) => l.orden).filter((x): x is string => !!x))];
-  let ordenesOk = 0;
+  const distintos = [...new Set(labels.filter((l) => COD.has(l.courier)).map((l) => l.orden).filter((x): x is string => !!x))];
   for (const orden of distintos) {
     const o = ordMap.get(orden);
     if (!o || o.error) { errores.push(orden); continue; }
     if (!o.encontrado) { noEncontrados.push(orden); continue; }
-    ordenesOk++;
     const productos = o.items.filter((it) => it.producto);
-    if (!productos.length) { sinProducto.push(`#${orden}`); continue; }
-    for (const p of new Set(productos.map((it) => it.producto as string))) {
-      bump(p, productos.filter((it) => it.producto === p).reduce((s, it) => s + it.unidades, 0));
-    }
+    if (!productos.length) { sinProducto.push(`#${orden}`); bultos.push({ desglose: [] }); continue; }
+    const m = new Map<string, number>();
+    for (const it of productos) m.set(it.producto!, (m.get(it.producto!) ?? 0) + it.unidades);
+    bultos.push({ desglose: [...m.entries()].map(([producto, unidades]) => ({ producto, unidades })) });
   }
 
-  // ML/Flex: producto leído de la etiqueta (cada etiqueta con producto = 1 orden). No cruza Shopify.
-  // Los mixtos / multi-compra van a "revisar" (no se cuentan solos).
-  const ML = (l: Label) => l.courier === "ml" || l.courier === "flex";
-  const mlLabels = labels.filter((l) => ML(l) && l.producto && !l.revisar);
-  for (const l of mlLabels) bump(l.producto!, l.unidades ?? 1);
+  // ML/Flex: una etiqueta = una venta. El producto y las unidades salen de la venta en ML (misma
+  // regla que el P&L); si ML no contestó, del título impreso en la etiqueta.
+  const cruzadas = labels.filter(ML).map((l) => mergeVenta(l, l.venta ? ventas[l.venta] : null));
+  for (const c of cruzadas) bultos.push({ desglose: c.desglose });
 
-  const filas = [...agg.entries()].sort((a, b) => b[1].unidades - a[1].unidades);
-  const totU = filas.reduce((s, [, v]) => s + v.unidades, 0);
-  const totO = ordenesOk + mlLabels.length;
-
-  // Flags.
-  const COD = new Set(["urbano", "fixy", "correo"]);
+  // Flags — cada uno nombra dónde está el problema, para poder ir a mirarlo.
   const sinOrden = labels.filter((l) => COD.has(l.courier) && !l.orden);
-  const mlRevisar = labels.filter((l) => ML(l) && l.revisar);
-  const mlSinProd = labels.filter((l) => ML(l) && !l.producto && !l.revisar);
+  const mlSinVenta = cruzadas.filter((c) => !c.venta);
+  const mlMotivos = [...new Set(cruzadas.filter((c) => c.motivo).map((c) => `p.${c.page}: ${c.motivo}`))];
+  const mlSinIdentificar = cruzadas.filter((c) => !c.desglose.length);
+  const mlPorTitulo = cruzadas.filter((c) => c.venta && !c.apiOk);
   const noRecon = labels.filter((l) => l.courier === "?").length;
   const porCourier = labels.reduce<Record<string, number>>((m, l) => ((m[l.courier] = (m[l.courier] ?? 0) + 1), m), {});
 
@@ -120,10 +130,11 @@ export function Picking() {
       <div>
         <h1 className="font-display text-2xl font-bold tracking-tight">Picking del día</h1>
         <p className="max-w-[70ch] text-sm text-muted-foreground">
-          Subí los PDF de etiquetas de cualquier courier (Correo, Fixy, Urbano). Lee el N° de orden de
-          cada etiqueta, lo cruza con Shopify y te dice <b className="text-foreground">cuántas unidades
-          de cada producto</b>, <b className="text-foreground">cuántas órdenes</b> y{" "}
-          <b className="text-foreground">qué paquetes armar</b> (ej: 10×1 · 15×2 · 15×4). Se procesa en tu navegador.
+          Subí los PDF de etiquetas de cualquier courier (Correo, Fixy, Urbano) y de MercadoLibre,
+          mezclados. Las de COD las cruza con Shopify por N° de pedido y las de ML con la venta en
+          MercadoLibre, y te dice <b className="text-foreground">cuántas etiquetas hay de cada
+          combo</b> y <b className="text-foreground">cuántas unidades de cada producto</b> salen hoy.
+          Se procesa en tu navegador.
         </p>
       </div>
 
@@ -133,7 +144,7 @@ export function Picking() {
         {!!labels.length && <button onClick={reset} className="text-sm text-muted-foreground underline">limpiar</button>}
       </div>
 
-      {busy && <p className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Leyendo etiquetas y cruzando con Shopify…</p>}
+      {busy && <p className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Leyendo etiquetas y cruzando con Shopify y MercadoLibre…</p>}
       {msg && <p className="text-sm text-amber-600">{msg}</p>}
       {!!files.length && (
         <p className="text-xs text-muted-foreground">
@@ -142,57 +153,32 @@ export function Picking() {
           {stats && (
             <> · <b className="text-foreground">{((stats.pdfMs + stats.crossMs) / 1000).toFixed(1)}s</b>{" "}
             ({(stats.count / Math.max(0.001, (stats.pdfMs + stats.crossMs) / 1000)).toFixed(0)} etiq/s —
-            leer PDF {(stats.pdfMs / 1000).toFixed(1)}s · cruzar Shopify {(stats.crossMs / 1000).toFixed(1)}s)</>
+            leer PDF {(stats.pdfMs / 1000).toFixed(1)}s · cruzar {(stats.crossMs / 1000).toFixed(1)}s)</>
           )}
         </p>
       )}
 
-      {!!filas.length && (
-        <div className="space-y-2">
-          <h2 className="text-sm font-semibold">A despachar hoy — {totO} órdenes · {totU} unidades</h2>
-          <table className="w-full max-w-2xl text-sm">
-            <thead>
-              <tr className="border-b text-left text-muted-foreground">
-                <th className="py-1">Producto</th>
-                <th className="text-right">Órdenes</th>
-                <th className="text-right">Unidades</th>
-                <th className="pl-4">Paquetes a armar</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filas.map(([p, v]) => (
-                <tr key={p} className="border-b">
-                  <td className="py-1 font-medium">{p}</td>
-                  <td className="text-right tabular-nums">{v.ordenes}</td>
-                  <td className="text-right font-semibold tabular-nums">{v.unidades}</td>
-                  <td className="pl-4 tabular-nums text-muted-foreground">{packBreakdown(v.packs)}</td>
-                </tr>
-              ))}
-              <tr className="font-semibold">
-                <td className="py-1">Total</td>
-                <td className="text-right tabular-nums">{totO}</td>
-                <td className="text-right tabular-nums">{totU}</td>
-                <td />
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      )}
+      <ResumenPicking
+        bultos={bultos}
+        sinResolver={bultos.filter((b) => !b.desglose.length).length}
+      />
 
-      {mlLabels.length > 0 && (
+      {mlPorTitulo.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          ML/Flex ({mlLabels.length}): producto y unidades <b className="text-foreground">leídos de la etiqueta</b> (no cruzan Shopify) — verificá el pack.
+          {mlPorTitulo.length} etiqueta(s) de ML no se pudieron consultar contra la venta y se
+          contaron por el título impreso — verificá el pack: {mlPorTitulo.map(loc).join(" · ")}
         </p>
       )}
 
-      {(sinOrden.length > 0 || errores.length > 0 || noEncontrados.length > 0 || sinProducto.length > 0 || mlRevisar.length > 0 || mlSinProd.length > 0 || noRecon > 0) && (
+      {(sinOrden.length > 0 || errores.length > 0 || noEncontrados.length > 0 || sinProducto.length > 0 || mlSinVenta.length > 0 || mlMotivos.length > 0 || mlSinIdentificar.length > 0 || noRecon > 0) && (
         <div className="space-y-1 text-sm text-amber-600">
           {sinOrden.length > 0 && <p>⚠️ {sinOrden.length} etiqueta(s) COD sin N° de orden legible ({[...new Set(sinOrden.map((l) => COURIER_LABEL[l.courier]))].join(", ")}) — {sinOrden.map(loc).join(" · ")}.</p>}
           {errores.length > 0 && <p>🔁 Error al consultar Shopify (rate-limit/transitorio, <b>reintentá subiendo de nuevo</b>): {errores.map(ordenLoc).join(", ")}</p>}
           {noEncontrados.length > 0 && <p>⚠️ No existen en Shopify (verificá el N° de orden): {noEncontrados.map(ordenLoc).join(", ")}</p>}
           {sinProducto.length > 0 && <p>⚠️ Ítems sin producto reconocido: {[...new Set(sinProducto)].join(", ")} — completá a mano.</p>}
-          {mlRevisar.length > 0 && <p>⚠️ {mlRevisar.length} etiqueta(s) ML/Flex mixtas o multi-compra ({mlRevisar.map(loc).join(" · ")}) — NO se cuentan solas, revisá a mano.</p>}
-          {mlSinProd.length > 0 && <p>⚠️ {mlSinProd.length} etiqueta(s) ML/Flex sin producto reconocido ({mlSinProd.map(loc).join(" · ")}) — completá a mano.</p>}
+          {mlSinVenta.length > 0 && <p>⚠️ {mlSinVenta.length} etiqueta(s) de ML sin id de venta legible — {mlSinVenta.map(loc).join(" · ")}.</p>}
+          {mlMotivos.length > 0 && <p>⚠️ Ventas de ML que no se pudieron identificar solas: {mlMotivos.join(" · ")}</p>}
+          {mlSinIdentificar.length > 0 && <p>⚠️ {mlSinIdentificar.length} etiqueta(s) de ML sin identificar — NO están contadas arriba: {mlSinIdentificar.map(loc).join(" · ")}.</p>}
           {noRecon > 0 && <p className="text-muted-foreground">{noRecon} página(s) no reconocidas (posible mitad de etiqueta ML / hoja de resumen) — ignoradas.</p>}
         </div>
       )}
