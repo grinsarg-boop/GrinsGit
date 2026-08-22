@@ -3,6 +3,13 @@ import type { CourierClient, CourierEvent } from "./types";
 
 const TERMINALES = ["entregado", "devuelto", "siniestro", "cancelado"];
 
+// ¿Esta advertencia dice que el CONECTOR está caído, o solo que esa guía no está?
+// Un 404 es de la guía: el courier contesta bien, ese remito no existe para él. Un 401 (token
+// vencido) o un 5xx sí son la conexión. Sin esta distinción, 7 pedidos de Andreani mal fichados como
+// fixy ponían el sync en ROJO cada vez que la ventana no traía ningún evento — y en 'ok' cuando sí,
+// con las MISMAS 7 advertencias (22/08/2026). La alerta seguía al tráfico, no a la salud.
+export const esFallaDeConexion = (w: unknown) => (w as { http?: number })?.http !== 404;
+
 // Corrida de sync de un courier (§5.4): guías no terminales < 60 d, batches ≤ 200.
 // Compartido por /api/sync/urbano y /api/sync/fixy.
 //
@@ -38,7 +45,10 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
       try {
         const res = await client.fetchStatuses(batch);
         events = res.events;
-        if (res.warnings.length) { warnings.push(...res.warnings); fetchFailed = true; }
+        if (res.warnings.length) {
+          warnings.push(...res.warnings);
+          if (res.warnings.some(esFallaDeConexion)) fetchFailed = true;
+        }
       } catch (e) {
         // errores parciales no abortan el batch (§5)
         warnings.push({ batch: i / 200, error: String(e) });
@@ -56,7 +66,9 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
 
     warnings.push(...(await estadosSinMapear(courier)));
     await db.rpc("recompute_daily_pnl", { p_from: cutoff, p_to: today() });
-    // Nada entró Y hubo fallos de fetch (ej. token Fixy vencido) ⇒ run DEGRADADO, no 'ok' (audit A#2).
+    // Nada entró Y se cayó la CONEXIÓN (ej. token Fixy vencido) ⇒ run DEGRADADO, no 'ok' (audit A#2).
+    // Los 404 por guía siguen quedando en warnings: son el rastro de las guías que el courier no
+    // conoce, que fue justo lo que permitió diagnosticar las 7 de Andreani.
     const status = rows === 0 && fetchFailed ? "error" : "ok";
     await logSyncRun(courier, status, rows, warnings, status === "error" ? "fetch falló y 0 filas" : null);
     // total/processed → n8n loopea ceil(total/limit) veces para cubrir todas las no-terminales.
