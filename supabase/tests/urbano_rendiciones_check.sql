@@ -43,3 +43,37 @@ begin
 end $t$;
 
 rollback;
+
+-- 085: la rendición le gana al evento. Una guía que Urbano pagó está entregada, diga lo que diga
+-- el WS — y si no tiene ningún evento de entrega, la fecha cae dentro de la ventana que la pagó.
+begin;
+do $t$
+declare sid bigint; v record;
+begin
+  perform upsert_order(jsonb_build_object('id', 88085001, 'name', '#88085001',
+    'created_at', '2026-05-01T12:00:00-03:00', 'financial_status','pending', 'tags','cod-form',
+    'total_price','49990', 'shipping_address','{"province":"Tucumán"}'::jsonb,
+    'line_items','[{"title":"Pureza x1","quantity":1,"price":"49990"}]'::jsonb));
+  perform upsert_shipment_events(jsonb_build_array(
+    jsonb_build_object('courier','urbano','tracking','88085001','order_ref','88085001',
+      'status_raw','CICLO - Despacho','occurred_at','2026-05-05T12:00:00Z','raw','{}'::jsonb),
+    jsonb_build_object('courier','urbano','tracking','88085001','order_ref','88085001',
+      'status_raw','RM','occurred_at','2026-05-13T12:00:00Z','raw','{}'::jsonb)));
+
+  select id into sid from shipments where courier='urbano' and tracking='88085001';
+  assert (select status_canonical from shipments where id=sid) <> 'entregado',
+    '085: sin rendición, un RM no es una entrega — el mapeo de RM se queda como está';
+
+  perform import_urbano_rendiciones(jsonb_build_array(jsonb_build_object(
+    'resumen','9010','fecha_pago','2026-05-12','fmt','B','guia','88085001',
+    'monto','49990','archivo','t.xls','vale',true)));
+
+  select status_canonical, status_at, resolved_at into v from shipments where id=sid;
+  assert v.status_canonical = 'entregado',
+    '085: una guía que figura en un resumen está entregada, diga lo que diga el WS';
+  assert v.status_at::date between date '2026-05-05' and date '2026-05-11',
+    format('085: sin evento de entrega, la fecha cae en la ventana que la pagó, dio %s', v.status_at);
+  assert v.resolved_at is not null,
+    '085: tiene que cerrar la guía, o la cohorte nunca madura (mismo motivo que la 055)';
+end $t$;
+rollback;
