@@ -22,46 +22,9 @@ const COMISION = 0.05547;                                                     //
 const dry = process.argv.includes('--dry');
 const $ = (n) => '$' + Math.round(n).toLocaleString('es-AR');
 
-// ── rendiciones (lo que Urbano REALMENTE pagó) ────────────────────────────────────────────────
-const csv = readFileSync(join(RAIZ, 'datos', 'urbano_rendiciones.csv'), 'utf8').trim().split('\n');
-const cab = csv[0].split(',');
-const rend = csv.slice(1).map((l) => Object.fromEntries(l.split(',').map((v, i) => [cab[i], v])));
+const { giroDe, leerRendiciones } = await import('./_urbano-rend.mjs');
+const { rend, reimpresos, pagada, martes, completo } = leerRendiciones();
 
-// Una reimpresión (mismas guías que un resumen anterior) no es plata nueva — descartarla, o el
-// faltante sale menor de lo que es. Ver el aviso de urbano-rendiciones.py.
-const porResumen = new Map();
-for (const r of rend) {
-  const k = `${r.fecha}|${r.resumen}`;
-  if (!porResumen.has(k)) porResumen.set(k, new Set());
-  porResumen.get(k).add(r.guia);
-}
-const reimpresos = new Set();
-const claves = [...porResumen.keys()].sort();
-for (let i = 0; i < claves.length; i++)
-  for (let j = i + 1; j < claves.length; j++) {
-    const [a, b] = [porResumen.get(claves[i]), porResumen.get(claves[j])];
-    const comun = [...b].filter((g) => a.has(g)).length;
-    if (comun / b.size > 0.95) reimpresos.add(claves[j]);
-  }
-const pagada = new Map();                       // guía → fecha del resumen que la pagó
-for (const r of rend) if (!reimpresos.has(`${r.fecha}|${r.resumen}`)) pagada.set(r.guia, r.fecha);
-
-// Martes de giro con resumen en mano, y si ese martes trae los DOS formatos. Un martes al que le
-// falta un formato no prueba nada: sus "faltantes" pueden estar en el archivo que no tenemos.
-const martes = new Map();
-for (const r of rend) {
-  if (reimpresos.has(`${r.fecha}|${r.resumen}`)) continue;
-  if (!martes.has(r.fecha)) martes.set(r.fecha, new Set());
-  martes.get(r.fecha).add(r.fmt);
-}
-const completo = (f) => martes.get(f)?.size === 2;
-
-// martes de giro de una entrega: ventana martes→lunes, giro el martes siguiente (migr 033)
-const giroDe = (iso) => {
-  const d = new Date(iso + 'T12:00:00Z');
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 5) % 7) + 7);
-  return d.toISOString().slice(0, 10);
-};
 if (process.argv.includes('--check')) {                    // node scripts/urbano-reclamo.mjs --check
   const { strictEqual: eq } = await import('node:assert');
   eq(giroDe('2026-06-16'), '2026-06-23');                  // martes: abre su propia ventana
@@ -125,6 +88,8 @@ const firmes = sinRendir.filter((e) => e.firme);
 const deriva = sinRendir.filter((e) => !e.firme && completo(e.giro));
 const aConfirmar = sinRendir.filter((e) => !e.firme && !completo(e.giro));
 const suma = (xs) => xs.reduce((s, e) => s + (e.cod ?? 0), 0);
+// qué formato falta ese martes: el bloque decía siempre 'A' y del 28/07 el que falta es el B.
+const falta = (g) => ['A', 'B'].filter((f) => !martes.get(g)?.has(f)).join('+') || '—';
 
 // ── 3. ¿se movieron las del reclamo anterior? ─────────────────────────────────────────────────
 mkdirSync(DIR, { recursive: true });
@@ -200,7 +165,7 @@ const filas = [
   ['bloque', 'guia', 'pedido', 'cliente', 'provincia', 'cod', 'fecha', 'estado', 'detalle'],
   ...firmes.map((e) => ['NO RENDIDA (semana en rojo)', e.tracking, e.order_number, e.customer_name, e.province, e.cod, e.entrega, 'entregada', `giro esperado ${e.giro}`]),
   ...deriva.map((e) => ['NO FIGURA EN NINGÚN RESUMEN', e.tracking, e.order_number, e.customer_name, e.province, e.cod, e.entrega, 'entregada', `giro esperado ${e.giro} — pedir en qué resumen se pagó`]),
-  ...aConfirmar.map((e) => ['SIN AUDITAR (falta formato A)', e.tracking, e.order_number, e.customer_name, e.province, e.cod, e.entrega, 'entregada', `giro esperado ${e.giro}`]),
+  ...aConfirmar.map((e) => [`SIN AUDITAR (falta formato ${falta(e.giro)})`, e.tracking, e.order_number, e.customer_name, e.province, e.cod, e.entrega, 'entregada', `giro esperado ${e.giro} — pedir el resumen formato ${falta(e.giro)} de ese martes`]),
   ...trabadasReales.map((t) => ['TRABADA', t.tracking, t.order_number, t.customer_name, t.province, t.cod_amount, String(t.dispatched_at).slice(0, 10), t.status_raw, `${t.dias} días sin movimiento`]),
   ...raras.map((r) => ['ESTADO EN CONFLICTO', r.tracking, r.order_number, '', r.province, r.cod, pagada.get(r.tracking), r.status_raw, 'rendida pero no figura entregada']),
 ];

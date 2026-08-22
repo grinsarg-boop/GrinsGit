@@ -31,34 +31,13 @@ try {
   const migraciones = readdirSync('supabase/migrations').filter((f) => f.endsWith('.sql')).sort()
     .map((f) => `supabase/migrations/${f}`);
 
-  for (const f of [...migraciones,
-                   'supabase/tests/salud_check.sql',
-                   'supabase/tests/pnl_check.sql', 'supabase/tests/matching_check.sql',
-                   'supabase/tests/tag_dispatch_check.sql', 'supabase/tests/fixy_link_check.sql',
-                   'supabase/tests/correo_check.sql', 'supabase/tests/ml_check.sql',
-                   'supabase/tests/bot_pnl_check.sql', 'supabase/tests/override_check.sql',
-                   'supabase/tests/flex_estimado_check.sql', 'supabase/tests/ml_ads_check.sql',
-                   'supabase/tests/ml_ads_item_check.sql',
-                   'supabase/tests/sales_check.sql',
-                   'supabase/tests/urbano_discover_check.sql',
-                   'supabase/tests/trabados_check.sql',
-                   'supabase/tests/ml_retenciones_check.sql',
-                   'supabase/tests/ml_liquidar_check.sql',
-                   'supabase/tests/ml_bonif_check.sql',
-                   'supabase/tests/ml_percep_check.sql',
-                   'supabase/tests/mp_khalil_check.sql',
-                   'supabase/tests/packs_pmin_check.sql',
-                   'supabase/tests/anuncios_check.sql',
-                   'supabase/tests/chat_check.sql',
-                   'supabase/tests/ad_review_check.sql',
-                   'supabase/tests/account_status_check.sql',
-                   'supabase/tests/urbano_ei_check.sql',
-                   'supabase/tests/devoluciones_viejas_check.sql',
-                   'supabase/tests/decay_check.sql',
-                   'supabase/tests/cohorte_check.sql',
-                   'supabase/tests/despacho_check.sql',
-                   'supabase/tests/estado_ultimo_evento_check.sql',
-                   'supabase/tests/ads_impuesto_check.sql']) {
+  // Los tests se descubren igual que las migraciones, y por el mismo motivo: la lista a mano se
+  // olvidaba. urbano_rendiciones_check (084) se escribió y nunca corrió hasta que esto dejó de ser
+  // una lista. Cada test abre su propio begin/rollback, así que el orden no importa.
+  const tests = readdirSync('supabase/tests').filter((f) => f.endsWith('_check.sql')).sort()
+    .map((f) => `supabase/tests/${f}`);
+
+  for (const f of [...migraciones, ...tests]) {
     process.stdout.write(`→ ${f} ... `);
     await client.query(readFileSync(f, 'utf8'));
     console.log('ok');

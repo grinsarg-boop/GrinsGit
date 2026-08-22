@@ -12,16 +12,20 @@ el reclamo. Sin esto no hay forma de saber qué entregó y nunca rindió.
 Dos formatos conviven, ambos son pago (no se solapan nunca dentro del mismo martes):
   A "RESUMEN A PAGAR N° x"  -> guía de 13 dígitos sola + Valor Declarado; trae Total a transferir.
   B "Resumen a pagar numero x" -> guía embebida en QOPQ<ddmm><guía> + monto con separador de miles.
+El `transferencia_ID-<n>_*.xlsx` (xlsx de verdad, "Detalle de Transferencia Contrarrembolso N° n")
+es el MISMO stream A con otra numeración: el 5141 trae las 82 guías exactas del resumen A 5728 del
+16/06. Por eso entra como fmt A y el detector de reimpresión de abajo se queda con una sola copia.
 El `resumen_transferencia_*.xls` es el MISMO formato B pero en HTML (no es un xls de verdad) y
 encima trae fecha de transferencia y N° de comprobante: es el único que PRUEBA que el giro salió.
 Ojo: la fecha del NOMBRE de ese archivo es la de descarga, no la del giro — se usa la de la tabla.
 """
-import csv, glob, os, re, sys
+import csv, datetime as dt, glob, os, re, sys
 
 import fitz  # PyMuPDF
+import openpyxl
 
 DEST = os.path.join(os.path.dirname(__file__), "..", "datos", "urbano_rendiciones.csv")
-COLS = ["resumen", "fecha", "fmt", "guia", "monto", "comprobante", "archivo"]
+COLS = ["resumen", "fecha", "fmt", "guia", "monto", "comprobante", "transferido", "archivo"]
 plata = lambda s: float(s.replace(".", "").replace(",", "."))       # 1.234.567,89 -> float
 
 
@@ -34,9 +38,9 @@ def parse_pdf(path):
     fecha = f"20{f.group(3)}-{f.group(2)}-{f.group(1)}" if f else "?"
     out = []
     for g, monto in re.findall(r"^(\d{13})\n(\d+(?:\.\d+)?)$", txt, re.M):
-        out.append((resumen, fecha, "A", g, float(monto), "", base))
+        out.append((resumen, fecha, "A", g, float(monto), "", "", base))
     for g, monto in re.findall(r"^QOPQ\d{4}(\d{13})\n([\d.]+,\d{2})$", txt, re.M):
-        out.append((resumen, fecha, "B", g, plata(monto), "", base))
+        out.append((resumen, fecha, "B", g, plata(monto), "", "", base))
     return out
 
 
@@ -47,12 +51,44 @@ def parse_xls(path):
     cab = re.search(r"<tbody>\s*<tr>\s*<td>(\d+)</td>\s*<td>[A-Z]+</td>\s*<td>(\d{2})-(\d{2})-(\d{4})</td>", s)
     resumen = cab.group(1) if cab else "?"
     fecha = f"{cab.group(4)}-{cab.group(3)}-{cab.group(2)}" if cab else "?"
-    comp = re.search(r"Comprobante.*?<td>[\d-]+</td>\s*<td>(\d+)</td>", s, re.S)
-    filas = re.findall(r">QOPQ\d{4}(\d{13})</td><td[^>]*>\d{13}</td>\s*<td[^>]*>([\d.]+,\d{2})</td>", s)
-    return [(resumen, fecha, "B", g, plata(m), comp.group(1) if comp else "", base) for g, m in filas]
+    giro = re.search(r"Comprobante.*?<td>([\d-]{8,10})</td>\s*<td>([^<]*)</td>", s, re.S)
+    transf = f"{giro.group(1)[6:]}-{giro.group(1)[3:5]}-{giro.group(1)[:2]}" if giro else ""
+    comp = (giro.group(2).strip() if giro else "")
+    # La barra es QOPQ<ddmm><código> y la 2ª columna repite el código: el backreference los ata,
+    # así que no importa si el código son 13 dígitos o el BLABS<pedido> nuevo (desde el 04/08). El
+    # regex viejo pedía \d{13} y se comía las BLABS EN SILENCIO — 67 de 78 guías en el resumen del
+    # 18/08. Por eso abajo se cuenta contra las filas del tbody: un formato nuevo tiene que gritar.
+    filas = re.findall(r">QOPQ\d{4}(\w+)</td><td[^>]*>\1</td>\s*<td[^>]*>([\d.]+,\d{2})</td>", s)
+    cuerpo = re.search(r"<tbody>(.*?)</tbody>", s, re.S)
+    esperadas = sum(1 for tr in re.findall(r"<tr>(.*?)</tr>", cuerpo.group(1), re.S)
+                    if "TOTALES" not in tr) if cuerpo else len(filas)
+    if filas and len(filas) != esperadas:       # 0 = no es este formato; parcial = perdemos plata
+        sys.exit(f"❌ {base}: parseé {len(filas)} de {esperadas} filas — formato nuevo, no sigo")
+    return [(resumen, fecha, "B", g, plata(m), comp, transf, base) for g, m in filas]
+
+
+def parse_xlsx(path):
+    """transferencia_ID-*.xlsx — filas (fecha, shipper, nombre, barra, monto, cheques, iibb)."""
+    ws = openpyxl.load_workbook(path, data_only=True).active
+    base = os.path.basename(path)
+    m = (re.search(r"N[°º] (\d+)", str(ws.cell(1, 1).value or "")) or re.search(r"ID-(\d+)", base))
+    if not m:                                  # cualquier otro xlsx de la carpeta: no es un resumen
+        return []
+    resumen = m.group(1)
+    filas = [r for r in ws.iter_rows(min_row=3, values_only=True)
+             if r[3] and not str(r[0] or "").startswith("Total")]
+    # El detalle se genera al CIERRE de la ventana (lunes) y el giro sale el martes siguiente. Si
+    # salió tarde (el 5254 se transfirió un jueves), el lunes anterior sigue siendo el cierre: por
+    # eso se retrocede al lunes antes de pedir el martes de giro, y no se usa la fecha cruda.
+    d = dt.date.fromisoformat(str(filas[0][0])[:10])
+    lunes = d - dt.timedelta(days=(d.weekday() - 0) % 7)
+    fecha = str(lunes + dt.timedelta(days=1))
+    return [(resumen, fecha, "A", str(r[3]), float(r[4] or 0), f"T{resumen}", str(d), base) for r in filas]
 
 
 def parse(path):
+    if path.lower().endswith(".xlsx"):
+        return parse_xlsx(path)
     return parse_xls(path) if path.lower().endswith((".xls", ".html")) else parse_pdf(path)
 
 
@@ -64,7 +100,7 @@ def main(carpetas):
                 filas[(r["resumen"], r["fecha"], r["guia"])] = [r.get(c, "") for c in COLS]
     previas = len(filas)
 
-    archivos = sorted({a for x in carpetas for pat in ("*.pdf", "*.xls")
+    archivos = sorted({a for x in carpetas for pat in ("*.pdf", "*.xls", "*.xlsx")
                        for a in (glob.glob(os.path.join(x, pat)) if os.path.isdir(x) else [x])})
     for p in archivos:
         rows = parse(p)
