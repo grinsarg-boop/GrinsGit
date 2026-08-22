@@ -27,6 +27,7 @@ type SaldoMes = { mes: string; guias: number; total: number; estimado: number };
 type Cobranza = {
   ventana_ini: string; ventana_fin: string; fecha_pago: string;
   guias: number; cod_bruto: number; comision: number; neto: number;
+  rendido_bruto: number; girado_el: string | null;
 };
 type MlLiq = { semana: string; pagos: number; neto: number };
 
@@ -240,6 +241,12 @@ export async function Cobranzas() {
                       <TableHead>Ventana</TableHead>
                       <TableHead className="text-right">Entregas</TableHead>
                       <TableHead className="text-right">COD cobrado</TableHead>
+                      <TableHead className="text-right">
+                        <span className="inline-flex items-center gap-1">
+                          Rendido (Urbano)
+                          <Tip tip="Lo que los resúmenes de rendición de Urbano dicen que cobraron en esa ventana, en bruto (solo las guías que valen: la rendición manda sobre el estado). El % compara contra nuestro COD cobrado. Las dos últimas ventanas quedan en gris a propósito: el resumen llega en partes y el % oscila fuerte (21/07 −65% y 28/07 +34% son la misma plata llegando tarde). Una vez madura, un rojo grande es reclamo si falta, o base nuestra incompleta si sobra. Un guion es una ventana sin resumen cargado." />
+                        </span>
+                      </TableHead>
                       <TableHead className="text-right">Comisión</TableHead>
                       <TableHead className="text-right">Giro neto</TableHead>
                       <TableHead className="text-right">
@@ -261,6 +268,32 @@ export async function Cobranzas() {
                           </TableCell>
                           <TableCell className="text-right tabular-nums">{c.guias.toLocaleString("es-AR")}</TableCell>
                           <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(Number(c.cod_bruto))}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {(() => {
+                              const rend = Number(c.rendido_bruto ?? 0);
+                              if (!rend) return <span className="text-muted-foreground">—</span>;
+                              const base = Number(c.cod_bruto);
+                              const diff = base > 0 ? rend / base - 1 : null;
+                              // La rendición llega en partes: el % de una ventana fresca oscila ±30% sin
+                              // que falte nada. Se pinta recién cuando ya maduró (>14d del martes de pago).
+                              const maduro = c.fecha_pago < daysAgoIso(14);
+                              return (
+                                <span className="inline-flex items-center gap-1.5">
+                                  {fmtMoney(rend)}
+                                  {diff != null && (
+                                    <span className={cn(
+                                      "rounded px-1 py-px text-[0.6rem] tabular-nums",
+                                      !maduro ? "bg-muted text-muted-foreground"
+                                        : Math.abs(diff) <= 0.03 ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-500"
+                                        : "bg-amber-500/15 text-amber-700 dark:text-amber-500",
+                                    )}>
+                                      {diff >= 0 ? "+" : ""}{(diff * 100).toFixed(1)}%
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            })()}
+                          </TableCell>
                           <TableCell className="text-right tabular-nums text-muted-foreground">−{fmtMoney(Number(c.comision))}</TableCell>
                           <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(Number(c.neto))}</TableCell>
                           <TableCell className="text-right tabular-nums">
@@ -289,6 +322,21 @@ export async function Cobranzas() {
                               <span className="rounded bg-emerald-500/10 px-1.5 py-px text-[0.6rem] uppercase tracking-wide text-emerald-700 dark:text-emerald-500">
                                 a cobrar {fmtDate(c.fecha_pago)}
                               </span>
+                            ) : c.girado_el ? (
+                              // El martes es el calendario; girado_el es cuándo salió la plata de verdad.
+                              (() => {
+                                const tarde = Math.round(
+                                  (Date.parse(c.girado_el) - Date.parse(c.fecha_pago)) / 86_400_000);
+                                return (
+                                  <Tip tip={tarde > 0
+                                    ? `El giro salió ${tarde} día${tarde === 1 ? "" : "s"} después del martes que le tocaba (${fmtDate(c.fecha_pago)}).`
+                                    : `Girado el día de pago (${fmtDate(c.fecha_pago)}).`}>
+                                    <span className="rounded bg-muted px-1.5 py-px text-[0.6rem] uppercase tracking-wide text-muted-foreground">
+                                      girado {fmtDate(c.girado_el)}{tarde > 0 ? ` +${tarde}d` : ""}
+                                    </span>
+                                  </Tip>
+                                );
+                              })()
                             ) : (
                               <span className="rounded bg-muted px-1.5 py-px text-[0.6rem] uppercase tracking-wide text-muted-foreground">
                                 cobrado {fmtDate(c.fecha_pago)}
