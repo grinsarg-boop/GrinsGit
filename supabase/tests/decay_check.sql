@@ -1,4 +1,7 @@
 -- decay_check.sql (072): el prior se condiciona a la EDAD de la guía.
+-- 079: el fixture se despachaba a 40 días, que entraba en la ventana vieja del prior (piso -45) y
+-- queda FUERA de la ventana fija 21-35 del canon del 21/08/2026. Movido a 30 días: mismo fixture,
+-- misma forma de hazard, dentro de la ventana. Las edades de resolución (2 y 12) no cambian.
 -- Lo que protege: que una guía vieja y todavía abierta valga menos que una despachada hoy. Si alguien
 -- saca el `× decay` de cualquiera de los dos consumidores, o la curva sale mal, esto se pone rojo.
 begin;
@@ -21,33 +24,33 @@ begin
   --   P(entrega) global      = 120/200 = 60,0%
   --   P(entrega | abierta@5) =  20/100 = 20,0%  → decay(5) = 0,3333
   insert into orders (shopify_id, order_number, created_at, province, cod_amount, total)
-  select 500000 + g, '#T' || g, now() - interval '40 days', 'Córdoba', 40000, 40000
+  select 500000 + g, '#T' || g, now() - interval '30 days', 'Córdoba', 40000, 40000
   from generate_series(1, 200) g;
   insert into order_items (order_id, product_id, pack, qty, unit_price, title_raw)
   select o.id, 900, 1, 1, 40000, 'TestDecay' from orders o where o.shopify_id >= 500000;
 
   insert into shipments (courier, tracking, order_id, province, dispatched_at,
                          status_raw, status_canonical, resolved_at, freight_cost)
-  select 'urbano', 'T' || o.shopify_id, o.id, 'Córdoba', current_date - 40,
+  select 'urbano', 'T' || o.shopify_id, o.id, 'Córdoba', current_date - 30,
          'X',
          case when o.shopify_id < 500121 then 'entregado' else 'devuelto' end,
-         case when o.shopify_id < 500101 then current_date - 38    -- 100 entregas rápidas (edad 2)
-              else current_date - 28 end,                          -- 20 lentas + 80 devueltas (edad 12)
+         case when o.shopify_id < 500101 then current_date - 28    -- 100 entregas rápidas (edad 2)
+              else current_date - 18 end,                          -- 20 lentas + 80 devueltas (edad 12)
          9000
   from orders o where o.shopify_id >= 500000;
 
   -- ---- Fixture FIXY: 150 guías que "resuelven" todas el día del despacho. Es la firma exacta del
   -- histórico importado sin fechas reales (Fixy pre-julio/2026). La guarda tiene que dejarlo AFUERA.
   insert into orders (shopify_id, order_number, created_at, province, cod_amount, total)
-  select 600000 + g, '#F' || g, now() - interval '40 days', 'CABA', 40000, 40000
+  select 600000 + g, '#F' || g, now() - interval '30 days', 'CABA', 40000, 40000
   from generate_series(1, 150) g;
   insert into order_items (order_id, product_id, pack, qty, unit_price, title_raw)
   select o.id, 900, 1, 1, 40000, 'TestDecay' from orders o where o.shopify_id >= 600000;
   insert into shipments (courier, tracking, order_id, province, dispatched_at,
                          status_raw, status_canonical, resolved_at, freight_cost)
-  select 'fixy', 'F' || o.shopify_id, o.id, 'CABA', current_date - 40, 'X',
+  select 'fixy', 'F' || o.shopify_id, o.id, 'CABA', current_date - 30, 'X',
          case when o.shopify_id < 600101 then 'entregado' else 'devuelto' end,
-         current_date - 40, 5000
+         current_date - 30, 5000
   from orders o where o.shopify_id >= 600000;
 
   perform recompute_priors();

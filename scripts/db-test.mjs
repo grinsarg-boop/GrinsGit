@@ -55,6 +55,8 @@ try {
                    'supabase/tests/urbano_ei_check.sql',
                    'supabase/tests/devoluciones_viejas_check.sql',
                    'supabase/tests/decay_check.sql',
+                   'supabase/tests/cohorte_check.sql',
+                   'supabase/tests/despacho_check.sql',
                    'supabase/tests/estado_ultimo_evento_check.sql',
                    'supabase/tests/ads_impuesto_check.sql']) {
     process.stdout.write(`→ ${f} ... `);
