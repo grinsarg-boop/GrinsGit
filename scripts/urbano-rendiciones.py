@@ -36,11 +36,27 @@ def parse_pdf(path):
     resumen = m.group(1) if m else "?"
     f = re.search(r"(\d{2})-(\d{2})-(\d{2})", base)          # el PDF no trae fecha adentro: la del nombre
     fecha = f"20{f.group(3)}-{f.group(2)}-{f.group(1)}" if f else "?"
+    # Desde el 04/08/2026 el código de seguimiento dejó de ser el order_id de 13 dígitos y pasó a
+    # BLABS<nro-pedido>: los dos regex pedían \d{13}, así que un resumen nuevo habría entrado
+    # PARCIAL. Y `main` solo avisa cuando salen CERO filas — 11 de 78 pasaba en silencio, y el
+    # faltante se lee como plata que Urbano no pagó (infla el reclamo). Por eso cada formato cierra
+    # ahora contra el total impreso en el propio PDF: es plata contra plata, no conteo, y el
+    # próximo cambio de formato tiene que gritar en vez de mentir. Mismo criterio que `parse_xls`.
     out = []
-    for g, monto in re.findall(r"^(\d{13})\n(\d+(?:\.\d+)?)$", txt, re.M):
-        out.append((resumen, fecha, "A", g, float(monto), "", "", base))
-    for g, monto in re.findall(r"^QOPQ\d{4}(\d{13})\n([\d.]+,\d{2})$", txt, re.M):
-        out.append((resumen, fecha, "B", g, plata(monto), "", "", base))
+    for fmt, pat, tot, num in (
+            ("A", r"^(\d{13}|BLABS\d+)\n(\d+(?:\.\d+)?)$", r"^SUB-TOTALES\n([\d.]+)$", float),
+            ("B", r"^QOPQ\d{4}(\w+)\n([\d.]+,\d{2})$", r"^TOTALES\n([\d.]+,\d{2})$", plata)):
+        filas = re.findall(pat, txt, re.M)
+        if not filas:
+            continue
+        t = re.search(tot, txt, re.M)
+        if not t:
+            sys.exit(f"❌ {base}: {len(filas)} guías fmt {fmt} y ningún total impreso — no puedo validar, no sigo")
+        leido, esperado = sum(num(x) for _, x in filas), num(t.group(1))
+        if abs(leido - esperado) > 0.01:
+            sys.exit(f"❌ {base}: fmt {fmt} parseé ${leido:,.2f} de ${esperado:,.2f} impresos "
+                     f"({len(filas)} guías) — formato nuevo, no sigo")
+        out += [(resumen, fecha, fmt, g, num(x), "", "", base) for g, x in filas]
     return out
 
 
