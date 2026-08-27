@@ -13,7 +13,15 @@
       "Bash(~/.local/node-v22.17.0-darwin-arm64/bin/node --version)",
       "Bash(docker info *)",
       "Bash(git push*)",
-      "Bash(node scripts/db-apply.mjs*)"
+      "Bash(node scripts/db-apply.mjs*)",
+      "Bash(gh auth status*)",
+      "Bash(gh auth refresh -h github.com -s codespace*)",
+      "Bash(gh api /repos/biolabsarg-bit/*)",
+      "Bash(gh api /user/codespaces*)",
+      "Bash(gh codespace list*)",
+      "Bash(gh codespace ssh -c bug-free-happiness-p7j75rwp4qpjf799p*)",
+      "Bash(gh pr list*)",
+      "Bash(gh pr view*)"
     ]
   }
 }

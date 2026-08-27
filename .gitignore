@@ -43,3 +43,13 @@ next-env.d.ts
 
 # datos reales (no versionar)
 datos/
+
+# skills de terceros: se reproducen desde skills-lock.json, no se versionan
+/.agents/
+/.claude/skills/*
+!/.claude/skills/creativos-meta/
+!/.claude/skills/qa-ojo-de-cliente/
+/.claude/launch.json
+
+# estado de corridas de redespacho (guías y pedidos reales, como datos/)
+/.redespacho-*.json
