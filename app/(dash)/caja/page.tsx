@@ -69,12 +69,16 @@ export default async function Caja() {
   const heroMeses = meses.slice(0, 2); // mes en curso + anterior
   const inventario = await inventarioSafe(); // null si Stock no está conectado — la página no depende
   const cajas = saldos(cf.movs, cf.cajas);
-  const socios = balance5050(cf.movs);
+  const socios = balance5050(cf.movs, cf.cajas);
   const aCobrar = cf.cobrar.reduce((s, c) => s + Number(c.monto), 0);
+  // Clave "autor|moneda": un retiro en USD no se suma con los de pesos (la moneda la da la caja).
+  const monedaCaja = new Map(cf.cajas.map((c) => [c.id, c.moneda]));
   const retirosMes = new Map<string, number>();
   for (const r of cf.movs)
-    if (r.es_retiro && r.fecha.slice(0, 7) === mesActual)
-      retirosMes.set(r.autor ?? "?", (retirosMes.get(r.autor ?? "?") ?? 0) + Number(r.monto));
+    if (r.es_retiro && r.fecha.slice(0, 7) === mesActual) {
+      const k = `${r.autor ?? "?"}|${monedaCaja.get(r.caja_id) ?? "ARS"}`;
+      retirosMes.set(k, (retirosMes.get(k) ?? 0) + Number(r.monto));
+    }
   const pendientes = cf.movs
     .filter((m) => m.tipo === "egreso" && !m.es_retiro && m.categoria_id == null && m.fecha.slice(0, 7) >= DESDE)
     .sort((a, b) => b.fecha.localeCompare(a.fecha));
@@ -310,25 +314,34 @@ export default async function Caja() {
         {/* Socios */}
         <Panel
           titulo="Socios"
-          tip="Retiros del mes en curso por socio, y el balance histórico 50/50: el que retiró menos queda con la diferencia a favor para igualar. Mismo cálculo que la app Cashflow."
+          tip="Retiros del mes en curso por socio, y el balance histórico 50/50: el que retiró menos queda con la diferencia a favor para igualar. Va separado por moneda: los retiros en USD no se compensan con los de pesos. La app Cashflow todavía los suma juntos, así que ahí el balance difiere."
         >
           <div className="space-y-1.5 text-sm tabular-nums">
-            {[...retirosMes.entries()].map(([autor, total]) => (
-              <div key={autor} className="flex justify-between">
-                <span className="text-muted-foreground">Retiros {mesLabel(mesActual).split(" ")[0]} · {autor}</span>
-                <span>{fmtMoney(total)}</span>
+            {[...retirosMes.entries()].map(([k, total]) => {
+              const [autor, moneda] = k.split("|");
+              return (
+                <div key={k} className="flex justify-between">
+                  <span className="text-muted-foreground">Retiros {mesLabel(mesActual).split(" ")[0]} · {autor}</span>
+                  <span>{fmtMoney(total)}{moneda === "ARS" ? "" : ` ${moneda}`}</span>
+                </div>
+              );
+            })}
+            {retirosMes.size === 0 && <div className="text-muted-foreground">Sin retiros este mes</div>}
+            {socios.map((b) => (
+              <div key={b.moneda}>
+                <div className="flex justify-between border-t pt-1.5">
+                  <span className="text-muted-foreground">
+                    Histórico Fran / Santi{b.moneda === "ARS" ? "" : ` · ${b.moneda}`}
+                  </span>
+                  <span>{fmtMoney(b.fran)} / {fmtMoney(b.santi)}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {b.aFavor
+                    ? `${b.aFavor} tiene ${fmtMoney(b.dif)}${b.moneda === "ARS" ? "" : ` ${b.moneda}`} a favor para igualar`
+                    : "Parejos"}
+                </div>
               </div>
             ))}
-            {retirosMes.size === 0 && <div className="text-muted-foreground">Sin retiros este mes</div>}
-            <div className="flex justify-between border-t pt-1.5">
-              <span className="text-muted-foreground">Histórico Fran / Santi</span>
-              <span>{fmtMoney(socios.fran)} / {fmtMoney(socios.santi)}</span>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {socios.aFavor
-                ? `${socios.aFavor} tiene ${fmtMoney(socios.dif)} a favor para igualar`
-                : "Parejos"}
-            </div>
           </div>
         </Panel>
       </div>

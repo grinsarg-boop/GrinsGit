@@ -236,14 +236,25 @@ export function saldos(movs: Mov[], cajas: Caja[]): { caja: Caja; saldo: number 
 }
 
 // Balance societario 50/50: retiros históricos completos por autor; el que retiró menos queda con
-// la diferencia a favor. Mismo criterio que la PWA Cashflow y el bot de WhatsApp.
-export function balance5050(movs: Mov[]): { fran: number; santi: number; aFavor: string | null; dif: number } {
-  let fran = 0, santi = 0;
-  for (const r of movs)
-    if (r.es_retiro) {
-      if (r.autor === "Fran") fran += Number(r.monto);
-      else if (r.autor === "Santi") santi += Number(r.monto);
-    }
-  const dif = Math.abs(fran - santi);
-  return { fran, santi, dif, aFavor: dif > 0 ? (fran < santi ? "Fran" : "Santi") : null };
+// la diferencia a favor. El movimiento no trae moneda — la pone la caja de la que salió el retiro —
+// así que el balance va SEPARADO por moneda: 600 USD no se igualan con 600 pesos. La PWA Cashflow
+// y el bot de WhatsApp todavía los suman juntos (ahí el retiro en USD entra como si fuera ARS).
+export type BalanceSocios = { moneda: string; fran: number; santi: number; aFavor: string | null; dif: number };
+export function balance5050(movs: Mov[], cajas: Caja[]): BalanceSocios[] {
+  const moneda = new Map(cajas.map((c) => [c.id, c.moneda]));
+  const por = new Map<string, { fran: number; santi: number }>();
+  for (const r of movs) {
+    if (!r.es_retiro) continue;
+    const m = moneda.get(r.caja_id) ?? "ARS"; // caja borrada → ARS, que es el 99% de los retiros
+    const b = por.get(m) ?? { fran: 0, santi: 0 };
+    if (r.autor === "Fran") b.fran += Number(r.monto);
+    else if (r.autor === "Santi") b.santi += Number(r.monto);
+    por.set(m, b);
+  }
+  return [...por]
+    .map(([moneda, b]) => {
+      const dif = Math.abs(b.fran - b.santi);
+      return { moneda, ...b, dif, aFavor: dif > 0 ? (b.fran < b.santi ? "Fran" : "Santi") : null };
+    })
+    .sort((a, b) => a.moneda.localeCompare(b.moneda)); // ARS antes que USD
 }

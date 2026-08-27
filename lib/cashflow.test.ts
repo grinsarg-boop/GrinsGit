@@ -162,12 +162,30 @@ describe("fixyCobranza", () => {
 });
 
 describe("balance5050", () => {
+  const CAJAS: Caja[] = [
+    { id: 1, nombre: "Cash", moneda: "ARS" },
+    { id: 9, nombre: "Usd cash", moneda: "USD" },
+  ];
+
   it("el que retiró menos queda a favor", () => {
     const movs: Mov[] = [
       mov({ monto: 800, es_retiro: true, autor: "Fran" }),
       mov({ monto: 500, es_retiro: true, autor: "Santi" }),
       mov({ monto: 100 }), // gasto común: no cuenta
     ];
-    expect(balance5050(movs)).toEqual({ fran: 800, santi: 500, dif: 300, aFavor: "Santi" });
+    expect(balance5050(movs, CAJAS)).toEqual([
+      { moneda: "ARS", fran: 800, santi: 500, dif: 300, aFavor: "Santi" },
+    ]);
+  });
+
+  it("no mezcla monedas: 600 USD no compensan 600 pesos", () => {
+    const movs: Mov[] = [
+      mov({ monto: 600, es_retiro: true, autor: "Santi" }), // caja 1 → ARS
+      mov({ monto: 600, es_retiro: true, autor: "Fran", caja_id: 9 }), // USD
+    ];
+    expect(balance5050(movs, CAJAS)).toEqual([
+      { moneda: "ARS", fran: 0, santi: 600, dif: 600, aFavor: "Fran" },
+      { moneda: "USD", fran: 600, santi: 0, dif: 600, aFavor: "Santi" },
+    ]);
   });
 });

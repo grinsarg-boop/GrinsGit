@@ -152,9 +152,9 @@ export const chatTools = [
       try {
         const { movs, cajas, cats } = await fetchCashflow();
         return JSON.stringify({
-          saldos: saldos(movs, cajas).map((s) => ({ caja: s.caja.nombre, saldo: s.saldo })),
+          saldos: saldos(movs, cajas).map((s) => ({ caja: s.caja.nombre, saldo: s.saldo, moneda: s.caja.moneda })),
           por_mes: porMes(movs, cats),
-          retiros_socios: balance5050(movs),
+          retiros_socios: balance5050(movs, cajas), // una entrada por moneda; no mezclar ARS con USD
         });
       } catch (e) {
         return `Error leyendo caja: ${(e as Error).message}`;
