@@ -33,11 +33,29 @@ const desde = new Date(Date.now() - dias * 86400_000).toISOString().slice(0, 10)
 // fixy/urbano: ventana madura 25/05→25/06. cuotas: 15/06→15/07, la única donde existen (arrancaron
 // el 06/07) — menos madura, revisar cuando haya un mes cerrado.
 const MARGEN = { fixy: 19811, urbano: 12797, cuotas: 15802 };
-const KILL_CPA = 6500;
+// El corte NO es un CPA fijo. Un CPA fijo compara lanes que dejan márgenes distintos: el lane
+// FIXY entrega 67,3% y deja $19.811 por orden generada, el resto entrega 56,0% y deja $12.797,
+// así que el mismo CPA de $7.000 es negocio en uno y no en el otro. El corte es el NETO por
+// orden: se frena cuando lo que queda después de la pauta baja de $5.000. Medido el 28/08/2026
+// sobre el sistema entero (MC $14.000, techo $9.000, deja >$5.000) — acá se aplica el mismo
+// piso lane por lane. El $6.500 plano que había hasta el 29/08/2026 marcaba ⛔ un lane que
+// devolvía 2,29x.
+const NETO_MINIMO = 5000;
 
-// RESTO se testea PRIMERO: el lane resto se llama "...-RESTO-AR-sinFixy-...", que también
-// contiene "Fixy" y caería en el lane equivocado si se preguntara por FIXY antes.
-const laneDeAdset = (n) => (/RESTO/i.test(n) ? 'RESTO' : /FIXY/i.test(n) ? 'FIXY' : null);
+// El marcador "sinFixy" se BORRA antes de preguntar por FIXY: el lane resto se llamó
+// "...-RESTO-AR-sinFixy-..." y ahora "...-OPEN-AR-sinFixy-...", y las dos formas contienen
+// "Fixy". Preguntar por RESTO primero alcanzaba con el nombre viejo; con "OPEN" ya no —
+// el 29/08/2026 los DOS lanes de beevenom cayeron en FIXY y el script imprimió el gasto
+// entero de la campaña contra las órdenes de una sola zona (CPA $18.729 y "⛔ SOBRE EL
+// CORTE" sobre un lane que estaba en $7.841). Nombrar el lane resto sin marcador negativo
+// no arregla el patrón: lo que lo arregla es no preguntar por FIXY sobre un texto que
+// dice "sin Fixy".
+const laneDeAdset = (n) => {
+  const limpio = String(n).replace(/sin[\s_-]*fixy/gi, '');
+  if (/FIXY/i.test(limpio)) return 'FIXY';
+  if (/RESTO|OPEN/i.test(limpio)) return 'RESTO';
+  return null;
+};
 const laneDeCP = (zip) => (/^1\d{3}/.test(String(zip ?? '').replace(/\D/g, '')) ? 'FIXY' : 'RESTO');
 
 // UN SOLO action_type: Meta devuelve el MISMO número bajo 8 etiquetas (purchase, omni_purchase,
@@ -89,6 +107,18 @@ for (const o of rows) {
   ordenes[l].margen += o.cuotas ? MARGEN.cuotas : (MARGEN[o.courier] ?? MARGEN.urbano);
 }
 
+// Assert de mapeo: los lanes se parten por geo, así que un lane con órdenes y CERO gasto
+// significa que su adset cayó en el bucket de otro lane, no que no gastó. Sin esto el error
+// sale como un CPA malísimo en un lane y ninguno en el otro, que se lee como un veredicto.
+for (const l of ['FIXY', 'RESTO']) {
+  if ((ordenes[l]?.n ?? 0) > 0 && !(gasto[l] > 0)) {
+    console.error(`\n✖ MAPEO ROTO: el lane ${l} tiene ${ordenes[l].n} órdenes y $0 de gasto.`);
+    console.error(`  Algún adset de beevenom cayó en el lane equivocado — revisá laneDeAdset()`);
+    console.error(`  contra los nombres de conjunto de la campaña. NO leer los CPA de abajo.`);
+    process.exit(1);
+  }
+}
+
 const ars = (n) => '$' + Math.round(n).toLocaleString('es-AR');
 console.log(`\nBeeVenom — P&L por lane, ${desde} → ${hasta} (${dias} días)\n`);
 console.log('lane     gasto        órd    CPA        margen/gen   neto/gen    profit/día   x$ de ads');
@@ -107,7 +137,7 @@ for (const l of ['FIXY', 'RESTO', 'SIN LANE']) {
   const mg = o.n ? o.margen / o.n : 0;
   const profit = o.margen - g;
   tg += g; tp += profit;
-  const alarma = cpa > KILL_CPA ? '  ⛔ SOBRE EL CORTE' : '';
+  const alarma = o.n && mg - cpa < NETO_MINIMO ? '  ⛔ SOBRE EL CORTE' : '';
   console.log(
     `${l.padEnd(8)} ${ars(g).padStart(10)} ${String(o.n).padStart(6)} ${ars(cpa).padStart(9)} ` +
     `${ars(mg).padStart(12)} ${ars(mg - cpa).padStart(11)} ${ars(profit / dias).padStart(13)} ` +
@@ -116,7 +146,8 @@ for (const l of ['FIXY', 'RESTO', 'SIN LANE']) {
 }
 console.log(`\nTOTAL    ${ars(tg).padStart(10)} ${String(rows.length).padStart(6)} ${ars(tg / rows.length).padStart(9)}` +
   `${''.padStart(24)} ${ars(tp / dias).padStart(13)}`);
-console.log(`\nCorte de la kill-rule: CPA > ${ars(KILL_CPA)} por lane a los 4 días.`);
+console.log(`\nCorte de la kill-rule: neto por orden < ${ars(NETO_MINIMO)} a los 4 días, o sea` +
+  ` CPA > ${['FIXY', 'RESTO'].map((l) => `${l} ${ars((ordenes[l]?.n ? ordenes[l].margen / ordenes[l].n : 0) - NETO_MINIMO)}`).join(' · ')}.`);
 
 // Ventas por courier: a qué transportista terminó yendo cada orden de cada zona. Es el control
 // de que el ruteo hace lo que debe (zona FIXY → fixy); una orden de zona FIXY que sale por
