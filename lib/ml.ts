@@ -744,3 +744,39 @@ export function parseSantiagoFlex(buf: Buffer): { shipment_id: number; price: nu
   }
   return out;
 }
+
+// --- Notificaciones de ML (webhook) ---
+
+export type MlEventRow = {
+  notif_id: string; topic: string; resource: string;
+  user_id: number | null; application_id: number | null;
+  sent: string | null; attempts: number | null; payload: unknown;
+};
+
+// Decide qué hacer con un POST del callback de ML (091). Devuelve la fila a guardar, o null si hay
+// que descartar el aviso. Es la frontera de confianza de un endpoint público y sin firma —ML no
+// manda HMAC—, así que el único filtro es que la notificación diga ser de NUESTRO vendedor.
+// Sin ML_SELLER_ID seteada se descarta TODO: dejar la tabla abierta a cualquiera es peor que
+// perder avisos, y el mismo criterio ya rige en requireCron (lib/supabase.ts).
+export function mlNotifRow(p: unknown, sellerId: string | undefined): MlEventRow | null {
+  if (!sellerId || typeof p !== "object" || p === null) return null;
+  const n = p as Record<string, unknown>;
+  const topic = typeof n.topic === "string" ? n.topic : "";
+  const resource = typeof n.resource === "string" ? n.resource : "";
+  if (!topic || !resource) return null;
+  if (String(n.user_id ?? "") !== sellerId) return null;
+
+  const num = (v: unknown) => (typeof v === "number" ? v : null);
+  return {
+    // El _id es la clave del reintento. Si algún topic no lo trae, la terna topic+resource+sent
+    // deduplica igual: ML reintenta el mismo aviso con los mismos tres valores.
+    notif_id: typeof n._id === "string" && n._id ? n._id : `${topic}:${resource}:${n.sent ?? ""}`,
+    topic,
+    resource,
+    user_id: num(n.user_id),
+    application_id: num(n.application_id),
+    sent: typeof n.sent === "string" ? n.sent : null,
+    attempts: num(n.attempts),
+    payload: p,
+  };
+}
