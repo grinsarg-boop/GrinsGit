@@ -14,6 +14,9 @@ const OBJETIVO = {
   MLA3692036796: { precio: 'ptw', pack: 2 }, // x2 Clasica (31/08: quedo winning a $38.573)
   MLA1908275639: { precio: 'ptw', pack: 4 }, // x4: se resbalo a sharing_first_place en 1 hora ->
   // 'ptw' lee el numero de ML en el momento; hardcodearlo ya quedo viejo una vez hoy.
+  MLA2055177767: { precio: 'ptw', pack: 3 }, // x3 CLASICA de catalogo (MLA77148723), alta 01/09.
+  // Nacio winning a $55.500 con rivales desde $50.000: 'ptw' hoy es un no-op y solo actua si se
+  // resbala. El dry-run avisa antes de tocar nada.
   MLA3030316544: { precio: 55500, pack: 3 }, // x3 Premium. NO es catalogo. $18.500/u para destapar
   // la escalera de packs, que habia quedado invertida (el x3 salia mas caro por unidad que el x2).
   MLA3692896792: { precio: 55500, pack: 3 }, // x3 CLASICA, mismo producto y mismo precio que la
