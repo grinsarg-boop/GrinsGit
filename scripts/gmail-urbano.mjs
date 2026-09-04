@@ -99,11 +99,23 @@ for (const a of alias) {
       console.log(`   📎 ${p.filename}`);
       bajados++;
     }
-    // Los "Detalle Contrarrembolso" no adjuntan: mandan un link. Se listan para bajarlos aparte.
+    // Los "Detalle Contrarrembolso" no adjuntan: mandan un link. Y ese link es SIEMPRE el formato A,
+    // el único que dice guía por guía qué se pagó. Listarlos y bajarlos "aparte" quería decir nunca:
+    // al 03/09 faltaban los tres últimos y eran $15,7M sin auditar. El export no pide auth, así que
+    // se baja acá mismo y el formato A deja de depender de que alguien se acuerde.
     const cuerpo = partes.filter((p) => p.body?.data)
       .map((p) => Buffer.from(p.body.data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString()).join(' ');
     const links = [...new Set(cuerpo.match(/https?:\/\/[^\s"'<>]*(?:transferencia|resumen|reporte)[^\s"'<>]*/gi) ?? [])];
-    if (links.length) console.log(`   🔗 ${asunto.slice(0, 60)}\n      ${links.join('\n      ')}`);
+    for (const url of links) {
+      const nombre = decodeURIComponent(new URL(url).pathname.split('/').pop());
+      try {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        writeFileSync(join(DEST, nombre), Buffer.from(await r.arrayBuffer()));
+        console.log(`   🔗 ${nombre}`);
+        bajados++;
+      } catch (e) { console.log(`   ⚠️  ${nombre} — no se pudo bajar: ${e.message}\n      ${url}`); }
+    }
   }
 }
 console.log(`\n→ ${bajados} adjuntos en datos/urbano-mails/`);
