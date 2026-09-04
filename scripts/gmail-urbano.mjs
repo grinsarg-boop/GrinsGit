@@ -91,7 +91,10 @@ for (const a of alias) {
     (function walk(p) { partes.push(p); (p.parts ?? []).forEach(walk); })(m.payload);
 
     for (const p of partes.filter((x) => x.filename && x.body?.attachmentId)) {
-      const { data } = await api(`messages/${id}/attachments/${p.body.attachmentId}`);
+      const { data, error } = await api(`messages/${id}/attachments/${p.body.attachmentId}`);
+      // Un adjunto sin `data` (error de la API, cuota, adjunto vacío) no puede tumbar la corrida
+      // entera: se avisa cuál faltó y sigue. Antes reventaba en el .replace() y perdía el resto.
+      if (!data) { console.log(`   ⚠️  ${p.filename} — sin contenido${error ? `: ${error.code} ${error.message}` : ''}`); continue; }
       writeFileSync(join(DEST, p.filename), Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64'));
       console.log(`   📎 ${p.filename}`);
       bajados++;
