@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildCsv, needsSucursal, normalizeRow, parseCsv, pedidoToRow, pickProducto, productoCode,
+  buildCsv, CORREO_HEADER, needsSucursal, normalizeRow, parseCsv, pedidoToRow, pickProducto, productoCode,
   rowErrors, splitPhone, toSucursal,
 } from "./correo";
 
@@ -79,6 +79,16 @@ describe("correo", () => {
     expect(csv.endsWith("\r\n")).toBe(true);
     expect(csv.split("\r\n")[1].split(";").length).toBe(21);
     expect(Math.max(...[...csv].map((ch) => ch.charCodeAt(0)))).toBeLessThan(128);
+  });
+
+  // El CSV de Veltron trae BOM. Según con qué encoding se lea, el BOM llega como \uFEFF (UTF-8) o
+  // como "ï»¿" (Latin-1), y en los dos casos el encabezado tiene que saltearse igual.
+  it.each([["UTF-8", "\uFEFF"], ["Latin-1", "\u00EF\u00BB\u00BF"]])("parseCsv saltea el encabezado con BOM leído como %s", (_n, bom) => {
+    const conBom = bom + CORREO_HEADER + "\r\n" +
+      "CP;5;5;5;0.3;79900;S;;Rosario;Calle Falsa;789;;;2000;Test Test;a@b.com;;;11;22223333;\r\n";
+    const filas = parseCsv(conBom);
+    expect(filas).toHaveLength(1);
+    expect(filas[0].nombre).toBe("Test Test");
   });
 
   it("parseCsv + normalización de un borrador re-arma filas válidas", () => {

@@ -132,7 +132,11 @@ function toLine(r: CorreoRow): string {
 export function parseCsv(text: string): CorreoRow[] {
   return text
     .split(/\r?\n/)
-    .filter((l) => l.trim() && !l.startsWith("tipo_producto"))
+    // El encabezado se saltea aunque venga con BOM adelante, que es como lo emite Veltron: leído
+    // como UTF-8 el BOM es \uFEFF y leído como Latin-1 son tres caracteres (ï»¿). Sin esto el
+    // encabezado no arranca con "tipo_producto", no se filtra, y entra como si fuera un pedido
+    // (03/09/2026: se coló como una fila con la descripción de cada columna en cada campo).
+    .filter((l) => l.trim() && !/^[\uFEFF\u00EF\u00BB\u00BF\s]*tipo_producto/.test(l))
     .map((l) => {
       const c = l.split(";");
       return {
