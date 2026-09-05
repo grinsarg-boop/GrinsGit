@@ -6,6 +6,9 @@
 //   npx tsx scripts/despacho-etiquetas.mts                          # dry-run del lote de .despacho-propuesta.json
 //   npx tsx scripts/despacho-etiquetas.mts --confirmar              # alta + PDF
 //   npx tsx scripts/despacho-etiquetas.mts --pedidos fixy:1025 --pedidos urbano:4118 --confirmar
+//   npx tsx scripts/despacho-etiquetas.mts --solo-etiquetas --confirmar   # rehace el PDF, sin dar de alta nada
+//   npx tsx scripts/despacho-etiquetas.mts --despachar              # los que ya cumplieron 16 h (dry-run)
+//   npx tsx scripts/despacho-etiquetas.mts --despachar --confirmar  # sella la fecha y avisa al cliente
 //
 // ESCRIBE: `generar_etiqueta` crea la guía en el courier. Es irreversible (plata, y en Urbano el
 // código queda quemado), así que sin --confirmar no llama a nada que escriba. La contracara es
@@ -36,7 +39,17 @@ import { matchProduct } from "../lib/product-match.ts";
 import { htmlToPdf } from "./html2pdf.mjs";
 
 const CONFIRMAR = process.argv.includes("--confirmar");
+const DESPACHAR = process.argv.includes("--despachar");
+// Rehacer el PDF de un lote ya dado de alta (se perdió, faltaba una etiqueta, se cortó una corrida)
+// no puede crear guías ni por error: con --solo-etiquetas el alta queda bloqueada de raíz y un
+// pedido sin guía se reporta en vez de generarla.
+const SOLO_ETIQUETAS = process.argv.includes("--solo-etiquetas");
 const OUT_DIR = path.join(process.cwd(), "etiquetas");
+// Cuándo se generó cada etiqueta. Veltron no guarda ese momento (updated_at se mueve con cualquier
+// edición), y de ese momento cuelga el aviso al cliente, así que lo anotamos nosotros.
+const LEDGER = path.join(process.cwd(), ".despacho-etiquetas.json");
+const leerLedger = (): Record<string, { carrier: string; guia: string; generada: string }> =>
+  fs.existsSync(LEDGER) ? JSON.parse(fs.readFileSync(LEDGER, "utf8")) : {};
 const t0 = Date.now();
 const seg = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 
@@ -67,7 +80,7 @@ function loteDeArgs(): Record<string, number[]> {
 const MCP_URL = process.env.VELTRON_MCP_URL ?? "https://ecomdash-board-platform-production.up.railway.app/mcp";
 const TENANT = process.env.VELTRON_TENANT_ID ?? "ceca9834-e837-4f96-82a7-8b8edc689dd9";
 // `etiquetas_lote` también escribe: además de emitir el CSV, pasa los confirmados a `preparando`.
-const ESCRIBEN = new Set(["generar_etiqueta", "etiquetas_lote"]);
+const ESCRIBEN = new Set(["generar_etiqueta", "etiquetas_lote", "marcar_despachado"]);
 let rpcId = 0;
 
 // Veltron corta en 30 escrituras por minuto por API key ("429: Más de 30 escrituras por minuto con
@@ -190,6 +203,12 @@ async function paginasPorGuia(bytes: Uint8Array, guias: string[]): Promise<Map<s
   return out;
 }
 
+// La etiqueta de Urbano se puede pedir sólo con la guía, sin pasar por Veltron. Hace falta para
+// rehacer un PDF (--solo-etiquetas): ahí no hay alta, y la URL que devuelve `generar_etiqueta` no
+// existe. Es el mismo endpoint que usa Veltron (verificado 03/09/2026).
+const urlUrbano = (guia: string) =>
+  `https://apis.urbano.com.ar/impresionEtiqueta/?tipo=Z10X15&shipper=${process.env.URBANO_SHIPPER ?? "4362"}&codSeguimiento=${encodeURIComponent(guia)}`;
+
 async function htmlAPdf(html: string): Promise<Uint8Array> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "etq-"));
   const h = path.join(tmp, "e.html");
@@ -202,6 +221,76 @@ async function htmlAPdf(html: string): Promise<Uint8Array> {
 }
 
 const arrayBuffer = (b: Uint8Array) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
+
+// ---------------- modo --despachar ----------------
+// El bulto sale del depósito al mediodía siguiente de generada la etiqueta (20:00 + 16 h = 12:00),
+// y recién AHÍ se marca despachado: sella la fecha —que es la que usan las cohortes para medir la
+// tasa de entrega— y le manda el WhatsApp al cliente. Marcarlo antes le avisa a la gente que su
+// pedido salió mientras la caja sigue en el depósito, y fecha mal toda la cohorte.
+// Corre aparte del alta a propósito: son dos momentos del día distintos.
+if (DESPACHAR) {
+  const HORAS = Number(process.argv[process.argv.indexOf("--horas") + 1]) || 16;
+  const led = leerLedger();
+  const listos: { carrier: string; pedidoId: number; guia: string; horas: number; cliente: string }[] = [];
+  const esperando: number[] = [];
+  const nuevos: number[] = [];   // vistos por primera vez: se les anota la hora y se marcan en la próxima corrida
+
+  for (const carrier of ["fixy", "urbano", "andreani"]) {
+    for (let page = 1, paginas = 1; page <= paginas && page <= 20; page++) {
+      const r = await mcp("listar_pedidos", { carrier, estado: ["preparando"], preset: "30d", page, page_size: 100 });
+      paginas = Number(r.paginas ?? 1);
+      for (const p of r.pedidos ?? []) {
+        if (!p.guia) continue;
+        const k = `${carrier}:${p.id}`;
+        // La hora de la etiqueta sólo la sabemos si la anotamos: la API de Veltron no expone
+        // `updated_at` ni una fecha de generación (04/09/2026 — sólo created_at, fecha_pedido,
+        // fecha_confirmacion, fecha_despacho y fecha_entrega). Para los que se dieron de alta desde
+        // el panel se usa la primera vez que los vimos en `preparando`, que se anota acá mismo.
+        // Si no hay ninguna de las dos, NO se marca: mandarle "tu pedido salió" a alguien cuya caja
+        // sigue en el depósito no se puede deshacer.
+        const desde = led[k]?.generada ?? led[k]?.visto;
+        if (!desde) {
+          led[k] = { ...(led[k] ?? {}), carrier, guia: p.guia, visto: new Date().toISOString() } as any;
+          nuevos.push(p.id);
+          continue;
+        }
+        const horas = (Date.now() - Date.parse(desde)) / 3_600_000;
+        if (horas >= HORAS) listos.push({ carrier, pedidoId: p.id, guia: p.guia, horas, cliente: p.cliente_nombre ?? "" });
+        else esperando.push(p.id);
+      }
+    }
+  }
+
+  fs.writeFileSync(LEDGER, JSON.stringify(led, null, 1));
+  console.log(`\n=== Marcar despachado · ${HORAS} h desde la etiqueta ===`);
+  // Este modo cuelga entero de listar_pedidos(preparando) y esa tool devolvió 0 para TODO el
+  // 04/09/2026. Sin este aviso, "no hay nada para marcar" y "Veltron está caído" se ven igual, y el
+  // cliente se queda sin el aviso de que su pedido salió.
+  if (!listos.length && !esperando.length && !nuevos.length) {
+    console.error(`⚠️ No se encontró NINGÚN pedido en preparando con guía. O no hay nada, o listar_pedidos`);
+    console.error(`   está devolviendo 0 (pasó el 04/09/2026). Chequealo antes de dar por hecho que no hay nada.`);
+  }
+  console.log(`${listos.length} listo(s) · ${esperando.length} esperando · ${nuevos.length} sin hora conocida (anotados ahora, entran en la próxima corrida)`);
+  for (const l of listos) console.log(`  ${l.carrier.padEnd(8)} id:${String(l.pedidoId).padEnd(6)} ${l.guia.padEnd(12)} ${l.horas.toFixed(0)}h  ${l.cliente}`);
+
+  if (!CONFIRMAR) {
+    console.log(`\nDry-run: no se marcó nada. Cada uno manda un WhatsApp al cliente. Para ejecutar: --despachar --confirmar`);
+    process.exit(0);
+  }
+  let ok = 0;
+  for (const l of listos) {
+    try {
+      await mcp("marcar_despachado", { pedido_id: l.pedidoId, carrier: l.carrier, confirmar: true });
+      ok++;
+      console.log(`  ✓ ${l.carrier}/${l.pedidoId} despachado`);
+    } catch (e) {
+      console.error(`  ✗ ${l.carrier}/${l.pedidoId}: ${(e as Error).message.replace(/\s+/g, " ").slice(0, 200)}`);
+      if (e instanceof CupoAgotado) { console.error("   🛑 cupo diario agotado: el resto se marca desde el panel o mañana."); break; }
+    }
+  }
+  console.log(`\n${ok}/${listos.length} marcados despachados (y avisados por WhatsApp).`);
+  process.exit(0);
+}
 
 // ---------------- datos ----------------
 const lote = loteDeArgs();
@@ -222,7 +311,9 @@ const desde = new Date(Date.now() - 120 * 86_400_000).toISOString().slice(0, 10)
 for (const [carrier, ids] of Object.entries(lote)) {
   if (!ids.length) continue;
   const porId = new Map<number, any>();
-  for (const estado of [["confirmado"], ["preparando"]]) {
+  // Incluye los estados posteriores porque rehacer un PDF pasa justamente después: si el pedido ya
+  // salió, su etiqueta se sigue necesitando (se perdió, se rompió, hay que reimprimirla).
+  for (const estado of [["confirmado"], ["preparando"], ["despachado"], ["en_camino"]]) {
     for (let page = 1, paginas = 1; page <= paginas && page <= 20; page++) {
       const r = await mcp("listar_pedidos", { carrier, estado, preset: "custom", desde, hasta: hoy, page, page_size: 100 });
       paginas = Number(r.paginas ?? 1);
@@ -230,7 +321,10 @@ for (const [carrier, ids] of Object.entries(lote)) {
     }
   }
   for (const pedidoId of ids) {
-    const p = porId.get(pedidoId) ?? (await mcp("ver_pedido", { pedido_id: pedidoId, carrier })).pedido;
+    // ver_pedido devuelve el pedido en el nivel de arriba, NO envuelto en `.pedido` (verificado
+    // 04/09/2026). generar_etiqueta sí lo envuelve; son dos formas distintas para el mismo objeto.
+    const v = porId.get(pedidoId) ?? await mcp("ver_pedido", { pedido_id: pedidoId, carrier });
+    const p = v?.pedido ?? v;
     if (!p) { console.error(`  ✗ ${carrier}/${pedidoId}: no existe en Veltron`); continue; }
     // SIN Nº DE ORDEN NO SE DA DE ALTA. El remito lo arma Veltron con el nº de orden y desde acá no
     // se puede elegir: cuando no está, a Fixy le manda la CADENA "null" (así nació la guía 1805691
@@ -302,12 +396,16 @@ for (let k = 0; k < enOrden.length; k += CONCURRENCIA) {
     // una de las 60 escrituras diarias de la key. Así, rehacer el PDF de un lote ya despachado
     // (porque se perdió, porque falta una etiqueta) no cuesta cupo.
     if (it.guia) { guias.set(it.pedidoId, it.guia); return; }
+    if (SOLO_ETIQUETAS) { fallidos.push({ it, motivo: "no tiene guía y --solo-etiquetas no da de alta" }); return; }
     try {
       const r = await mcp("generar_etiqueta", { pedido_id: it.pedidoId, carrier: it.carrier });
       const guia = r.pedido?.guia ?? it.guia;
       if (!guia) throw new Error("Veltron no devolvió guía");
       guias.set(it.pedidoId, String(guia));
       if (r.label_url ?? r.etiqueta_url) urls.set(it.pedidoId, r.label_url ?? r.etiqueta_url);
+      const led = leerLedger();
+      led[`${it.carrier}:${it.pedidoId}`] = { carrier: it.carrier, guia: String(guia), generada: new Date().toISOString() };
+      fs.writeFileSync(LEDGER, JSON.stringify(led, null, 1));
       console.log(`  ✓ ${it.code ?? "—"} ${it.carrier}/${it.pedidoId} → ${guia}  (${seg(Date.now() - t)})`);
     } catch (e) {
       const motivo = (e as Error).message.replace(/\s+/g, " ").slice(0, 220);
@@ -338,8 +436,9 @@ const urb = conGuia.filter((it) => it.carrier !== "fixy");
 const loteBytes: { bytes: Uint8Array; paginas: Map<string, number> }[] = [];
 if (urb.length) {
   const tUrb = Date.now();
-  for (let k = 0; k < urb.length; k += 100) {
-    const tanda = urb.slice(k, k + 100);
+  // De a 50 y no de a 100: con 101 pedidos `etiquetas_lote` se pasó del timeout (04/09/2026).
+  for (let k = 0; k < urb.length; k += 50) {
+    const tanda = urb.slice(k, k + 50);
     try {
       const r = await mcp("etiquetas_lote", { carrier: tanda[0].carrier, pedido_ids: tanda.map((it) => it.pedidoId) });
       const bytes = new Uint8Array(await fetch(r.url, { signal: AbortSignal.timeout(180_000) }).then((x) => x.arrayBuffer()));
@@ -349,7 +448,7 @@ if (urb.length) {
       // que una etiqueta con el código de otro pedido.
       for (const it of tanda) {
         if (paginas.has(guias.get(it.pedidoId)!)) continue;
-        const url = urls.get(it.pedidoId);
+        const url = urls.get(it.pedidoId) ?? (it.carrier === "urbano" ? urlUrbano(guias.get(it.pedidoId)!) : undefined);
         const r2 = url ? await fetch(url, { signal: AbortSignal.timeout(60_000) }).catch(() => null) : null;
         if (r2?.ok) bytesPorPedido.set(it.pedidoId, new Uint8Array(await r2.arrayBuffer()));
         else fallidos.push({ it, motivo: "no está en el PDF del lote y no se pudo bajar suelta" });
@@ -358,7 +457,7 @@ if (urb.length) {
       console.error(`⚠️ ${tanda[0].carrier} en lote falló (${(e as Error).message.slice(0, 120)}). Bajo de a una.`);
       for (let j = 0; j < tanda.length; j += 5) {
         await Promise.all(tanda.slice(j, j + 5).map(async (it) => {
-          const url = urls.get(it.pedidoId);
+          const url = urls.get(it.pedidoId) ?? (it.carrier === "urbano" ? urlUrbano(guias.get(it.pedidoId)!) : undefined);
           const r2 = url ? await fetch(url, { signal: AbortSignal.timeout(60_000) }).catch(() => null) : null;
           if (r2?.ok) bytesPorPedido.set(it.pedidoId, new Uint8Array(await r2.arrayBuffer()));
           else fallidos.push({ it, motivo: "la etiqueta no bajó" });
@@ -431,27 +530,36 @@ for (const it of conGuia) {
   pages.push({ file: sources.length - 1, page: conTinta[0], courier: it.carrier as any, code: it.code });
 }
 
+if (!pages.length) {
+  // Un PDF de 0 páginas pisaría el bueno del día y el depósito se quedaría sin etiquetas
+  // (04/09/2026: pasó, por eso está este corte).
+  console.error(`\n🛑 Ninguna etiqueta pudo armarse. NO se escribe el PDF para no pisar el que ya existe.`);
+  for (const f of fallidos) console.error(`  · ${f.it.carrier}/${f.it.pedidoId}: ${f.motivo}`);
+  process.exit(1);
+}
 const { pdf, sinEstampar } = await buildPdf(sources, pages);
 fs.mkdirSync(OUT_DIR, { recursive: true });
 const stamp = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Argentina/Buenos_Aires" });
-const destino = path.join(OUT_DIR, `despacho-${stamp}.pdf`);
+// Nunca pisar un PDF que ya existe: en un mismo día hay más de una tanda (la de la mañana y la de
+// la noche), y el 04/09/2026 la segunda corrida borró la primera. Cada tanda es un archivo.
+let destino = path.join(OUT_DIR, `despacho-${stamp}.pdf`);
+for (let n = 2; fs.existsSync(destino); n++) destino = path.join(OUT_DIR, `despacho-${stamp}-${n}.pdf`);
 fs.writeFileSync(destino, pdf);
 console.log(`\netiquetas → ${destino} · ${pages.length} página(s) · total ${seg(Date.now() - t0)}`);
 
-// Y una copia en iCloud Drive, que es la única forma de que el PDF le llegue al teléfono: el
-// depósito y Pancho miran esto desde el celular, no desde la Mac. Si iCloud no está, no pasa nada:
-// el PDF bueno es el del repo y esto es sólo el carril de entrega.
-const ICLOUD = process.env.DESPACHO_ICLOUD_DIR
-  ?? path.join(os.homedir(), "Library/Mobile Documents/com~apple~CloudDocs/BioLabs-despacho");
+// Copia opcional a una carpeta sincronizada (iCloud, Drive) para mirar el PDF desde el teléfono.
+// Apagada por default a pedido de Pancho (04/09/2026): el archivo bueno es el del repo y no hay que
+// ensuciar iCloud con copias. Se prende poniendo DESPACHO_ICLOUD_DIR.
+const ICLOUD = process.env.DESPACHO_ICLOUD_DIR ?? "";
 try {
-  if (fs.existsSync(path.dirname(ICLOUD))) {
+  if (ICLOUD) {
     fs.mkdirSync(ICLOUD, { recursive: true });
-    const copia = path.join(ICLOUD, `despacho-${stamp}.pdf`);
+    const copia = path.join(ICLOUD, path.basename(destino));
     fs.copyFileSync(destino, copia);
-    console.log(`copia para el celular → iCloud Drive / ${path.basename(ICLOUD)} / despacho-${stamp}.pdf`);
+    console.log(`copia → ${copia}`);
   }
 } catch (e) {
-  console.error(`⚠️ no se pudo copiar a iCloud (${(e as Error).message}). El PDF está en ${destino}.`);
+  console.error(`⚠️ no se pudo copiar a ${ICLOUD} (${(e as Error).message}). El PDF está en ${destino}.`);
 }
 
 // ---------------- Correo: el CSV de carga masiva, ya filtrado ----------------
@@ -473,10 +581,11 @@ if (correo.length) {
     const buenas = filas.filter((f) => !rowErrors(f).length && !needsSucursal(f));
 
     if (buenas.length) {
-      const csv = path.join(OUT_DIR, `correo-${stamp}.csv`);
+      let csv = path.join(OUT_DIR, `correo-${stamp}.csv`);
+      for (let n = 2; fs.existsSync(csv); n++) csv = path.join(OUT_DIR, `correo-${stamp}-${n}.csv`);
       fs.writeFileSync(csv, buildCsv(buenas), "latin1");
       console.log(`\nCorreo → ${csv} · ${buenas.length} de ${filas.length} fila(s), pasadas por el filtro de /logistica?t=correo`);
-      try { if (fs.existsSync(ICLOUD)) fs.copyFileSync(csv, path.join(ICLOUD, `correo-${stamp}.csv`)); } catch { /* el bueno es el del repo */ }
+      try { if (ICLOUD) fs.copyFileSync(csv, path.join(ICLOUD, path.basename(csv))); } catch { /* el bueno es el del repo */ }
     } else {
       console.error(`\n🛑 Correo: ninguna de las ${filas.length} filas pasó el filtro. No se escribió CSV.`);
     }
