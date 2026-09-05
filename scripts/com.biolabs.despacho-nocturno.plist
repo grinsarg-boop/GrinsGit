@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Propuesta de despacho a las 20:00 (scripts/despacho-nocturno.mjs). NO da de alta nada: lee la
+     cola de Veltron, deja el lote en .despacho-propuesta.json + el log, y avisa por notificación.
+     El alta la aprueba Pancho.
+
+     ⚠️ NO ESTÁ INSTALADO. Instalarlo requiere OK explícito.
+
+     StartCalendarInterval corre en hora LOCAL, así que Hour 20 es 20:00 de acá (un cron de Vercel
+     habría que escribirlo en UTC, y además no puede dejar los PDF ni el JSON en este disco).
+
+     Instalar:
+       cp scripts/com.biolabs.despacho-nocturno.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.biolabs.despacho-nocturno.plist
+     Probar sin esperar:  launchctl start com.biolabs.despacho-nocturno
+     Sacar:               launchctl unload ~/Library/LaunchAgents/com.biolabs.despacho-nocturno.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.biolabs.despacho-nocturno</string>
+
+  <!-- Sale por 1 cuando el lote supera el tope: ahí la notificación manda a mirar el log en vez de
+       cantar un lote que el script justamente NO propuso. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd "$HOME/Downloads/ProyectoEco" &amp;&amp; mkdir -p etiquetas &amp;&amp; set -a &amp;&amp; . ./.env.local &amp;&amp; set +a &amp;&amp; node scripts/despacho-nocturno.mjs &gt;&gt; etiquetas/despacho-nocturno.log 2&gt;&amp;1; C=$?; if [ $C -eq 0 ]; then M=$(node -e 'const l=require("./.despacho-propuesta.json").lote; console.log(`Fixy ${l.fixy.length} · Urbano ${l.urbano.length} · Correo ${l.andreani.length}`)' 2&gt;/dev/null); osascript -e "display notification \"Propuesta lista — $M\" with title \"BioLabs 20:00\""; else osascript -e "display notification \"Revisar: la propuesta no cerró (tope o error) — etiquetas/despacho-nocturno.log\" with title \"BioLabs 20:00\""; fi</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>20</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <!-- false = no correr al instalarlo ni al loguearse, sólo a las 20:00. (Si la Mac estaba dormida
+       a esa hora, launchd lo corre al despertar: eso lo da StartCalendarInterval, no esta clave.) -->
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

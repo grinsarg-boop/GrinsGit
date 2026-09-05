@@ -279,8 +279,24 @@ for (const c of CARRIERS) {
   }
   cola[c.key] = pendientes;
 
-  const { total = 0 } = await mcp("descargar_etiquetas_pendientes", { carrier: c.key, generar: false });
-  if (total !== pendientes.length && total < 100) {
+  const { total = 0, pendientes: crudos = [] } = await mcp("descargar_etiquetas_pendientes", { carrier: c.key, generar: false });
+
+  // Red de seguridad: si el listado paginado viene vacío y la otra fuente ve cola, manda la otra.
+  // El 04/09/2026 `listar_pedidos` empezó a devolver 0 para TODO —incluso sin filtros— mientras
+  // había 79 pedidos esperando; sin esto la propuesta decía "nada para despachar" y la noche no
+  // salía. Que la fuente preferida se caiga no puede dejar al depósito sin lote.
+  if (!pendientes.length && total > 0) {
+    avisos.push(`${c.nombre}: listar_pedidos devolvió 0 y hay ${total} pendientes — se usa descargar_etiquetas_pendientes (tope 100) y hay que avisarle a Veltron`);
+    for (const p of crudos) {
+      pendientes.push({ id: p.id, shopify_order_number: p.shopify_order_number, cliente_nombre: p.cliente_nombre, cliente_cp: p.cliente_cp, cliente_provincia: p.cliente_provincia });
+      // Sin listar_pedidos no hay sku ni cantidad: se pide de a uno, que es lento pero es la única
+      // forma de saber qué lleva cada bulto.
+      if (!detalle.has(`${c.key}:${p.id}`)) {
+        const v = await mcp("ver_pedido", { pedido_id: p.id, carrier: c.key });
+        detalle.set(`${c.key}:${p.id}`, v?.pedido ?? v);
+      }
+    }
+  } else if (total !== pendientes.length && total < 100) {
     avisos.push(`${c.nombre}: la cola paginada da ${pendientes.length} y descargar_etiquetas_pendientes da ${total} — deberían coincidir`);
   }
   if (total >= 100) avisos.push(`${c.nombre}: descargar_etiquetas_pendientes llegó a su tope de 100 (la cola real es ${pendientes.length}) — el alta en lote por esa tool ya no alcanza para el día`);

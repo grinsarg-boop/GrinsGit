@@ -53,3 +53,15 @@ datos/
 
 # estado de corridas de redespacho (guías y pedidos reales, como datos/)
 /.redespacho-*.json
+
+# propuesta nocturna de despacho (números de pedido reales, como los .redespacho-*)
+/.despacho-propuesta.json
+
+# guías reales de pedidos reales (como los .redespacho-*)
+/.despacho-guias-huerfanas.csv
+
+# hora en que se generó cada etiqueta (números de pedido reales)
+/.despacho-etiquetas.json
+
+# PDFs y CSVs de etiquetas: nombre, dirección y teléfono de clientes reales
+/etiquetas/
