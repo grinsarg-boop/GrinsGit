@@ -44,7 +44,9 @@ const DESPACHAR = process.argv.includes("--despachar");
 // no puede crear guías ni por error: con --solo-etiquetas el alta queda bloqueada de raíz y un
 // pedido sin guía se reporta en vez de generarla.
 const SOLO_ETIQUETAS = process.argv.includes("--solo-etiquetas");
-const OUT_DIR = path.join(process.cwd(), "etiquetas");
+// El PDF va a Descargas, que es donde Pancho lo abre e imprime (decidido 06/09/2026). El repo no es
+// el lugar: son datos de clientes reales y `etiquetas/` está gitignorada justamente por eso.
+const OUT_DIR = process.env.DESPACHO_OUT_DIR ?? path.join(os.homedir(), "Downloads");
 // Cuándo se generó cada etiqueta. Veltron no guarda ese momento (updated_at se mueve con cualquier
 // edición), y de ese momento cuelga el aviso al cliente, así que lo anotamos nosotros.
 const LEDGER = path.join(process.cwd(), ".despacho-etiquetas.json");
@@ -300,7 +302,7 @@ const packs = await unidadesPorSku();
 
 type Item = SortKey & {
   carrier: string; pedidoId: number; guia: string | null; code: string | null;
-  sku: string | null; cod: boolean; pago: string | null;
+  sku: string | null; cod: boolean; pago: string | null; order_number: string | null;
 };
 const items: Item[] = [];
 const hoy = new Date().toISOString().slice(0, 10);
@@ -341,6 +343,7 @@ for (const [carrier, ids] of Object.entries(lote)) {
     const unidades = unidadesDe(Number(p.cantidad ?? 1), Number(p.total ?? 0), packs.get(p.sku));
     items.push({
       carrier, pedidoId, sku: p.sku ?? null, guia: p.guia ?? null, producto, unidades,
+      order_number: p.shopify_order_number ?? null,
       pago: p.metodo_pago ?? null, cod: esCOD(p.metodo_pago),
       code: productoCode({ producto, qty: unidades }),
     });
@@ -545,7 +548,22 @@ const stamp = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Argent
 let destino = path.join(OUT_DIR, `despacho-${stamp}.pdf`);
 for (let n = 2; fs.existsSync(destino); n++) destino = path.join(OUT_DIR, `despacho-${stamp}-${n}.pdf`);
 fs.writeFileSync(destino, pdf);
+// Índice al lado del PDF: qué pedido, qué guía y qué código hay en cada página. Sin esto, el mapa
+// vive sólo en el log de la corrida y rearmar o reordenar el PDF depende de no haberlo perdido
+// (04/09/2026: reconstruirlo a mano costó media hora).
+const indice = destino.replace(/\.pdf$/, ".json");
+fs.writeFileSync(indice, JSON.stringify({
+  generado: new Date().toISOString(),
+  pdf: path.basename(destino),
+  paginas: pages.map((pg, i) => {
+    const it = conGuia[i];
+    return { pagina: i + 1, pedido_id: it?.pedidoId, order_number: it?.order_number ?? null, carrier: it?.carrier, guia: it ? guias.get(it.pedidoId) : null, codigo: pg.code, producto: it?.producto, unidades: it?.unidades };
+  }),
+  sin_etiqueta: fallidos.map((f) => ({ pedido_id: f.it.pedidoId, carrier: f.it.carrier, motivo: f.motivo })),
+}, null, 1));
+
 console.log(`\netiquetas → ${destino} · ${pages.length} página(s) · total ${seg(Date.now() - t0)}`);
+console.log(`índice     → ${path.basename(indice)} (pedido, guía y código de cada página)`);
 
 // Copia opcional a una carpeta sincronizada (iCloud, Drive) para mirar el PDF desde el teléfono.
 // Apagada por default a pedido de Pancho (04/09/2026): el archivo bueno es el del repo y no hay que
