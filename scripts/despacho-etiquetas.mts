@@ -533,51 +533,58 @@ for (const it of conGuia) {
   pages.push({ file: sources.length - 1, page: conTinta[0], courier: it.carrier as any, code: it.code });
 }
 
-if (!pages.length) {
+// Lote sólo de Correo: no hay páginas por definición y el CSV sale más abajo. Hasta el 11/09/2026
+// esta guarda cortaba acá con exit 1 y el CSV de Correo nunca se escribía (ni se llamaba a
+// etiquetas_lote): sólo corta cuando había etiquetas que armar y ninguna salió.
+if (!pages.length && items.length) {
   // Un PDF de 0 páginas pisaría el bueno del día y el depósito se quedaría sin etiquetas
   // (04/09/2026: pasó, por eso está este corte).
   console.error(`\n🛑 Ninguna etiqueta pudo armarse. NO se escribe el PDF para no pisar el que ya existe.`);
   for (const f of fallidos) console.error(`  · ${f.it.carrier}/${f.it.pedidoId}: ${f.motivo}`);
   process.exit(1);
 }
-const { pdf, sinEstampar } = await buildPdf(sources, pages);
-fs.mkdirSync(OUT_DIR, { recursive: true });
 const stamp = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Argentina/Buenos_Aires" });
-// Nunca pisar un PDF que ya existe: en un mismo día hay más de una tanda (la de la mañana y la de
-// la noche), y el 04/09/2026 la segunda corrida borró la primera. Cada tanda es un archivo.
-let destino = path.join(OUT_DIR, `despacho-${stamp}.pdf`);
-for (let n = 2; fs.existsSync(destino); n++) destino = path.join(OUT_DIR, `despacho-${stamp}-${n}.pdf`);
-fs.writeFileSync(destino, pdf);
-// Índice al lado del PDF: qué pedido, qué guía y qué código hay en cada página. Sin esto, el mapa
-// vive sólo en el log de la corrida y rearmar o reordenar el PDF depende de no haberlo perdido
-// (04/09/2026: reconstruirlo a mano costó media hora).
-const indice = destino.replace(/\.pdf$/, ".json");
-fs.writeFileSync(indice, JSON.stringify({
-  generado: new Date().toISOString(),
-  pdf: path.basename(destino),
-  paginas: pages.map((pg, i) => {
-    const it = conGuia[i];
-    return { pagina: i + 1, pedido_id: it?.pedidoId, order_number: it?.order_number ?? null, carrier: it?.carrier, guia: it ? guias.get(it.pedidoId) : null, codigo: pg.code, producto: it?.producto, unidades: it?.unidades };
-  }),
-  sin_etiqueta: fallidos.map((f) => ({ pedido_id: f.it.pedidoId, carrier: f.it.carrier, motivo: f.motivo })),
-}, null, 1));
-
-console.log(`\netiquetas → ${destino} · ${pages.length} página(s) · total ${seg(Date.now() - t0)}`);
-console.log(`índice     → ${path.basename(indice)} (pedido, guía y código de cada página)`);
-
-// Copia opcional a una carpeta sincronizada (iCloud, Drive) para mirar el PDF desde el teléfono.
-// Apagada por default a pedido de Pancho (04/09/2026): el archivo bueno es el del repo y no hay que
-// ensuciar iCloud con copias. Se prende poniendo DESPACHO_ICLOUD_DIR.
 const ICLOUD = process.env.DESPACHO_ICLOUD_DIR ?? "";
-try {
-  if (ICLOUD) {
-    fs.mkdirSync(ICLOUD, { recursive: true });
-    const copia = path.join(ICLOUD, path.basename(destino));
-    fs.copyFileSync(destino, copia);
-    console.log(`copia → ${copia}`);
+let sinEstampar = 0;
+if (pages.length) {
+  let pdf: Uint8Array;
+  ({ pdf, sinEstampar } = await buildPdf(sources, pages));
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  // Nunca pisar un PDF que ya existe: en un mismo día hay más de una tanda (la de la mañana y la de
+  // la noche), y el 04/09/2026 la segunda corrida borró la primera. Cada tanda es un archivo.
+  let destino = path.join(OUT_DIR, `despacho-${stamp}.pdf`);
+  for (let n = 2; fs.existsSync(destino); n++) destino = path.join(OUT_DIR, `despacho-${stamp}-${n}.pdf`);
+  fs.writeFileSync(destino, pdf);
+  // Índice al lado del PDF: qué pedido, qué guía y qué código hay en cada página. Sin esto, el mapa
+  // vive sólo en el log de la corrida y rearmar o reordenar el PDF depende de no haberlo perdido
+  // (04/09/2026: reconstruirlo a mano costó media hora).
+  const indice = destino.replace(/\.pdf$/, ".json");
+  fs.writeFileSync(indice, JSON.stringify({
+    generado: new Date().toISOString(),
+    pdf: path.basename(destino),
+    paginas: pages.map((pg, i) => {
+      const it = conGuia[i];
+      return { pagina: i + 1, pedido_id: it?.pedidoId, order_number: it?.order_number ?? null, carrier: it?.carrier, guia: it ? guias.get(it.pedidoId) : null, codigo: pg.code, producto: it?.producto, unidades: it?.unidades };
+    }),
+    sin_etiqueta: fallidos.map((f) => ({ pedido_id: f.it.pedidoId, carrier: f.it.carrier, motivo: f.motivo })),
+  }, null, 1));
+
+  console.log(`\netiquetas → ${destino} · ${pages.length} página(s) · total ${seg(Date.now() - t0)}`);
+  console.log(`índice     → ${path.basename(indice)} (pedido, guía y código de cada página)`);
+
+  // Copia opcional a una carpeta sincronizada (iCloud, Drive) para mirar el PDF desde el teléfono.
+  // Apagada por default a pedido de Pancho (04/09/2026): el archivo bueno es el del repo y no hay que
+  // ensuciar iCloud con copias. Se prende poniendo DESPACHO_ICLOUD_DIR.
+  try {
+    if (ICLOUD) {
+      fs.mkdirSync(ICLOUD, { recursive: true });
+      const copia = path.join(ICLOUD, path.basename(destino));
+      fs.copyFileSync(destino, copia);
+      console.log(`copia → ${copia}`);
+    }
+  } catch (e) {
+    console.error(`⚠️ no se pudo copiar a ${ICLOUD} (${(e as Error).message}). El PDF está en ${destino}.`);
   }
-} catch (e) {
-  console.error(`⚠️ no se pudo copiar a ${ICLOUD} (${(e as Error).message}). El PDF está en ${destino}.`);
 }
 
 // ---------------- Correo: el CSV de carga masiva, ya filtrado ----------------
