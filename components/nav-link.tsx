@@ -9,7 +9,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 // dónde estabas parado. Client component solo por usePathname: ese es todo el costo de agrupar.
 const GRUPOS: [string, string][][] = [
   [["/", "Resumen"], ["/ventas", "Ventas"], ["/analisis", "Análisis"], ["/anuncios", "Anuncios"], ["/tendencias", "Tendencias"]],
-  [["/caja", "Caja"], ["/stock", "Stock"]],
+  [["/caja", "Caja"], ["/stock", "Stock"], ["/precio", "Precio"]],
   [["/trabados", "Trabados"], ["/logistica", "Logística"], ["/sync", "Sync"], ["/config", "Config"]],
 ];
 
