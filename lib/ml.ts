@@ -90,7 +90,15 @@ const PACK_POR_ITEM: Record<string, number> = {
   MLA3692036796: 2, // "Dermatech Gotero Extractos De Hierbas Pureza…" — es el 2-pack de catálogo
   MLA2055177767: 3, // "Pureza Drops Extractos De Hierbas Gotas…" — x3 de catálogo (MLA77148723). ML alterna
   //                   ese nombre con nuestro título en las ventas: 48 órdenes del 17-20/09 salieron con 1 frasco.
+  // Regla (21/09/2026): toda publicación de catálogo entra acá el día que se da de alta, aunque hoy su
+  // nombre de catálogo parsee bien — ML lo cambia sin avisar y ninguna capa lo detecta sola.
+  MLA1830076567: 2, // x2 Premium de catálogo
+  MLA1908275639: 4, // "Promo X4" de catálogo
+  MLA3064229842: 2, // Revival Oil x2 — asociada al catálogo "…Pack 2 Unidades Limón"
 };
+
+// Pack fijo por publicación, para que la etiqueta lo use como override antes que el histórico.
+export const packFijo = (itemId?: string | null): number | null => (itemId && PACK_POR_ITEM[itemId]) || null;
 
 // Pack (unidades por venta) embebido en el título ML: "3 Gotero Pureza"→3, "4 X 30ml"→4, "Gotas"→1.
 // ML NO usa quantity para el pack (siempre viene 1); el tamaño está en el nombre del listado.
@@ -103,6 +111,7 @@ export function parseMlPack(title: string | null | undefined, itemId?: string | 
     /(\d{1,2})\s*[xX]\s*\d/, // "…4 X 30ml"
     /[xX]\s*(\d{1,2})/, //     "…Promo X4…"
     /(\d{1,2})\s*u\b/i, //     "…Menta 2u Menta"
+    /(\d{1,2})\s*unidades?\b/i, // "…Pack 2 Unidades Limón" (nombres de catálogo)
   ]) {
     const n = Number(t.match(re)?.[1]);
     // El tope de 12 es lo que descarta los falsos positivos ("X 30ml" → 30, no es un pack).

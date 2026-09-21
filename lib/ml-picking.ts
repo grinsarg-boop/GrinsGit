@@ -17,7 +17,7 @@
 // mapa `ml_ad_items` (item_id → producto), que ya existe para atribuir la pauta de ML.
 
 import { matchProduct } from "./product-match";
-import { parseMlPack } from "./ml";
+import { packFijo, parseMlPack } from "./ml";
 
 export type OrderItem = { quantity?: number; item?: { id?: string; title?: string } };
 
@@ -70,7 +70,10 @@ export function resolverItem(it: OrderItem, ctx: Contexto): VentaItem {
   //    compró el cliente y lo que el P&L ya cobra.
   const porTitulo = parseMlPack(titulo, itemId);
   const explicito = packExplicito(titulo);
-  const override = ctx.packOverride?.(itemId, titulo) ?? null;
+  // El pack fijo por publicación (PACK_POR_ITEM) va ANTES que el histórico: el 17-20/09/2026 la x3
+  // de catálogo vino con el nombre del catálogo, el histórico ya estaba contaminado por el mismo
+  // parser y 48 etiquetas salieron con 1. El override por id no depende de lo que se haya guardado.
+  const override = ctx.packOverride?.(itemId, titulo) ?? packFijo(itemId);
   if (override != null) return { itemId, titulo, producto, pack: override, qty, unidades: qty * override, fuente: "override" };
   if (explicito) return { itemId, titulo, producto, pack: porTitulo, qty, unidades: qty * porTitulo, fuente: "titulo" };
 

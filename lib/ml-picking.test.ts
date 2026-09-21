@@ -61,6 +61,13 @@ describe("resolverItem", () => {
     const c = ctx({ packHistorico: new Map([["MLA9999999999", 2]]) });
     expect(resolverItem(it1("MLA9999999999", t), c)).toMatchObject({ unidades: 2, fuente: "historico" });
   });
+  // 17-20/09/2026: la x3 de catálogo vino con el nombre del catálogo y el histórico decía 1 (contaminado
+  // por el mismo parser). El pack fijo por id tiene que ganar aunque el histórico esté sucio.
+  it("publicación con pack fijo → override, aunque el título sea mudo y el histórico diga otra cosa", () => {
+    const t = "Pureza Drops Extractos De Hierbas Gotas Pureza Drenaje Linfático Hinchazón Abdomen Piernas Menta Gotas Menta";
+    const c = ctx({ packHistorico: new Map([["MLA2055177767", 1]]) });
+    expect(resolverItem(it1("MLA2055177767", t), c)).toMatchObject({ producto: "Pureza", unidades: 3, fuente: "override" });
+  });
   it("título mudo y publicación nueva sin histórico → 1, pero marcado como suposición", () => {
     const r = resolverItem(it1("MLA0000000001", "Serum Capilar Anticaida Arraigo Romero Cafeina 30ml"), ctx());
     expect(r).toMatchObject({ producto: "Arraigo", unidades: 1, fuente: "?" });

@@ -73,6 +73,11 @@ describe("parseMlPack", () => {
     const x3 = "Pureza Drops Extractos De Hierbas Gotas Pureza Drenaje Linfático Hinchazón Abdomen Piernas Menta Gotas Menta";
     expect(parseMlPack(x3)).toBe(1);
     expect(parseMlPack(x3, "MLA2055177767")).toBe(3);
+    // Catálogo de la Revival x2: "Pack 2 Unidades" lo saca la regex; el id también, por si el nombre cambia.
+    const revival = "Revival Oil Aceite Anticelulítico Pack 2 Unidades Limón";
+    expect(parseMlPack(revival)).toBe(2);
+    expect(parseMlPack("Otro nombre de catálogo cualquiera", "MLA3064229842")).toBe(2);
+    expect(parseMlPack("Otro nombre de catálogo cualquiera", "MLA1908275639")).toBe(4);
   });
   it("no confunde el volumen del frasco con el pack", () => {
     expect(parseMlPack("Gotas Pureza Drenaje Linfático X 30ml Menta")).toBe(1);
