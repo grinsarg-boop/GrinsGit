@@ -70,6 +70,9 @@ describe("parseMlPack", () => {
     const catalogo = "Dermatech Gotero Extractos De Hierbas Pureza Drenaje Linfatico Aceite Menta";
     expect(parseMlPack(catalogo)).toBe(1); // sin id no hay de dónde sacarlo
     expect(parseMlPack(catalogo, "MLA3692036796")).toBe(2);
+    const x3 = "Pureza Drops Extractos De Hierbas Gotas Pureza Drenaje Linfático Hinchazón Abdomen Piernas Menta Gotas Menta";
+    expect(parseMlPack(x3)).toBe(1);
+    expect(parseMlPack(x3, "MLA2055177767")).toBe(3);
   });
   it("no confunde el volumen del frasco con el pack", () => {
     expect(parseMlPack("Gotas Pureza Drenaje Linfático X 30ml Menta")).toBe(1);

@@ -88,6 +88,8 @@ export type MlOrder = {
 // ponytail: un objeto alcanza mientras sean pocas; si pasa de ~5, va a tabla con su propio sync.
 const PACK_POR_ITEM: Record<string, number> = {
   MLA3692036796: 2, // "Dermatech Gotero Extractos De Hierbas Pureza…" — es el 2-pack de catálogo
+  MLA2055177767: 3, // "Pureza Drops Extractos De Hierbas Gotas…" — x3 de catálogo (MLA77148723). ML alterna
+  //                   ese nombre con nuestro título en las ventas: 48 órdenes del 17-20/09 salieron con 1 frasco.
 };
 
 // Pack (unidades por venta) embebido en el título ML: "3 Gotero Pureza"→3, "4 X 30ml"→4, "Gotas"→1.
