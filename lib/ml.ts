@@ -224,6 +224,18 @@ const buyerShipCost = (o: MlOrder): number =>
 // Enriquece el flete normal-ME desde el shipment (list_cost − lo que pagó el comprador) para órdenes
 // pagadas sin ship_cost aún. Flex (self_service) queda ship_cost null (lo pone el xlsx) pero se le
 // marca ship_type para no reprocesarlo. Concurrencia acotada; falla por-orden = se saltea (no aborta).
+// Destino de un shipment de ML, para el P&L por zona y para medir Flex contra el interior.
+// El CP se normaliza a 4 digitos (es como lo indexa flex_freight_by_cp y los rulesets por CP).
+export function destFields(sh: { receiver_address?: { zip_code?: string; state?: { name?: string } } }):
+  { dest_cp?: string; province?: string } {
+  const out: { dest_cp?: string; province?: string } = {};
+  const cp = String(sh?.receiver_address?.zip_code ?? "").replace(/\D/g, "").slice(0, 4);
+  if (cp) out.dest_cp = cp;
+  const prov = sh?.receiver_address?.state?.name;
+  if (prov) out.province = prov;
+  return out;
+}
+
 export async function enrichMlShipments(db: Db = supabaseAdmin(), limit = 300): Promise<{ enriched: number; flex: number }> {
   const token = await getMlAccessToken(db);
   const { data } = await db
@@ -242,7 +254,14 @@ export async function enrichMlShipments(db: Db = supabaseAdmin(), limit = 300): 
         if (!res.ok) return;
         const sh = await res.json();
         const fc = sellerFlete(sh.logistic_type, sh.shipping_option?.list_cost, buyerShipCost(r.raw as MlOrder));
-        await db.from("ml_orders").update({ ship_type: sh.logistic_type ?? "?", ship_cost: fc }).eq("ml_id", r.ml_id);
+        // ponytail: el shipment ya vino — guardar tambien destino. Sin esto el CP solo existia en las
+        // Flex (lo cargaba estimateFlexByCP para el flete), y el 82% de las ordenes quedaba sin geografia:
+        // no habia grupo de control para medir si "Llega hoy" mueve la aguja. Cero llamadas extra.
+        await db.from("ml_orders").update({
+          ship_type: sh.logistic_type ?? "?",
+          ship_cost: fc,
+          ...destFields(sh),
+        }).eq("ml_id", r.ml_id);
         if (sh.logistic_type === "self_service") flex++; else if (fc != null) enriched++;
       } catch { /* se saltea */ }
     }));

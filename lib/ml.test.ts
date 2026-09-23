@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
-import { flexPriceForCP, groupBonifByDay, mapMlOrder, reEnrichFilter, parseOrderRef, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
+import { destFields, flexPriceForCP, groupBonifByDay, mapMlOrder, reEnrichFilter, parseOrderRef, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
 
 const NOW = 1_700_000_000_000;
 
@@ -264,5 +264,22 @@ describe("reEnrichFilter", () => {
     // daysAgoIso(0) en ART: entre las 21 y las 24 hs UTC ya es "mañana" y el filtro se correría
     // un día, dejando fuera justo las que liberan hoy.
     expect(reEnrichFilter()).toMatch(/mp_release_date\.gte\.\d{4}-\d{2}-\d{2},/);
+  });
+});
+
+describe("destFields", () => {
+  it("normaliza el CP a 4 dígitos y saca la provincia", () => {
+    expect(destFields({ receiver_address: { zip_code: "C1425", state: { name: "Capital Federal" } } }))
+      .toEqual({ dest_cp: "1425", province: "Capital Federal" });
+  });
+
+  it("omite las claves que no vienen en vez de pisar con null", () => {
+    expect(destFields({ receiver_address: {} })).toEqual({});
+    expect(destFields({})).toEqual({});
+  });
+
+  it("no inventa CP cuando el zip no tiene dígitos", () => {
+    expect(destFields({ receiver_address: { zip_code: "S/N", state: { name: "Salta" } } }))
+      .toEqual({ province: "Salta" });
   });
 });
