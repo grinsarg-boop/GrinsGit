@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  balance5050, conciliarGiros, fixyCobranza, flujoDiario, porMes, saldoUrbano, saldos,
+  balance5050, conciliarGiros, fetchCashflow, fixyCobranza, flujoDiario, porMes, saldoUrbano, saldos,
   type Caja, type Cat, type Mov,
 } from "./cashflow";
 
@@ -187,5 +187,25 @@ describe("balance5050", () => {
       { moneda: "ARS", fran: 0, santi: 600, dif: 600, aFavor: "Fran" },
       { moneda: "USD", fran: 600, santi: 0, dif: 600, aFavor: "Santi" },
     ]);
+  });
+});
+
+describe("fetchCashflow", () => {
+  it("trae TODOS los movimientos aunque el max-rows de PostgREST corte cada página", async () => {
+    // 920 filas en orden de inserción desordenado, servidor que corta en 300 (como el max-rows real en 1.000)
+    const tabla = Array.from({ length: 920 }, (_, i) => mov({ id: 1_780_000_000_000 + ((i * 7919) % 920) }));
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = new URL(url);
+      if (!u.pathname.endsWith("/movimientos")) return Response.json([]);
+      const gt = Number(u.searchParams.get("id")?.replace("gt.", "") ?? -Infinity);
+      return Response.json(tabla.filter((m) => m.id > gt).sort((a, b) => a.id - b.id).slice(0, 300));
+    });
+    try {
+      const { movs } = await fetchCashflow();
+      expect(movs).toHaveLength(920);
+      expect(new Set(movs.map((m) => m.id)).size).toBe(920);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

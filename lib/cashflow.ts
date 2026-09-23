@@ -39,9 +39,23 @@ export async function fetchCashflow() {
       if (!r.ok) throw new Error(`cashflow ${p.split("?")[0]}: HTTP ${r.status}`);
       return r.json();
     });
-  // ponytail: trae todo (~360 filas hoy); paginar con Range cuando pase de 1000 (límite PostgREST)
+  // movimientos pasa las 1.000 filas ~01/10/2026 y el max-rows de PostgREST corta ahí SIN error
+  // (memoria supabase-max-rows-1000). Keyset por id hasta una página vacía: una alta o baja entre
+  // páginas no corre filas (offset sí), y sin limit propio vale con cualquier max-rows del proyecto.
+  // Cuesta un request extra: el de la página vacía.
+  const todosMovs = async () => {
+    const movs: Mov[] = [];
+    for (;;) {
+      const tras = movs.length ? `&id=gt.${movs[movs.length - 1].id}` : "";
+      const lote: Mov[] = await j(
+        `movimientos?select=id,tipo,monto,caja_id,caja_destino_id,categoria_id,descripcion,fecha,autor,es_retiro&order=id.asc${tras}`,
+      );
+      if (!lote.length) return movs;
+      movs.push(...lote);
+    }
+  };
   const [movs, cajas, cats, cobrar] = await Promise.all([
-    j("movimientos?select=id,tipo,monto,caja_id,caja_destino_id,categoria_id,descripcion,fecha,autor,es_retiro"),
+    todosMovs(),
     j("cajas?select=id,nombre,moneda&order=orden.asc"),
     j("categorias?select=id,nombre,tipo"),
     j("cobrar?select=quien,monto,fecha&cobrado=eq.false&order=fecha.asc"),
