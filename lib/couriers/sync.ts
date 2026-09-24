@@ -55,7 +55,14 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
         fetchFailed = true;
         continue;
       }
-      rows += await upsertEvents(events);
+      // Un upsert cortado (statement_timeout de 8 s) no aborta la corrida: sin esto el throw saltaba el
+      // update del cursor de abajo y la corrida siguiente reintentaba las MISMAS guías (23/09/2026).
+      try {
+        rows += await upsertEvents(events);
+      } catch (e) {
+        warnings.push({ batch: i / 200, upsert: String(e) });
+        fetchFailed = true;
+      }
     }
     // Avanzar el cursor SIEMPRE: 'sincronizado' = INTENTADO, no = 'tuvo evento nuevo'. Sin esto una
     // guía que la API devuelve vacía nunca bumpea updated_at y tapa la cabeza de la cola stalest,
@@ -65,7 +72,10 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
     if (ids.length) await db.from("shipments").update({ updated_at: new Date().toISOString() }).in("id", ids);
 
     warnings.push(...(await estadosSinMapear(courier)));
-    await db.rpc("recompute_daily_pnl", { p_from: cutoff, p_to: today() });
+    // supabase-js no tira: devuelve { error }. Sin leerlo, el recompute de 60 d moría a los 8 s en cada
+    // corrida y el P&L de cohortes quedó congelado ~16/09→23/09 sin que nada avisara.
+    const { error: recErr } = await db.rpc("recompute_daily_pnl", { p_from: cutoff, p_to: today() });
+    if (recErr) warnings.push({ recompute: recErr.message });
     // Nada entró Y se cayó la CONEXIÓN (ej. token Fixy vencido) ⇒ run DEGRADADO, no 'ok' (audit A#2).
     // Los 404 por guía siguen quedando en warnings: son el rastro de las guías que el courier no
     // conoce, que fue justo lo que permitió diagnosticar las 7 de Andreani.
@@ -126,11 +136,18 @@ export async function discoverUrbano(
 }
 
 // Import manual (fixy-xlsx / facturación): mismos eventos, mismo RPC (§5.4).
+// En tandas de 500 eventos: el RPC procesa evento por evento y 200 guías (~2.400 eventos) pasaban los
+// 8 s del statement_timeout de PostgREST → el sync de Urbano falló 77-91% de las corridas desde el
+// 20/09/2026. 500 eventos ≈ 40 guías ≈ ~1,5 s. Cada tanda commitea sola, así un corte no tira lo ya
+// guardado. Partir una guía entre dos tandas no rompe nada: el UPDATE de estado relee todos sus eventos.
 export async function upsertEvents(events: CourierEvent[]): Promise<number> {
-  if (!events.length) return 0;
-  const { data, error } = await supabaseAdmin().rpc("upsert_shipment_events", { p: events });
-  if (error) throw new Error(error.message);
-  return data ?? 0;
+  let n = 0;
+  for (let i = 0; i < events.length; i += 500) {
+    const { data, error } = await supabaseAdmin().rpc("upsert_shipment_events", { p: events.slice(i, i + 500) });
+    if (error) throw new Error(error.message);
+    n += data ?? 0;
+  }
+  return n;
 }
 
 export async function estadosSinMapear(courier: string): Promise<unknown[]> {

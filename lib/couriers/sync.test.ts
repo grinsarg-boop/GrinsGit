@@ -1,5 +1,25 @@
-import { describe, expect, it } from "vitest";
-import { esFallaDeConexion, shouldChain } from "./sync";
+import { describe, expect, it, vi } from "vitest";
+import type { CourierEvent } from "./types";
+
+const rpc = vi.fn(async (_fn: string, args: { p: unknown[] }) => ({ data: args.p.length, error: null }));
+vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => ({ rpc }), logSyncRun: vi.fn() }));
+const { esFallaDeConexion, shouldChain, upsertEvents } = await import("./sync");
+
+// 2.400 eventos en un solo RPC pasaban los 8 s del statement_timeout (23/09/2026). Si esto se cae,
+// el sync de Urbano vuelve a morir en ~80% de las corridas.
+describe("upsertEvents", () => {
+  it("parte en tandas de 500 y suma lo insertado", async () => {
+    const events = Array.from({ length: 1201 }, (_, i) => ({ tracking: String(i) }) as CourierEvent);
+    expect(await upsertEvents(events)).toBe(1201);
+    expect(rpc.mock.calls.map(([, a]) => a.p.length)).toEqual([500, 500, 201]);
+  });
+
+  it("sin eventos no llama al RPC", async () => {
+    rpc.mockClear();
+    expect(await upsertEvents([])).toBe(0);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
 
 // Auto-drenado: la cadena debe avanzar mientras haya backlog y CORTAR sí o sí al agotar rounds.
 describe("shouldChain", () => {
