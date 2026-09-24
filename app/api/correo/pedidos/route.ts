@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
     const o = found?.find((x: { name: string }) => x.name === `#${name}`) ?? found?.[0];
     if (!o) { notFound.push(name); continue; }
     const a = o.shipping_address ?? o.customer?.default_address ?? {};
-    const { producto, qty } = pickProducto(o.line_items ?? []);
+    const { producto, qty } = pickProducto(o.line_items ?? [], Number(o.total_price));
     pedidos.push({
       orden: name,
       nombre: a.name || `${a.first_name ?? ""} ${a.last_name ?? ""}`.trim(),

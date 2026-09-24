@@ -175,8 +175,28 @@ export type ShopifyPedido = {
 // Producto+cantidad para la etiqueta: solo si TODOS los ítems son el MISMO producto; carrito mixto
 // (o sin match) → producto null (código en blanco, se completa a mano) en vez de rotular mal con el
 // 1er ítem y la qty total del pedido (audit C#3).
+// Total del pedido → unidades, por producto. Medido 23/09/2026 sobre 45 días de pedidos de un solo
+// producto: cada precio corresponde a UNA cantidad, sin excepciones (Pureza 49.990 → 2 en 3.448 pedidos).
+// El precio lo eligió el cliente en el checkout; el título/quantity depende de quién cargó la línea
+// (el bot de Veltron ya rotuló P1 pedidos de 3). Si el total coincide exacto, manda el precio. Si no
+// (precio nuevo, descuento, 2 packs), queda lo de las líneas — por eso un precio viejo acá no rompe nada,
+// pero un precio NUEVO no guía hasta que se agregue.
+const UNIDADES_POR_PRECIO: Record<string, Record<number, number>> = {
+  Pureza: { 39990: 1, 49980: 2, 49990: 2, 59980: 3, 59990: 3 },
+  BeeVenom: { 48999: 2, 58999: 3 },
+  Altus: { 49000: 2, 59000: 3 },
+  M3: { 67500: 3 },
+  Arraigo: { 44900: 1, 49900: 1, 69900: 2, 89900: 3 },
+};
+
+export function unidadesGuiadas(producto: string | null, unidades: number, total?: number): number {
+  const porPrecio = producto && total ? UNIDADES_POR_PRECIO[producto]?.[Math.round(total)] : undefined;
+  return porPrecio ?? unidades;
+}
+
 export function pickProducto(
   items: { title: string; quantity: number }[],
+  total?: number,
 ): { producto: string | null; qty: number } {
   const matched = items.map((x) => ({ p: matchProduct(x.title), q: unidadesLinea(x.title, x.quantity ?? 0) }));
   const productos = [...new Set(matched.map((m) => m.p).filter(Boolean))] as string[];
@@ -184,7 +204,7 @@ export function pickProducto(
   const qty = producto
     ? matched.filter((m) => m.p === producto).reduce((n, m) => n + m.q, 0)
     : matched.reduce((n, m) => n + m.q, 0);
-  return { producto, qty };
+  return { producto, qty: unidadesGuiadas(producto, qty, total) };
 }
 
 // B3 = BeeVenom x3. La letra sale de la inicial del nombre canónico de product-match, salvo donde

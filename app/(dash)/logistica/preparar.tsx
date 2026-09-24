@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { extractLabels, type Label, type LabelCourier } from "@/lib/label-picking";
 import { ResumenPicking } from "./resumen";
 import { buildPdf, sortOrder } from "@/lib/label-prep";
-import { productoCode } from "@/lib/correo";
+import { productoCode, unidadesGuiadas } from "@/lib/correo";
 import { fetchOrders } from "./picking";
 import { download } from "./correo";
 import { Dropzone } from "@/components/ui/dropzone";
@@ -77,7 +77,7 @@ export function Preparar() {
         // Misma regla que pickProducto: solo si TODOS los ítems son el mismo producto (audit C#3).
         const prods = [...new Set(o.items.map((i) => i.producto).filter(Boolean))] as string[];
         const producto = prods.length === 1 ? prods[0] : null;
-        const unidades = producto ? o.items.reduce((s, i) => s + i.unidades, 0) : null;
+        const unidades = producto ? unidadesGuiadas(producto, o.items.reduce((s, i) => s + i.unidades, 0), o.total) : null;
         return {
           ...base, producto, unidades,
           code: productoCode({ producto, qty: unidades ?? 0 }) ?? "",

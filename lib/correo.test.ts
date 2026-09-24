@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCsv, CORREO_HEADER, needsSucursal, normalizeRow, parseCsv, pedidoToRow, pickProducto, productoCode,
-  rowErrors, splitPhone, toSucursal,
+  rowErrors, splitPhone, toSucursal, unidadesGuiadas,
 } from "./correo";
 
 describe("pickProducto (etiqueta: no rotular mal carritos mixtos)", () => {
@@ -115,3 +115,18 @@ describe("correo", () => {
     expect(() => buildCsv(fixed)).not.toThrow();
   });
 });
+
+// 23/09/2026: el total del pedido guía el código — el bot cargó "Lleva 3" con quantity 1 y salía P1.
+describe("unidadesGuiadas", () => {
+  it("el precio manda cuando coincide exacto", () => {
+    expect(unidadesGuiadas("Pureza", 1, 59990)).toBe(3);
+    expect(unidadesGuiadas("BeeVenom", 1, 48999)).toBe(2);
+    expect(pickProducto([{ title: "OFERTA PurezaDrops — Lleva 3", quantity: 1 }], 59990)).toEqual({ producto: "Pureza", qty: 3 });
+  });
+  it("precio desconocido, 2 packs o sin producto → quedan las líneas", () => {
+    expect(unidadesGuiadas("Pureza", 4, 99980)).toBe(4);
+    expect(unidadesGuiadas("Pureza", 2, undefined)).toBe(2);
+    expect(unidadesGuiadas(null, 2, 59990)).toBe(2);
+  });
+});
+
