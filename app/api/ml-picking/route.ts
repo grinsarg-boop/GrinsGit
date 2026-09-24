@@ -18,9 +18,16 @@ const API = "https://api.mercadolibre.com";
 
 export const maxDuration = 60; // ~100 ventas × (1 GET /orders + a veces /packs) puede pasar los 10s
 
+// Con tope de 4 s (p90 medido 0,6 s): el 19/09/2026 ML dejó colgados 3 de cada 100 GET y, sin
+// tope, uno solo frenaba su tanda de 8 hasta los 60 s de Vercel → 504 y el cruce entero se caía.
+// Un GET colgado cuenta como error y esa venta se rescata de ml_orders como cualquier otra.
 async function mlGet(path: string, token: string) {
-  const r = await fetch(`${API}${path}`, { headers: { authorization: `Bearer ${token}` } });
-  return { status: r.status, body: r.ok ? await r.json() : null };
+  try {
+    const r = await fetch(`${API}${path}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(4000) });
+    return { status: r.status, body: r.ok ? await r.json() : null };
+  } catch {
+    return { status: 0, body: null };
+  }
 }
 
 // El id de la etiqueta puede ser de venta o de pack (ambos 20000…, indistinguibles a ojo).
@@ -28,14 +35,14 @@ async function mlGet(path: string, token: string) {
 async function itemsDeVenta(id: string, token: string): Promise<{ items: OrderItem[]; error?: string }> {
   const o = await mlGet(`/orders/${id}`, token);
   if (o.status === 200) return { items: o.body.order_items ?? [] };
-  if (o.status !== 404) return { items: [], error: `orders ${o.status}` };
+  if (o.status !== 404) return { items: [], error: `orders ${o.status || "sin respuesta"}` };
 
   const p = await mlGet(`/packs/${id}`, token);
   if (p.status !== 200) return { items: [], error: `no existe como venta ni como pack` };
   const items: OrderItem[] = [];
   for (const oo of p.body.orders ?? []) {
     const r = await mlGet(`/orders/${oo.id}`, token);
-    if (r.status !== 200) return { items: [], error: `orders ${r.status}` };
+    if (r.status !== 200) return { items: [], error: `orders ${r.status || "sin respuesta"}` };
     items.push(...(r.body.order_items ?? []));
   }
   return { items };
@@ -110,8 +117,9 @@ export async function GET(req: NextRequest) {
       ventas[id] = { items: [], producto: null, unidades: null, mixto: false, error };
       continue;
     }
-    const v = resolverVenta(rescate ?? items, ctx);
-    ventas[id] = rescate ? { ...v, motivo: [`${error} — resuelto con la copia de ml_orders`, v.motivo].filter(Boolean).join(" | ") } : v;
+    // La copia rescatada es la misma orden resuelta con la misma regla: no lleva nota en `motivo`,
+    // porque cualquier motivo manda la etiqueta al final sin código (mergeVenta), y ésta está resuelta.
+    ventas[id] = resolverVenta(rescate ?? items, ctx);
   }
   return NextResponse.json({ ventas });
 }

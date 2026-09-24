@@ -17,26 +17,30 @@ import type { LabelCourier } from "./label-picking";
 // un bulto que no se puede despachar.
 // Es una LISTA y no un mapa por courier porque un mismo courier puede tener varias geometrías
 // (Correo entra en A4 apaisada y sale en 10×15 recortada): la fila se elige por courier + medida.
-type Spot = { courier: LabelCourier; w: number; h: number; x: number; y: number; size: number; center?: boolean };
+type Spot = { courier: LabelCourier; w: number; h: number; x: number; y: number; size: number; center?: boolean }; // center → x es el CENTRO del texto
 const STAMP: Spot[] = [
   { courier: "correo", w: 841.89, h: 595.28, x: 95, y: 88, size: 26 }, // A4 apaisada — recuadro al pie (13/07)
   // Correo ya recortada a 10×15 (ver correoA10x15): el recuadro del pie queda pegado al borde de
   // la etiqueta térmica y se corta al imprimir, así que el código sube al hueco que está libre en
   // las 24 páginas medidas — a la derecha del bloque REMITENTE, lejos de todo borde.
-  { courier: "correo", w: 283.46, h: 425.2, x: 0, y: 252, size: 30, center: true },
+  { courier: "correo", w: 283.46, h: 425.2, x: 141.73, y: 252, size: 30, center: true },
   { courier: "fixy", w: 595.0, h: 841.9, x: 460, y: 380, size: 32 }, // A4 vertical — columna libre a la derecha del domicilio
   // Fixy ya recortada a 10×15 (ver fixyCrop): la columna libre de la A4 queda FUERA de la etiqueta,
   // así que el código se mudó adentro. El hueco se buscó uniendo la tinta de las 544 páginas de los
   // 3 layouts que hay a mano YA RECORTADAS (que es donde se estampa) y quedándose con la caja libre
   // en las 544: la franja de abajo a la derecha, entre la fecha de venta y el código de barras.
-  // Con el peor caso de 3 caracteres ("B12") quedan 7 pt de aire alrededor; más grande que 26 el
-  // aire baja a 5 y no vale la pena.
-  { courier: "fixy", w: 283.46, h: 425.2, x: 198, y: 56, size: 26 },
-  // Urbano 15×10 apaisada: chico y centrado en la franja de arriba (pedido de Pancho 09/08 — antes
-  // iba grande al medio derecha y quedaba invadiendo la etiqueta). Es la ÚNICA franja libre a todo
-  // el ancho: y 272-284, medida uniendo la tinta de 112 páginas de las dos plantillas.
-  // Queda arriba del "#pedido" que estampa redespacho.mjs (y≈256), así que no chocan.
-  { courier: "urbano", w: 425.2, h: 283.5, x: 0, y: 273.5, size: 11, center: true },
+  // 22/09/2026: ahí se montaba sobre el borde derecho del código de barras. Se volvió a medir sobre
+  // las 93 etiquetas Fixy recortadas de septiembre (layout FIXYPAY QR, el único que llega hoy):
+  // el hueco grande está debajo del monto de contrareembolso, a la derecha de "QR FIXYPAY"
+  // (x 106-270, y 245-291). Centrado ahí a 38 pt, "B12" deja ≥10 pt de aire contra todo.
+  { courier: "fixy", w: 283.46, h: 425.2, x: 188, y: 258, size: 38, center: true },
+  // Urbano 15×10 apaisada. Hasta el 22/09/2026 iba chico (11 pt) en la franja de arriba, pegado al
+  // borde: con la etiqueta corrida en la impresora se cortaba. Medido sobre las 680 páginas Urbano
+  // de septiembre (plantilla con el QR abajo a la derecha): arriba a la derecha, a la derecha de
+  // "Canalizador: … ZONA", hay una caja libre x 286-406, y 207-265 — ≥18 pt de todo borde.
+  // Ojo: la etiqueta que baja redespacho.mjs por API tiene el QR ARRIBA a la derecha y esto lo
+  // pisaría; esa ya sale con su propio "#pedido B2" y no pasa por acá.
+  { courier: "urbano", w: 425.2, h: 283.5, x: 346, y: 221, size: 44, center: true },
   // Flex: la 10×15 que sale de mlLabelsTo10x15 (el producto vive en el talón, que se recorta → sin
   // esto la etiqueta impresa no dice qué lleva). Columna libre a la izquierda del QR; el recuadro
   // del pie NO sirve, ahí el "Destinatario:" largo baja hasta y=28.
@@ -56,7 +60,7 @@ export function stampPage(page: PDFPage, code: string, courier: LabelCourier, fo
   const { width, height } = page.getSize();
   const s = STAMP.find((e) => e.courier === courier && Math.abs(width - e.w) <= TOL && Math.abs(height - e.h) <= TOL);
   if (!s) return false;
-  const x = s.center ? (width - font.widthOfTextAtSize(code, s.size)) / 2 : s.x;
+  const x = s.center ? s.x - font.widthOfTextAtSize(code, s.size) / 2 : s.x;
   page.drawText(code, { x, y: s.y, size: s.size, font });
   return true;
 }

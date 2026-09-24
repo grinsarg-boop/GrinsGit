@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify";
-import { matchProduct } from "@/lib/product-match";
+import { matchProduct, unidadesLinea } from "@/lib/product-match";
 import { sessionOk } from "@/lib/api-session";
 
 export const maxDuration = 60; // cruzar ~60 pedidos con Shopify (con reintentos por 429) puede pasar los 10s default
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     const courier = COURIERS.find((c) => new RegExp(`(^|,|\\s)${c}(,|\\s|$)`).test(tags)) ?? null;
     const items: PickingItem[] = (o.line_items ?? []).map((li: { title?: string; quantity?: number }) => ({
       producto: matchProduct(li.title ?? ""),
-      unidades: li.quantity ?? 0,
+      unidades: unidadesLinea(li.title ?? "", li.quantity ?? 0),
     }));
     result.push({ orden: name, encontrado: true, courier, total: Number(o.total_price ?? 0), items });
   }

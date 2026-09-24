@@ -5,7 +5,7 @@
 // "área de 4 dígitos → sucursal" era precaución sin evidencia y Correo terminó
 // rechazando por sucursal inválida un pedido que tenía dirección completa).
 
-import { matchProduct } from "./product-match";
+import { matchProduct, unidadesLinea } from "./product-match";
 
 export const CORREO_HEADER =
   "tipo_producto(obligatorio);largo(obligatorio en CM);ancho(obligatorio en CM);altura(obligatorio en CM);peso(obligatorio en KG);valor_del_contenido(obligatorio en pesos argentinos);provincia_destino(obligatorio);sucursal_destino(obligatorio solo en caso de no ingresar localidad de destino);localidad_destino(obligatorio solo en caso de no ingresar sucursal de destino);calle_destino(obligatorio solo en caso de no ingresar sucursal de destino);altura_destino(obligatorio solo en caso de no ingresar sucursal de destino);piso(opcional solo en caso de no ingresar sucursal de destino);dpto(opcional solo en caso de no ingresar sucursal de destino);codpostal_destino(obligatorio solo en caso de no ingresar sucursal de destino);destino_nombre(obligatorio);destino_email(obligatorio, debe ser un email valido);cod_area_tel(opcional);tel(opcional);cod_area_cel(obligatorio);cel(obligatorio);numero_orden(opcional)";
@@ -178,7 +178,7 @@ export type ShopifyPedido = {
 export function pickProducto(
   items: { title: string; quantity: number }[],
 ): { producto: string | null; qty: number } {
-  const matched = items.map((x) => ({ p: matchProduct(x.title), q: x.quantity ?? 0 }));
+  const matched = items.map((x) => ({ p: matchProduct(x.title), q: unidadesLinea(x.title, x.quantity ?? 0) }));
   const productos = [...new Set(matched.map((m) => m.p).filter(Boolean))] as string[];
   const producto = productos.length === 1 ? productos[0] : null;
   const qty = producto

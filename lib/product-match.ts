@@ -37,3 +37,16 @@ export function matchAllProducts(text: string): string[] {
   const t = text.toLowerCase();
   return [...new Set(PRODUCT_KEYWORDS.filter(([kw]) => t.includes(kw)).map(([, name]) => name))];
 }
+
+// Unidades físicas de un line item de Shopify. El checkout vende 1 línea por frasco (quantity = unidades;
+// el "2x1"/"(LLEVA 3)" del título es marketing), PERO el bot de WhatsApp de Veltron carga el pack
+// entero como UNA línea con quantity 1: "OFERTA PurezaDrops — Lleva 3", "Bee Venom Spray 2x1",
+// "PurezaDrops Pack x3". Contar quantity ahí rotulaba P1 un pedido de 3 frascos (23/09/2026: 45 líneas
+// así desde julio, #23144 entre ellas). Se reconocen por título corto (sin | : ni paréntesis, que
+// tienen todos los del catálogo) terminado en el pack. quantity > 1 multiplica (#24447: Lleva 2 ×2 = 4).
+// ⚠️ order_items.pack (upsert_order en SQL) todavía cuenta quantity: redespacho/reimprimir y el P&L no ven esto.
+export function unidadesLinea(title: string, quantity: number): number {
+  const m = /[|:(]/.test(title) ? null : title.match(/(?:lleva\s*(\d+)|(\d+)\s*x\s*\d+|pack\s*x\s*(\d+))\s*$/i);
+  const pack = m ? Number(m[1] ?? m[2] ?? m[3]) : 1;
+  return pack * (quantity || 0);
+}

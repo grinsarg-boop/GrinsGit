@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchProduct, matchAllProducts, PRODUCTOS } from "./product-match";
+import { matchProduct, matchAllProducts, PRODUCTOS, unidadesLinea } from "./product-match";
 import { letraProducto } from "./correo";
 
 // R2 — único test JS del repo (SPEC §7). Mismas reglas que match_product en SQL.
@@ -39,5 +39,20 @@ describe("matchProduct", () => {
   it("sin match → null (queda en v_sin_clasificar, no se inventa atribución)", () => {
     expect(matchProduct("Producto misterioso")).toBeNull();
     expect(matchProduct("")).toBeNull();
+  });
+
+  // Títulos reales de la base (23/09/2026). El bot de Veltron carga el pack en 1 línea; el catálogo no.
+  it("unidades: el pack del bot sale del título, el del catálogo de quantity", () => {
+    expect(unidadesLinea("OFERTA PurezaDrops — Lleva 3", 1)).toBe(3);
+    expect(unidadesLinea("OFERTA PurezaDrops — Lleva 2", 2)).toBe(4);
+    expect(unidadesLinea("OFERTA Bee Venom Spray — 2x1", 1)).toBe(2);
+    expect(unidadesLinea("VeinGuard Herbal Spray 2x1", 1)).toBe(2);
+    expect(unidadesLinea("PurezaDrops Pack x3", 1)).toBe(3);
+    expect(unidadesLinea("OFERTA ARRAIGO · Sérum Anticaída de Romero — Pack x2", 1)).toBe(2);
+    expect(unidadesLinea("PurezaDrops™ | Drena Naturalmente la Hinchazón del Rostro, Abdomen y Piernas (LLEVA 3)", 3)).toBe(3);
+    expect(unidadesLinea("Bee Venom Spray 2x1: Alivio inmediato para piel sensible con Psoriasis. (2x1!)", 2)).toBe(2);
+    expect(unidadesLinea("Aceite Reafirmante Anti-celulítico MN | 2x1!", 2)).toBe(2);
+    expect(unidadesLinea("2x1 Nubba / Adios Vello Corporal", 2)).toBe(2);
+    expect(unidadesLinea("ARRAIGO · Sérum Anticaída de Romero — Sin Minoxidil", 1)).toBe(1);
   });
 });
