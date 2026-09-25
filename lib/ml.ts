@@ -662,7 +662,8 @@ export async function estimateMlPercep(db: Db = supabaseAdmin(), days = 45): Pro
 
 // Import del Reporte_Facturacion mensual: percepciones + fijos REALES prorrateados por base diaria
 // sobre la ventana del período (pisa los estimados) + recompute. Idempotente por período.
-export async function importMlBilling(buf: Buffer, db: Db = supabaseAdmin()): Promise<{ total: number; from: string; to: string; days: number }> {
+// `recompute` = error del recompute (supabase-js no tira): el caller lo deja en los warnings de la corrida.
+export async function importMlBilling(buf: Buffer, db: Db = supabaseAdmin()): Promise<{ total: number; from: string; to: string; days: number; recompute?: string }> {
   const { percep, fijos, from, to } = parseMlBilling(buf);
   const total = percep + fijos;
   const base = await mlDailyBase(db, from, to);
@@ -674,14 +675,15 @@ export async function importMlBilling(buf: Buffer, db: Db = supabaseAdmin()): Pr
   rows[rows.length - 1].amount = Math.round((rows[rows.length - 1].amount + total - spread) * 100) / 100;
   const { error } = await db.from("ml_percepciones").upsert(rows, { onConflict: "date" });
   if (error) throw new Error(`ml_percepciones upsert: ${error.message}`);
-  await db.rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
-  return { total, from, to, days: rows.length };
+  const { error: recErr } = await db.rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
+  return { total, from, to, days: rows.length, recompute: recErr?.message };
 }
 
 // Import completo de la liquidación Flex (archivo → staging → ship_cost + tabla CP→costo → recompute).
 // Auto-detecta el formato: listado DarLogistica (trae CP e ID venta) o el xlsx semanal de Santiago.
 // Lo usan el endpoint /api/import/ml-flex y la subida desde /sync, para no duplicar la lógica.
-export async function importMlFlex(buf: Buffer, db: Db = supabaseAdmin()): Promise<{ parsed: number; matched: number; cps: number }> {
+// `recompute` = error del recompute, igual que en importMlBilling.
+export async function importMlFlex(buf: Buffer, db: Db = supabaseAdmin()): Promise<{ parsed: number; matched: number; cps: number; recompute?: string }> {
   const dar = parseDarLogistica(buf);
   const rows = dar.length ? dar : parseSantiagoFlex(buf).map((r) => ({ ...r, cp: null as string | null }));
   if (rows.length) {
@@ -706,8 +708,8 @@ export async function importMlFlex(buf: Buffer, db: Db = supabaseAdmin()): Promi
   // Con la tabla ya actualizada, estima por CP los pendientes que no entraron en este listado.
   await estimateFlexByCP(db);
   const from = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
-  await db.rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
-  return { parsed: rows.length, matched: updated, cps };
+  const { error: recErr } = await db.rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
+  return { parsed: rows.length, matched: updated, cps, recompute: recErr?.message };
 }
 
 // Parsea el listado de envíos de DarLogistica (.xls): header con "Número Tracking" (=shipment_id) +

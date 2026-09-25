@@ -43,8 +43,8 @@ async function importFlex(_prev: FlexResult | null, formData: FormData): Promise
   if (!(file instanceof File) || !file.size) return { ok: false, error: "elegí un archivo .xlsx" };
   try {
     const { importMlFlex } = await import("@/lib/ml");
-    const { parsed, matched, cps } = await importMlFlex(Buffer.from(await file.arrayBuffer()));
-    await logSyncRun("ml-flex", "ok", parsed, [{ matched_to_orders: matched, cps }]);
+    const { parsed, matched, cps, recompute } = await importMlFlex(Buffer.from(await file.arrayBuffer()));
+    await logSyncRun("ml-flex", "ok", parsed, [{ matched_to_orders: matched, cps, recompute }]);
     revalidatePath("/sync");
     revalidatePath("/");
     return { ok: true, parsed, matched, cps };
@@ -61,8 +61,8 @@ async function importBilling(_prev: BillingResult | null, formData: FormData): P
   if (!(file instanceof File) || !file.size) return { ok: false, error: "elegí un archivo .xlsx" };
   try {
     const { importMlBilling } = await import("@/lib/ml");
-    const { total, from, to, days } = await importMlBilling(Buffer.from(await file.arrayBuffer()));
-    await logSyncRun("ml-billing", "ok", days, [{ total: Math.round(total), from, to }]);
+    const { total, from, to, days, recompute } = await importMlBilling(Buffer.from(await file.arrayBuffer()));
+    await logSyncRun("ml-billing", "ok", days, [{ total: Math.round(total), from, to, recompute }]);
     revalidatePath("/sync");
     revalidatePath("/");
     return { ok: true, total, from, to, days };

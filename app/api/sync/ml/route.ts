@@ -40,9 +40,12 @@ export async function POST(req: Request) {
     const { estimated: percepEst } = light ? { estimated: 0 } : await estimateMlPercep(supabaseAdmin());
     // ML entra al P&L acá mismo, sin depender del recompute de otro courier.
     const from = new Date(Date.now() - (light ? 7 : Math.max(days, 60)) * 86400_000).toISOString().slice(0, 10);
-    await supabaseAdmin().rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
+    const { error: recErr } = await supabaseAdmin().rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
     const info = { light, enriched, flex, estimated, taxed, ads_ml: Math.round(adsTotal), bonif_ml: Math.round(bonifTotal), percep_est: percepEst, mp_khalil: mpPagos };
-    const warnings = sinProducto > 0 ? [{ ventas_sin_producto: sinProducto }, info] : [info];
+    const warnings: unknown[] = sinProducto > 0 ? [{ ventas_sin_producto: sinProducto }, info] : [info];
+    // supabase-js no tira: devuelve { error }. Sin leerlo, el recompute cortado por el statement_timeout
+    // de 8 s dejaba la corrida en 'ok' sin rastro (mismo patrón que runCourierSync).
+    if (recErr) warnings.push({ recompute: recErr.message });
     await logSyncRun("ml", "ok", rows, warnings);
     return Response.json({ ok: true, rows, enriched, flex, estimated, taxed, adsTotal, bonifTotal, percepEst, mpPagos, sinProducto });
   } catch (e) {

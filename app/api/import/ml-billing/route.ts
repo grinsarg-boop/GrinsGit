@@ -12,8 +12,8 @@ export async function POST(req: Request) {
     if (!(file instanceof File)) {
       return Response.json({ ok: false, error: 'falta el campo "file"' }, { status: 400 });
     }
-    const { total, from, to, days } = await importMlBilling(Buffer.from(await file.arrayBuffer()));
-    await logSyncRun("ml-billing", "ok", days, [{ total: Math.round(total), from, to }]);
+    const { total, from, to, days, recompute } = await importMlBilling(Buffer.from(await file.arrayBuffer()));
+    await logSyncRun("ml-billing", "ok", days, [{ total: Math.round(total), from, to, recompute }]);
     return Response.json({ ok: true, total, from, to, days });
   } catch (e) {
     await logSyncRun("ml-billing", "error", 0, [], String(e));
