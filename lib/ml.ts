@@ -174,17 +174,27 @@ export function mapMlOrder(o: MlOrder, productoPorItem?: Map<string, string>) {
   };
 }
 
-// Trae las órdenes de los últimos `days` días paginando /orders/search (seller propio).
+// Trae las órdenes TOCADAS en los últimos `days` días (order.date_last_updated), no las creadas: así
+// entran las nuevas y también las que cambian de estado tarde. Medido el 26/09/2026: el 0,5-0,7% de las
+// órdenes se cancela más de 11 días después de la venta (mediaciones, hasta 31 días) y toda cancelación
+// mueve date_last_updated. Antes se pedían las CREADAS en 60 días en un único stream de offset cortado
+// en 2.000 (~11 días al volumen de sep-2026): esas cancelaciones nunca llegaban a ml_orders y el P&L las
+// seguía contando como venta. `days` admite fracción (la corrida liviana pide 0.25 = 6 h).
 export async function fetchMlOrders(days: number, db: Db = supabaseAdmin()): Promise<MlOrder[]> {
   const token = await getMlAccessToken(db);
   const seller = process.env.ML_SELLER_ID ?? "";
   const from = new Date(Date.now() - days * 86400_000).toISOString();
   const LIMIT = 50;
-  const out: MlOrder[] = [];
-  for (let offset = 0; offset <= 2000; offset += LIMIT) {
+  // Una orden nueva durante el paginado corre el offset y repite una de la página anterior: sin
+  // deduplicar, el upsert entero cae con "ON CONFLICT DO UPDATE command cannot affect row a second time".
+  const out = new Map<number, MlOrder>();
+  for (let offset = 0; ; offset += LIMIT) {
+    // ML no pagina más allá de offset + limit = 10.000. Hoy 3 días tocados son ~1.700 órdenes; cortar
+    // en silencio es justo el bug que esto arregla, así que se corta con error.
+    if (offset + LIMIT > 10_000) throw new Error(`ML orders: más de 10.000 órdenes tocadas en ${days} días, achicar days`);
     const qs = new URLSearchParams({
       seller,
-      "order.date_created.from": from,
+      "order.date_last_updated.from": from,
       sort: "date_desc",
       offset: String(offset),
       limit: String(LIMIT),
@@ -193,10 +203,10 @@ export async function fetchMlOrders(days: number, db: Db = supabaseAdmin()): Pro
     if (!res.ok) throw new Error(`ML orders ${res.status}: ${await res.text()}`);
     const j = await res.json();
     const results: MlOrder[] = j.results ?? [];
-    out.push(...results);
-    if (results.length === 0 || out.length >= (j.paging?.total ?? out.length)) break;
+    for (const o of results) out.set(o.id, o);
+    if (results.length < LIMIT) break;
   }
-  return out;
+  return [...out.values()];
 }
 
 // Fase 1: landa las órdenes en ml_orders. Devuelve cuántas filas tocó.

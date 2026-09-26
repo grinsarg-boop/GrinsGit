@@ -10,7 +10,10 @@ export async function POST(req: Request) {
   if (bad) return bad;
 
   const url = new URL(req.url);
-  const days = Number(url.searchParams.get("days")) || 60; // ≥60 para re-fetchear cancelaciones tardías
+  // Órdenes TOCADAS en los últimos `days` días (ver fetchMlOrders), no creadas. La pesada pide 3
+  // (~1.700 órdenes, aguanta un fin de semana de cron caído); la liviana, 0.25. Si el cron estuvo caído
+  // más de 3 días, correrla una vez con days=N para levantar lo que cambió en el medio.
+  const days = Number(url.searchParams.get("days")) || 3;
   const enrichLimit = Number(url.searchParams.get("enrich")) || 300;
   // ponytail: corrida liviana cada 15' = órdenes + P&L de la semana, nada más. Lo caro (21 días de
   // ads/bonif/khalil + retenciones + percepciones + recompute de 60 días) no cabe en los 60s a esa
@@ -38,7 +41,8 @@ export async function POST(req: Request) {
         ]);
     // Percepciones IVA/IIBB estimadas (046) — después de ads/bonif: su base usa esas tablas.
     const { estimated: percepEst } = light ? { estimated: 0 } : await estimateMlPercep(supabaseAdmin());
-    // ML entra al P&L acá mismo, sin depender del recompute de otro courier.
+    // ML entra al P&L acá mismo, sin depender del recompute de otro courier. 60 días aunque `days` sea
+    // chico: una cancelación por mediación llega hasta 31 días después y corrige el día de la venta.
     const from = new Date(Date.now() - (light ? 7 : Math.max(days, 60)) * 86400_000).toISOString().slice(0, 10);
     const { error: recErr } = await supabaseAdmin().rpc("recompute_daily_pnl", { p_from: from, p_to: today() });
     const info = { light, enriched, flex, estimated, taxed, ads_ml: Math.round(adsTotal), bonif_ml: Math.round(bonifTotal), percep_est: percepEst, mp_khalil: mpPagos };

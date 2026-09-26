@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
-import { describe, expect, it } from "vitest";
-import { destFields, flexPriceForCP, groupBonifByDay, mapMlOrder, reEnrichFilter, parseOrderRef, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
+import { describe, expect, it, vi } from "vitest";
+import { destFields, fetchMlOrders, flexPriceForCP, groupBonifByDay, mapMlOrder, reEnrichFilter, parseOrderRef, needsRefresh, nextTokenState, parseDarLogistica, parseMlBilling, parseMlPack, parseSantiagoFlex, sellerFlete, sumWithholdings } from "./ml";
 
 const NOW = 1_700_000_000_000;
 
@@ -19,6 +19,30 @@ describe("ml token", () => {
     expect(nextTokenState({ access_token: "A2", refresh_token: "R2", expires_in: 21600 }, "R1", NOW))
       .toEqual({ access_token: "A2", refresh_token: "R2", expires_at: NOW + 21_600_000 });
     expect(nextTokenState({ access_token: "A3" }, "R1", NOW).refresh_token).toBe("R1");
+  });
+});
+
+describe("fetchMlOrders", () => {
+  it("pide las TOCADAS en la ventana, pagina hasta la página corta y deduplica lo que repite el offset", async () => {
+    // Página 2 repite la orden 50: entró una venta nueva mientras se paginaba (date_desc corre todo uno).
+    const pages = [Array.from({ length: 50 }, (_, i) => i + 1), [50, 51]];
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      urls.push(url);
+      return Response.json({ results: (pages.shift() ?? []).map((id) => ({ id })) });
+    });
+    const tok = { access_token: "T", refresh_token: "R", expires_at: Date.now() + 3_600_000 };
+    const db = { from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { value: tok } }) }) }) }) };
+    try {
+      const orders = await fetchMlOrders(3, db as unknown as Parameters<typeof fetchMlOrders>[1]);
+      expect(orders.map((o) => o.id)).toEqual(Array.from({ length: 51 }, (_, i) => i + 1));
+      expect(urls).toHaveLength(2);
+      const qs = new URL(urls[0]).searchParams;
+      expect(qs.has("order.date_last_updated.from")).toBe(true);
+      expect(qs.has("order.date_created.from")).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
