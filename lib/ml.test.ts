@@ -36,8 +36,14 @@ describe("mapMlOrder", () => {
     });
     expect(row.product).toBe("Revival Oil"); // ML-only, no está en products pero matchProduct lo mapea
     expect(row.units).toBe(3);
-    expect(row.sale_fee).toBe(2700);
+    expect(row.sale_fee).toBe(4500); // sale_fee es por unidad: 2×1800 + 1×900
     expect(row.ml_id).toBe(200004);
+  });
+
+  it("comisión = sale_fee × quantity, en centavos (orden real 2000018578450350, MP cobró 20859.33)", () => {
+    const row = mapMlOrder({ id: 1, date_created: "x", status: "paid",
+      order_items: [{ item: { title: "Pureza" }, quantity: 3, unit_price: 33917.59, sale_fee: 6953.11 }] });
+    expect(row.sale_fee).toBe(20859.33);
   });
 
   it("product = null si ningún título matchea", () => {

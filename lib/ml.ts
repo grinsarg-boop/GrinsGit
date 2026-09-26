@@ -162,7 +162,10 @@ export function mapMlOrder(o: MlOrder, productoPorItem?: Map<string, string>) {
     units: items.reduce((n, it) => n + (it.quantity ?? 0), 0),
     shipment_id: o.shipping?.id ?? null,
     total_amount: o.total_amount ?? 0,
-    sale_fee: items.reduce((s, it) => s + (it.sale_fee ?? 0), 0), // comisión ML
+    // Comisión ML. order_items[].sale_fee es POR UNIDAD: una orden de quantity 2 paga el doble. Sin el
+    // × quantity quedaban afuera ~$1,6M de comisión abr→sep 2026 (26/09: 4 de 4 órdenes multi-unidad
+    // cierran al centavo contra los cargos `fee` del pago en MP). Redondeo: 6953.11 × 3 = 20859.329999….
+    sale_fee: Math.round(items.reduce((s, it) => s + (it.sale_fee ?? 0) * (it.quantity ?? 1), 0) * 100) / 100,
     // ship_type/ship_cost/province NO van acá a propósito: los llenan enrichMlShipments (flete normal)
     // e importMlFlex (Flex). Incluirlos en el upsert pisaría con null el flete ya enriquecido en cada
     // re-sync (y el cron diario lo borraría). Al insertar arrancan null por default de columna.
