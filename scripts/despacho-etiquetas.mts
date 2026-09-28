@@ -14,13 +14,14 @@
 // código queda quemado), así que sin --confirmar no llama a nada que escriba. La contracara es
 // scripts/despacho-nocturno.mjs, que es de sólo lectura por construcción y arma la propuesta.
 //
-// El orden y el código NO se recalculan acá: salen de lib/label-prep.ts y lib/correo.ts, los mismos
-// que usa el panel. Una sola regla para el depósito, un solo lugar donde cambiarla.
+// El orden y el código NO se recalculan acá: salen de lib/label-prep.ts y lib/picking.ts, los mismos
+// que usa el panel. Una sola regla para el depósito, un solo lugar donde cambiarla. El código se
+// pide a Shopify con el nº de orden, igual que /logistica?t=preparar — no se deduce del pedido de
+// Veltron (regla de Pancho, 28/09/2026).
 //
 // La diferencia con el panel: el panel tiene que ADIVINAR de qué pedido es cada página (lee el
-// número de la etiqueta y lo cruza con /api/picking). Acá no hace falta: la página y el pedido
-// vienen atados de origen, así que ARMAR EL PDF funciona sin orden de Shopify. DAR DE ALTA no: sin
-// nº de orden el remito que arma Veltron sale roto y el pedido se saltea (ver la guarda del alta).
+// número de la etiqueta). Acá la página y el pedido vienen atados de origen. Sin nº de orden de
+// Shopify el pedido se saltea: el remito de Veltron sale roto (ver la guarda del alta).
 //
 // TIEMPOS (medidos 03/09/2026, y son la razón de cómo está armado esto):
 //   ver_pedido 2,5 s · listar_pedidos (100 pedidos) 4,8 s · bajar etiqueta Urbano 2,5 s
@@ -34,8 +35,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildPdf, sortOrder, type OutPage, type SortKey } from "../lib/label-prep.ts";
-import { buildCsv, needsSucursal, normalizeRow, parseCsv, productoCode, rowErrors } from "../lib/correo.ts";
-import { matchProduct } from "../lib/product-match.ts";
+import { buildCsv, needsSucursal, normalizeRow, parseCsv, rowErrors } from "../lib/correo.ts";
+import { codigoDeposito, pickingOrders } from "../lib/picking.ts";
+import { shopifyFetch } from "../lib/shopify.ts";
 import { htmlToPdf } from "./html2pdf.mjs";
 
 const CONFIRMAR = process.argv.includes("--confirmar");
@@ -134,39 +136,6 @@ async function mcp(name: string, args: Record<string, unknown> = {}, intento = 1
     throw new Error(`${name}: ${text.slice(0, 300)}`);
   }
   return JSON.parse(text);
-}
-
-// Catálogo: unidades del pack y precio por SKU de oferta. Hace falta porque `cantidad` significa
-// DOS cosas distintas según de dónde venga el pedido (medido 03/09/2026):
-//   · form COD (todos los del día a día): `cantidad` YA son las unidades. Pureza-02c ("Lleva 3")
-//     viene con cantidad 3 y total 59.990 = el precio de UNA oferta. Verificado contra order_items
-//     en los 97 pedidos de la noche: cero discrepancias.
-//   · creados por API (crear_pedido / CSV): `cantidad` son OFERTAS y el total es precio × cantidad.
-//     ARRAIGO-X3K ("Pack x2") con cantidad 2 son 4 frascos y total 159.800.
-// El total es lo único que los separa, así que la unidad se deduce de ahí. El depósito arma frascos.
-async function unidadesPorSku(): Promise<Map<string, { pack: number; precio: number }>> {
-  const m = new Map<string, { pack: number; precio: number }>();
-  const r = await fetch(`${MCP_URL.replace(/\/mcp$/, "")}/api/v1/tenant/${TENANT}/catalogo`, {
-    headers: { authorization: `Bearer ${process.env.VELTRON_API_KEY}` },
-    signal: AbortSignal.timeout(30_000),
-  }).then((x) => (x.ok ? x.json() : null)).catch(() => null);
-  for (const p of r?.productos ?? []) {
-    m.set(p.sku, { pack: 1, precio: Number(p.precio_venta_ars ?? 0) });
-    for (const o of p.ofertas ?? []) {
-      m.set(o.sku, { pack: Number(o.oferta_params?.unidades ?? 1) || 1, precio: Number(o.precio_venta_ars ?? 0) });
-    }
-  }
-  return m;
-}
-
-// Unidades físicas del pedido. Ver el comentario de unidadesPorSku(): si el total es el precio de
-// la oferta multiplicado por `cantidad`, entonces `cantidad` son ofertas y hay que multiplicar por
-// el pack; si no, `cantidad` ya son unidades (y no puede ser menos que el pack).
-export function unidadesDe(cantidad: number, total: number, cat?: { pack: number; precio: number }): number {
-  const c = Math.max(1, Number(cantidad) || 1);
-  if (!cat?.pack || !cat.precio) return c;
-  const porOferta = c > 1 && Math.abs(Number(total) - cat.precio * c) < 1;
-  return porOferta ? c * cat.pack : Math.max(c, cat.pack);
 }
 
 // COD o prepago por el MEDIO DE PAGO y no por el courier: con el prepago mudándose de Correo a
@@ -298,11 +267,10 @@ if (DESPACHAR) {
 const lote = loteDeArgs();
 const correo = lote.andreani ?? [];
 delete lote.andreani;                    // no imprime etiqueta: va por el CSV de carga masiva
-const packs = await unidadesPorSku();
 
 type Item = SortKey & {
   carrier: string; pedidoId: number; guia: string | null; code: string | null;
-  sku: string | null; cod: boolean; pago: string | null; order_number: string | null;
+  sku: string | null; cod: boolean; pago: string | null; order_number: string | null; nota: string;
 };
 const items: Item[] = [];
 const hoy = new Date().toISOString().slice(0, 10);
@@ -339,16 +307,21 @@ for (const [carrier, ids] of Object.entries(lote)) {
       console.error(`  ⛔ ${carrier}/${pedidoId} (${p.cliente_nombre ?? "?"}): sin nº de orden de Shopify — NO se da de alta, el remito saldría "null". Si es de prueba, cancelalo en Veltron.`);
       continue;
     }
-    const producto = matchProduct(String(p.producto_titulo ?? p.sku ?? ""));
-    const unidades = unidadesDe(Number(p.cantidad ?? 1), Number(p.total ?? 0), packs.get(p.sku));
     items.push({
-      carrier, pedidoId, sku: p.sku ?? null, guia: p.guia ?? null, producto, unidades,
-      order_number: p.shopify_order_number ?? null,
-      pago: p.metodo_pago ?? null, cod: esCOD(p.metodo_pago),
-      code: productoCode({ producto, qty: unidades }),
+      carrier, pedidoId, sku: p.sku ?? null, guia: p.guia ?? null, producto: null, unidades: null,
+      order_number: String(p.shopify_order_number).trim(),
+      pago: p.metodo_pago ?? null, cod: esCOD(p.metodo_pago), code: null, nota: "",
     });
   }
 }
+
+// El código NO sale del pedido de Veltron (título + cantidad + catálogo de ofertas): sale de
+// Shopify por el mismo camino que /logistica?t=preparar (lib/picking.ts, regla de Pancho del
+// 28/09/2026). Así el PDF de acá y el que arma el panel con las mismas etiquetas no difieren.
+const tShopify = Date.now();
+const shopify = new Map((await pickingOrders([...new Set(items.map((i) => i.order_number!))], shopifyFetch)).map((o) => [o.orden, o]));
+for (const it of items) Object.assign(it, codigoDeposito(shopify.get(it.order_number!)));
+console.log(`  (Shopify: ${shopify.size} pedidos en ${seg(Date.now() - tShopify)})`);
 
 const orden = sortOrder(items);
 console.log(`\n=== ${items.length} etiquetas · orden de armado (datos en ${seg(Date.now() - t0)}) ===`);
@@ -357,10 +330,13 @@ for (const i of orden) {
   // Se muestra el PRODUCTO, no el SKU: hay pedidos con el SKU viejo pegado (el 23022 vende Pureza
   // con sku Natures-01b, 04/09/2026), y el código sale del título, que es el que dice la verdad.
   // Mostrar el SKU hacía dudar de un código que estaba bien.
-  console.log(`  ${String(it.code ?? "—").padEnd(4)} ${it.carrier.padEnd(7)} id:${String(it.pedidoId).padEnd(6)} ${String(it.producto ?? "?").padEnd(10)} ${it.unidades}u  ${it.cod ? "COD    " : "PREPAGO"}  ${it.sku !== it.producto ? `sku ${it.sku} ` : ""}${it.guia ?? ""}`);
+  console.log(`  ${String(it.code ?? "—").padEnd(4)} ${it.carrier.padEnd(7)} id:${String(it.pedidoId).padEnd(6)} ${String(it.producto ?? "?").padEnd(10)} ${it.unidades ?? "?"}u  ${it.cod ? "COD    " : "PREPAGO"}  ${it.sku !== it.producto ? `sku ${it.sku} ` : ""}${it.guia ?? ""}`);
 }
 const sinCode = items.filter((i) => !i.code);
-if (sinCode.length) console.log(`\n⚠️ ${sinCode.length} sin código (producto no reconocido): van al final, para revisar a mano.`);
+if (sinCode.length) {
+  console.log(`\n⚠️ ${sinCode.length} sin código: van al final, para revisar a mano.`);
+  for (const it of sinCode) console.log(`   #${it.order_number} (${it.carrier}/${it.pedidoId}): ${it.nota}`);
+}
 const prepago = items.filter((i) => !i.cod);
 if (prepago.length) {
   console.log(`\n⚠️ ${prepago.length} PREPAGO por un courier de contra entrega: la guía NO puede salir con valor de`);

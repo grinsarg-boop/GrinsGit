@@ -5,14 +5,13 @@
 //
 //   node --env-file=.env.local --import tsx scripts/reimprimir-urbano.mts --guias ~/Downloads/huerfanas-urbano-2026-09-18.csv
 //
-// Solo lectura: Supabase (producto y unidades) y Urbano (etiqueta). El PDF va a Descargas.
+// Solo lectura: Shopify (producto y unidades) y Urbano (etiqueta). El PDF va a Descargas.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import pg from "pg";
 import { buildPdf, sortOrder, type OutPage } from "../lib/label-prep.ts";
-import { productoCode, unidadesGuiadas } from "../lib/correo.ts";
-import { matchProduct } from "../lib/product-match.ts";
+import { codigoDeposito, pickingOrders } from "../lib/picking.ts";
+import { shopifyFetch } from "../lib/shopify.ts";
 
 const arg = (k: string) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] : undefined; };
 const csv = arg("guias");
@@ -23,28 +22,13 @@ const OUT_DIR = arg("out") ?? path.join(os.homedir(), "Downloads");
 // La guía es BLABS<nº de orden>[R<n>] (código propio desde 04/08/2026): el pedido sale de ahí.
 const ordenDe = (g: string) => g.replace(/^BLABS/, "").replace(/R\d+$/, "");
 
-const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-await db.connect();
-// Misma query que scripts/redespacho.mjs: producto y unidades físicas desde order_items.
-const { rows } = await db.query(
-  `select o.order_number, o.total,
-          (select sum(oi.pack) from order_items oi where oi.order_id = o.id) as unidades,
-          -- title_raw y no products.name: el matcher busca la keyword del título ("reafirmante"),
-          -- y el name canónico de M3 es "M3", que no matchea nada.
-          (select string_agg(distinct oi.title_raw, ' + ') from order_items oi where oi.order_id = o.id) as producto
-     from orders o where o.order_number = any($1::text[])`,
-  [guias.map(ordenDe)],
-);
-await db.end();
-const porOrden = new Map(rows.map((r) => [String(r.order_number), r]));
+// El código sale de Shopify por el mismo camino que /logistica?t=preparar (lib/picking.ts). Antes
+// salía de order_items, cuyo `pack` cuenta quantity y no ve los packs del bot de WhatsApp de
+// Veltron ("Lleva 3" con quantity 1 → P1 en vez de P3).
+const shopify = new Map((await pickingOrders([...new Set(guias.map(ordenDe))], shopifyFetch)).map((o) => [o.orden, o]));
 
-type It = { guia: string; producto: string | null; unidades: number | null; code: string | null };
-const items: It[] = guias.map((guia) => {
-  const r = porOrden.get(ordenDe(guia));
-  const producto = r ? matchProduct(String(r.producto ?? "")) : null;
-  const unidades = r ? unidadesGuiadas(producto, Number(r.unidades) || 0, Number(r.total)) || null : null;
-  return { guia, producto, unidades, code: producto && unidades ? productoCode({ producto, qty: unidades }) : null };
-});
+type It = { guia: string; producto: string | null; unidades: number | null; code: string | null; nota: string };
+const items: It[] = guias.map((guia) => ({ guia, ...codigoDeposito(shopify.get(ordenDe(guia))) }));
 
 const urlUrbano = (guia: string) =>
   `https://apis.urbano.com.ar/impresionEtiqueta/?tipo=Z10X15&shipper=${process.env.URBANO_SHIPPER ?? "4362"}&codSeguimiento=${encodeURIComponent(guia)}`;
@@ -72,7 +56,7 @@ fs.writeFileSync(destino, pdf);
 
 for (const i of orden) console.log(`  ${String(items[i].code ?? "—").padEnd(4)} ${items[i].guia}  ${items[i].producto ?? "?"} ${items[i].unidades ?? "?"}u`);
 const sinCode = orden.filter((i) => !items[i].code);
-if (sinCode.length) console.log(`\n⚠️ ${sinCode.length} sin código (producto no reconocido o sin ítems en la base): van al final.`);
+if (sinCode.length) console.log(`\n⚠️ ${sinCode.length} sin código, van al final:\n${sinCode.map((i) => `   ${items[i].guia}: ${items[i].nota}`).join("\n")}`);
 if (sinEstampar) console.log(`⚠️ ${sinEstampar} con geometría desconocida: sin estampar.`);
 if (fallidas.length) console.log(`✗ ${fallidas.length} no bajaron de Urbano: ${fallidas.join(", ")}`);
 console.log(`\netiquetas → ${destino} · ${orden.length} página(s)`);

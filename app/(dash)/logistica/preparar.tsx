@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { extractLabels, type Label, type LabelCourier } from "@/lib/label-picking";
 import { ResumenPicking } from "./resumen";
 import { buildPdf, sortOrder } from "@/lib/label-prep";
-import { productoCode, unidadesGuiadas } from "@/lib/correo";
+import { codigoDeposito } from "@/lib/picking";
 import { fetchOrders } from "./picking";
 import { download } from "./correo";
 import { Dropzone } from "@/components/ui/dropzone";
@@ -70,19 +70,9 @@ export function Preparar() {
           };
         }
         if (!l.orden) return { ...base, nota: "sin N° de pedido legible" };
-        const o = ord.get(l.orden);
-        // error (429/5xx) ≠ no existe: el primero se arregla reintentando, el segundo no.
-        if (!o || o.error) return { ...base, nota: "error al consultar Shopify — reintentá" };
-        if (!o.encontrado) return { ...base, nota: "no existe en Shopify" };
-        // Misma regla que pickProducto: solo si TODOS los ítems son el mismo producto (audit C#3).
-        const prods = [...new Set(o.items.map((i) => i.producto).filter(Boolean))] as string[];
-        const producto = prods.length === 1 ? prods[0] : null;
-        const unidades = producto ? unidadesGuiadas(producto, o.items.reduce((s, i) => s + i.unidades, 0), o.total) : null;
-        return {
-          ...base, producto, unidades,
-          code: productoCode({ producto, qty: unidades ?? 0 }) ?? "",
-          nota: producto ? "" : "carrito mixto o sin producto — poné el código a mano",
-        };
+        // El mismo cálculo que usan los scripts de etiquetas (lib/picking.ts).
+        const c = codigoDeposito(ord.get(l.orden));
+        return { ...base, producto: c.producto, unidades: c.unidades, code: c.code ?? "", nota: c.nota };
       });
 
       const todas = [...rows, ...nuevas];

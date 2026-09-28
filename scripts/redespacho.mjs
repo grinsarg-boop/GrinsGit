@@ -42,20 +42,26 @@ const { rows } = await db.query(
           o.raw->'shipping_address'->>'province'  as provincia,
           o.raw->>'email' as email,
           (select string_agg(oi.title_raw || ' x' || oi.qty, ' + ') from order_items oi where oi.order_id = o.id) as items,
-          -- indicador de depósito: inicial del producto + unidades (B2, B3, N2…). Carrito mixto → null.
-          -- Mismo formato que productoCode() en lib/correo.ts y que /logistica?t=preparar: hasta el
-          -- 09/08/2026 esto salía al revés (2B) y en el depósito convivían las dos lecturas.
-          (select case when count(distinct oi.product_id) = 1
-                       then upper(left(min(p.name), 1)) || sum(oi.pack)::text end
-             from order_items oi join products p on p.id = oi.product_id
-            where oi.order_id = o.id) as marca_deposito,
-          (select sum(oi.pack) from order_items oi where oi.order_id = o.id) as unidades,
           (select string_agg(distinct p.name, ' + ') from order_items oi join products p on p.id = oi.product_id
             where oi.order_id = o.id) as producto
      from orders o where o.order_number = any($1::text[]) order by o.order_number::int`,
   [PEDIDOS],
 );
 await db.end();
+// Código de depósito (S3 = Arraigo x3) y unidades: de Shopify por el mismo camino que
+// /logistica?t=preparar (lib/picking.ts, regla de Pancho del 28/09/2026). Antes salía de
+// order_items, cuyo `pack` cuenta quantity (no ve los packs del bot de Veltron: "Lleva 3" con
+// quantity 1 → P1) y con upper(left(name)), que a Arraigo le ponía A (es S: A es Altus).
+const { tsImport } = await import("tsx/esm/api");
+const { pickingOrders, codigoDeposito } = await tsImport("../lib/picking.ts", import.meta.url);
+const { shopifyFetch } = await tsImport("../lib/shopify.ts", import.meta.url);
+const shopify = new Map((await pickingOrders(PEDIDOS, shopifyFetch)).map((o) => [o.orden, o]));
+for (const o of rows) {
+  const c = codigoDeposito(shopify.get(o.order_number));
+  o.marca_deposito = c.code;
+  o.unidades = c.unidades;
+  if (!c.code) console.error(`⚠️ ${o.order_number}: sin código de depósito — ${c.nota}`);
+}
 const faltan = PEDIDOS.filter((p) => !rows.some((r) => r.order_number === p));
 if (faltan.length) { console.error("pedidos que no existen en la base:", faltan.join(",")); process.exit(1); }
 
@@ -235,7 +241,10 @@ fs.mkdirSync(OUT, { recursive: true });
 const stamp = new Date().toISOString().slice(0, 10);
 
 if (DRY) {
-  for (const o of rows) console.log(JSON.stringify(COURIER === "fixy" ? bodyFixy(o) : bodyUrbano(o), null, 1));
+  for (const o of rows) {
+    console.log(JSON.stringify(COURIER === "fixy" ? bodyFixy(o) : bodyUrbano(o), null, 1));
+    console.log(`# ${o.order_number} → código de depósito ${o.marca_deposito ?? "—"} (${o.unidades ?? "?"}u)`);
+  }
   console.log(`\n[dry] ${rows.length} pedido(s), NO se envió nada.`);
   process.exit(0);
 }
