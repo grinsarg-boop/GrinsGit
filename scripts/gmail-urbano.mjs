@@ -6,7 +6,8 @@
 //
 // En .env.local (gitignoreado): GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET y un
 // GMAIL_TOKEN_<ALIAS> por casilla, que escribe el propio --auth. El scope es gmail.readonly:
-// no puede mandar, borrar ni marcar nada.
+// no puede mandar, borrar ni marcar nada. Con `--auth <alias> --send` pide en cambio gmail.send (solo
+// mandar, no lee) y guarda GMAIL_SEND_TOKEN_<ALIAS>, que usa scripts/gmail-enviar.mjs.
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { readFileSync, appendFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -38,10 +39,12 @@ const token = async (body) => {
 
 if (process.argv.includes('--auth')) {
   const alias = arg('--auth')?.toUpperCase();
+  const send = process.argv.includes('--send');
+  const KEY = `GMAIL_${send ? 'SEND_' : ''}TOKEN_${alias}`;
   if (!alias || !CID) { console.error('uso: --auth <alias>  ·  y GOOGLE_OAUTH_CLIENT_ID/SECRET en .env.local'); process.exit(1); }
   const url = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams({
     client_id: CID, redirect_uri: REDIR, response_type: 'code', access_type: 'offline',
-    prompt: 'consent', scope: 'https://www.googleapis.com/auth/gmail.readonly',
+    prompt: 'consent', scope: `https://www.googleapis.com/auth/gmail.${send ? 'send' : 'readonly'}`,
   });
   // Tres formas de completar el consentimiento. La de abajo (servidor en localhost) es la cómoda,
   // pero solo sirve sentado en la Mac: Google redirige a http://localhost:8787 y eso únicamente
@@ -65,8 +68,8 @@ if (process.argv.includes('--auth')) {
     });
   const t = await token({ code, redirect_uri: REDIR, grant_type: 'authorization_code' });
   if (!t.refresh_token) { console.error('❌ Google no devolvió refresh_token — revocá el acceso y reintentá'); process.exit(1); }
-  appendFileSync(ENV, `\nGMAIL_TOKEN_${alias}=${t.refresh_token}\n`);
-  console.log(`✅ GMAIL_TOKEN_${alias} guardado en .env.local`);
+  appendFileSync(ENV, `\n${KEY}=${t.refresh_token}\n`);
+  console.log(`✅ ${KEY} guardado en .env.local`);
   process.exit(0);
 }
 
