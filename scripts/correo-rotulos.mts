@@ -14,6 +14,11 @@ import { buildPdf, sortOrder } from "../lib/label-prep.ts";
 
 // Igual que extractOrders de lib/correo-pdf.ts, pero esa resuelve el worker con import.meta.resolve,
 // que tsx no tiene; acá el worker se resuelve por require.
+// El SEGUIMIENTO de Correo es el TN (23 caracteres: "TN 000149421160E430TI8C101"). El "T&T HC…AR" es el
+// código de etiqueta: cargarlo en Veltron le mandó al cliente un seguimiento que no existe (28/09/2026,
+// 38 pedidos). Por eso el CSV para `importar_csv_guias` sale de acá, y sólo con TN.
+const TN = /\bTN\s+([0-9A-Z]{23})\b/;
+const tns: (string | null)[] = [];
 async function ordenesPorPagina(data: ArrayBuffer): Promise<(string | null)[]> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = createRequire(import.meta.url).resolve("pdfjs-dist/legacy/build/pdf.worker.min.mjs");
@@ -22,6 +27,7 @@ async function ordenesPorPagina(data: ArrayBuffer): Promise<(string | null)[]> {
   for (let i = 1; i <= doc.numPages; i++) {
     const text = (await (await doc.getPage(i)).getTextContent()).items.map((it) => ("str" in it ? it.str : "")).join(" ");
     out.push(text.match(/#(\d{4,6})/)?.[1] ?? null);
+    tns.push(text.match(TN)?.[1] ?? null);
   }
   return out;
 }
@@ -47,3 +53,14 @@ pages.forEach((p, i) => console.log(`  ${String(i + 1).padStart(3)}  #${ordenes[
 if (sinOrden) console.error(`⚠️ ${sinOrden} página(s) sin nº de pedido legible: van al final, sin código`);
 if (sinIndice) console.error(`⚠️ ${sinIndice} pedido(s) que no están en el índice: sin código`);
 if (sinEstampar) console.error(`⚠️ ${sinEstampar} sin estampar: geometría de página no reconocida`);
+
+// CSV para Veltron (`validar_csv_guias` → `importar_csv_guias`): referencia,carrier,guia = orden,correo,TN.
+const filas = ordenes.map((o, i) => ({ o, tn: tns[i] }));
+const malas = filas.filter((f) => !f.o || !f.tn || /^HC/i.test(f.tn));
+if (malas.length) {
+  console.error(`⛔ ${malas.length} página(s) sin #pedido o sin TN: NO se escribe el CSV de Veltron. Revisar a mano (nunca cargar el HC).`);
+  process.exit(1);
+}
+const csv = path.join(path.dirname(out), path.basename(out, ".pdf") + "-veltron-guias.csv");
+fs.writeFileSync(csv, "referencia,carrier,guia\n" + filas.map((f) => `${f.o},correo,${f.tn}`).join("\n") + "\n");
+console.log(`guías para Veltron (TN, no HC) → ${csv}`);

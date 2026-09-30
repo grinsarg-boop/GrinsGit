@@ -124,9 +124,9 @@ async function mcp(name: string, args: Record<string, unknown> = {}, intento = 1
   if (res.error) throw new Error(`${name}: ${res.error.message}`);
   const text = (res.result?.content ?? []).map((c: any) => c.text ?? "").join("");
   if (res.result?.isError) {
-    // El cupo DIARIO no se arregla esperando: reintentar es tiempo tirado y esconde el problema
-    // detrás de 60 errores iguales. Se corta la corrida entera y se dice qué hacer (04/09/2026:
-    // "Esta key ya usó el cupo diario de destructivas (60)" — un lote de noche son ~90).
+    // El cupo de 60 NO es diario aunque el 429 lo diga: es una ventana corta (medido 27/09/2026, ver Operaciones-COD:1633).
+    // Reintentar dentro de la misma corrida no sirve: se corta y los que faltan van en otra corrida
+    // (04/09/2026: un lote de noche son ~90; 27/09: 313 de Urbano → tandas de ≤60).
     if (/cupo diario/i.test(text)) throw new CupoAgotado(text.slice(0, 300));
     // El de 30 por minuto sí se arregla solo: puede haber otra sesión escribiendo con la misma key.
     if (/\b429\b|escrituras por minuto/i.test(text) && intento <= 3) {
@@ -256,7 +256,7 @@ if (DESPACHAR) {
       console.log(`  ✓ ${l.carrier}/${l.pedidoId} despachado`);
     } catch (e) {
       console.error(`  ✗ ${l.carrier}/${l.pedidoId}: ${(e as Error).message.replace(/\s+/g, " ").slice(0, 200)}`);
-      if (e instanceof CupoAgotado) { console.error("   🛑 cupo diario agotado: el resto se marca desde el panel o mañana."); break; }
+      if (e instanceof CupoAgotado) { console.error("   🛑 cupo de 60 agotado: esperar unos minutos y correr de nuevo con el resto."); break; }
     }
   }
   console.log(`\n${ok}/${listos.length} marcados despachados (y avisados por WhatsApp).`);
@@ -283,12 +283,18 @@ for (const [carrier, ids] of Object.entries(lote)) {
   const porId = new Map<number, any>();
   // Incluye los estados posteriores porque rehacer un PDF pasa justamente después: si el pedido ya
   // salió, su etiqueta se sigue necesitando (se perdió, se rompió, hay que reimprimirla).
-  for (const estado of [["confirmado"], ["preparando"], ["despachado"], ["en_camino"]]) {
-    for (let page = 1, paginas = 1; page <= paginas && page <= 20; page++) {
-      const r = await mcp("listar_pedidos", { carrier, estado, preset: "custom", desde, hasta: hoy, page, page_size: 100 });
-      paginas = Number(r.paginas ?? 1);
-      for (const p of r.pedidos ?? []) porId.set(p.id, p);
+  // 29/09/2026: listar_pedidos tira 400 "Vista inválida" (bug de Veltron). Si falla, todo sale por
+  // el ver_pedido de a uno de abajo: más lento, pero el lote sale.
+  try {
+    for (const estado of [["confirmado"], ["preparando"], ["despachado"], ["en_camino"]]) {
+      for (let page = 1, paginas = 1; page <= paginas && page <= 20; page++) {
+        const r = await mcp("listar_pedidos", { carrier, estado, preset: "custom", desde, hasta: hoy, page, page_size: 100 });
+        paginas = Number(r.paginas ?? 1);
+        for (const p of r.pedidos ?? []) porId.set(p.id, p);
+      }
     }
+  } catch (e: any) {
+    console.error(`  ⚠️ ${carrier}: listar_pedidos falló (${String(e.message).slice(0, 80)}) — se sigue con ver_pedido de a uno`);
   }
   for (const pedidoId of ids) {
     // ver_pedido devuelve el pedido en el nivel de arriba, NO envuelto en `.pedido` (verificado
@@ -394,8 +400,8 @@ for (let k = 0; k < enOrden.length; k += CONCURRENCIA) {
     }
   }));
   if (cupoAgotado) {
-    console.error(`\n🛑 Se agotó el cupo diario de escrituras de la API key. Las ${enOrden.length - guias.size} guías que faltan NO se van a poder crear hoy por API.`);
-    console.error(`   Se siguen desde el panel de Veltron, o se le pide a Veltron que amplíe el cupo de la key.`);
+    console.error(`\n🛑 Se agotó el cupo de 60 escrituras de la API key (ventana corta, no diaria). Las ${enOrden.length - guias.size} guías que faltan salen esperando unos minutos y corriendo el script de nuevo con esos pedidos.`);
+    console.error(`   Para lotes grandes, pasar --pedidos en tandas de ≤60 desde el arranque.`);
     console.error(`   Lo que ya tiene guía sigue igual: el PDF sale con eso y el resto queda anotado abajo.`);
     break;
   }
@@ -528,8 +534,12 @@ if (pages.length) {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   // Nunca pisar un PDF que ya existe: en un mismo día hay más de una tanda (la de la mañana y la de
   // la noche), y el 04/09/2026 la segunda corrida borró la primera. Cada tanda es un archivo.
-  let destino = path.join(OUT_DIR, `despacho-${stamp}.pdf`);
-  for (let n = 2; fs.existsSync(destino); n++) destino = path.join(OUT_DIR, `despacho-${stamp}-${n}.pdf`);
+  // Nombre "Fixy - 27-09-2026.pdf" (pedido de Pancho 27/09/2026); lote mixto → "Fixy + Urbano - …".
+  const couriers = [...new Set(pages.map((pg) => String(pg.courier)))].sort()
+    .map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(" + ");
+  const base = `${couriers} - ${stamp.split("-").reverse().join("-")}`;
+  let destino = path.join(OUT_DIR, `${base}.pdf`);
+  for (let n = 2; fs.existsSync(destino); n++) destino = path.join(OUT_DIR, `${base} (${n}).pdf`);
   fs.writeFileSync(destino, pdf);
   // Índice al lado del PDF: qué pedido, qué guía y qué código hay en cada página. Sin esto, el mapa
   // vive sólo en el log de la corrida y rearmar o reordenar el PDF depende de no haberlo perdido

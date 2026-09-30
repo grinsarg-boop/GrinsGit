@@ -264,6 +264,10 @@ const avisos = [];
 const desde = new Date(Date.parse(`${HOY}T12:00:00Z`) - 120 * 86_400_000).toISOString().slice(0, 10);
 for (const c of CARRIERS) {
   const pendientes = [];
+  // El 29/09/2026 `listar_pedidos` empezó a tirar 400 "Vista inválida" para todo carrier (bug de
+  // Veltron con el param nuevo `vista`, ni con vista:null pasa). Un error cuenta como "vino vacío":
+  // cae a la red de seguridad de abajo en vez de voltear la noche entera.
+  try {
   for (let page = 1, paginas = 1; page <= paginas && page <= 20; page++) {
     const r = await mcp("listar_pedidos", {
       carrier: c.key, estado: ["confirmado"], preset: "custom", desde, hasta: HOY, page, page_size: 100,
@@ -276,6 +280,10 @@ for (const c of CARRIERS) {
       detalle.set(`${c.key}:${p.id}`, p);
       pendientes.push({ id: p.id, shopify_order_number: p.shopify_order_number, cliente_nombre: p.cliente_nombre, cliente_cp: p.cliente_cp, cliente_provincia: p.cliente_provincia });
     }
+  }
+  } catch (e) {
+    avisos.push(`${c.nombre}: listar_pedidos falló (${String(e.message).slice(0, 80)})`);
+    pendientes.length = 0;
   }
   cola[c.key] = pendientes;
 

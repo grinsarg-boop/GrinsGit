@@ -62,6 +62,7 @@ datos/
 
 # hora en que se generó cada etiqueta (números de pedido reales)
 /.despacho-etiquetas.json
+/.stock-etiquetas.json
 
 # PDFs y CSVs de etiquetas: nombre, dirección y teléfono de clientes reales
 /etiquetas/
