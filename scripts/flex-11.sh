@@ -1,15 +1,15 @@
 #!/bin/bash
-# Etiquetas ML de la mañana (Pancho, 30/09/2026). launchd lo corre cada 15 min de 8:00 a 11:00
+# Etiquetas ML de la mañana (Pancho, 30/09/2026). launchd lo corre cada 15 min de 8:00 a 10:45 y a las 11:01
 # (~/Library/LaunchAgents/local.flex-11.plist, log ~/.claude/flex-11.log). Genera cuando pasa lo primero:
 #   · se llegó al tope diario de Flex (FLEX_TOPE en .env.local): ML ya no vende más Flex para hoy, así que
 #     no tiene sentido esperar al corte. Se cuentan TODAS las Flex que vencen hoy, impresas o no.
-#   · son las 11, la hora de corte.
+#   · son las 11:01, la hora de corte (no 11:00: entran ventas a las 11 en punto y se perdían).
 # Cuando genera, pide las Flex Y las drop-off que vencen hoy y siguen sin imprimir (una venta de la noche),
 # cada modo en su PDF (nunca mezclados), las ordena y estampa (ml-ordenar.mts) y las pasa por
 # etiquetas-mail.mjs (detalle + descuento de stock + mail). Lo ya impreso no se vuelve a pedir, así que
 # las corridas siguientes sin nada nuevo no hacen nada.
 # ML no expone el tope por API (probado 30/09/2026: /flex/.../configurations da 404): el número se copia
-# del panel de Flex. Sin FLEX_TOPE, genera sólo a las 11.
+# del panel de Flex. Sin FLEX_TOPE, genera sólo a las 11:01.
 #   scripts/flex-11.sh            # corrida normal
 #   DRY=1 scripts/flex-11.sh      # muestra qué pediría, no imprime nada
 #   AHORA=1 scripts/flex-11.sh    # genera ya, sin esperar tope ni corte
@@ -38,7 +38,7 @@ suma() { { sed -nE '/^a pedir/{s/[^:]*: //;p;}' | grep -oE ": [0-9]+" | tr -dc '
 FLEX_HOY=$(node scripts/ml-etiquetas.mjs --incluir-impresos --modo=flex --hasta="$HOY" | suma)
 FLEX_HOY=${FLEX_HOY:-0}
 echo "=== $(AR '+%F %H:%M') · Flex que vencen hoy: $FLEX_HOY${FLEX_TOPE:+ de $FLEX_TOPE}"
-if [[ -z ${AHORA:-} && $HORA < 1100 ]] && { [[ -z ${FLEX_TOPE:-} ]] || (( FLEX_HOY < FLEX_TOPE )); }; then
+if [[ -z ${AHORA:-} && $HORA < 1101 ]] && { [[ -z ${FLEX_TOPE:-} ]] || (( FLEX_HOY < FLEX_TOPE )); }; then
   echo "todavía no: ni tope ni corte"; exit 0
 fi
 if [[ -n ${DRY:-} ]]; then node scripts/ml-etiquetas.mjs --hasta="$HOY"; exit 0; fi
@@ -55,5 +55,11 @@ for MODO in flex dropoff; do
   npx tsx scripts/ml-ordenar.mts "$FINAL" "${FINAL%.pdf}.json" "${CRUDOS[@]}"
   PDFS+=("$FINAL")
 done
+# PDFs sueltos del día que viajan en este mail (reenvíos de AC, rótulos de Correo; ya ordenados y
+# estampados): se dejan en Descargas como "<Courier …> - DD-MM-YYYY - mail 11.pdf" (el nombre lleva el
+# courier: etiquetas-mail lo lee de ahí). Mandados una vez, se renombran para no repetirlos.
+EXTRA=("$HOME/Downloads/"*" - $(AR +%d-%m-%Y) - mail 11.pdf")
+(( ${#EXTRA[@]} )) && PDFS+=("${EXTRA[@]}")
 (( ${#PDFS[@]} )) || { echo "nada pendiente para hoy"; exit 0; }
 node scripts/etiquetas-mail.mjs "${PDFS[@]}"
+for f in ${EXTRA[@]+"${EXTRA[@]}"}; do mv "$f" "${f%.pdf} (mandado).pdf"; done

@@ -95,7 +95,7 @@ function bodyFixy(o, intento = 1) {
   const { calle, altura } = partirDireccion(o.direccion);
   return {
     codigo_sucursal: process.env.FIXY_SUCURSAL,
-    codigo_servicio: process.env.FIXY_SERVICIO,
+    codigo_servicio: String(process.env.FIXY_SERVICIO ?? "").padStart(3, "0"), // "2" del .env → "002": Fixy rechaza "2" (01/10/2026), Veltron usa "002" en el 100%
     internacional: false, isInversa: false, is_urgente: false,
     pago_en: "ORIGEN",           // el flete lo paga BioLabs; el cliente solo paga el contrareembolso
     tipo_operacion: "ENTREGA",
