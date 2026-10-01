@@ -8,6 +8,12 @@
 //
 // Uso: node scripts/marginal.mjs [ventana_dias]           → 7v7 + regresión
 //      node scripts/marginal.mjs [dias] --desde 2026-08-29 → lee un escalón desde su día 1
+//      ... --incluir-todo → sin el filtro de abajo, para comparar
+//
+// Filtro por defecto (29/09/2026, Plan 100M A01-R2-T1): solo R2 y R3, y afuera las campañas de
+// Dusty Rose (proyecto de la madre, reintegra el saldo: no es costo de BioLabs) y ARRAIGO
+// (ROJO, pausado el 27/09), con sus pedidos (product_id 8). El gate del 25/09 se lee "sin
+// Dusty ni ARRAIGO"; sumarlos ensucia el marginal del sistema.
 //
 // Techo: $9.000. Sale del MC de $14.000 por pedido despachado (post producto/flete/comisión,
 // con tasa de entrega proyectada adentro) menos los $5.000 que se exigen de neto. El $4.400
@@ -20,6 +26,11 @@ const url = readFileSync('.env.local', 'utf8').match(/^DATABASE_URL=(.+)$/m)[1].
 const dias = Number(process.argv[2] ?? 7);
 const iDesde = process.argv.indexOf('--desde');
 const desde = iDesde > -1 ? process.argv[iDesde + 1] : null;
+const todo = process.argv.includes('--incluir-todo');
+const CUENTAS = `'act_880189106877616','act_1569698667101520'`;   // R2, R3
+const ARRAIGO = 8;
+const filtroGasto = todo ? 'true' : `account_id in (${CUENTAS}) and campaign_name !~* '(dusty|arraigo)'`;
+const filtroPedido = todo ? 'true' : `not exists (select 1 from order_items i where i.order_id = orders.id and i.product_id = ${ARRAIGO})`;
 
 const c = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
 await c.connect();
@@ -27,8 +38,8 @@ await c.connect();
 const { rows } = await c.query(`
   with o as (
     select (created_at at time zone 'America/Argentina/Buenos_Aires')::date d, count(*) n
-    from orders where cancelled_at is null group by 1
-  ), s as (select date d, sum(spend_real) g from v_ad_spend group by 1)
+    from orders where cancelled_at is null and ${filtroPedido} group by 1
+  ), s as (select date d, sum(spend_real) g from v_ad_spend where ${filtroGasto} group by 1)
   select to_char(s.d,'YYYY-MM-DD') dia, coalesce(o.n,0)::int n, s.g::float g
   from s left join o on o.d = s.d
   where s.d < (now() at time zone 'America/Argentina/Buenos_Aires')::date
@@ -38,6 +49,7 @@ await c.end();
 const ars = (n) => '$' + Math.round(n).toLocaleString('es-AR');
 const cpa = (g, n) => (n > 0 ? g / n : Infinity);
 const sum = (a, k) => a.reduce((s, x) => s + x[k], 0);
+console.log(todo ? '\n(--incluir-todo: todas las cuentas y campañas)' : '\n(sin Dusty Rose ni ARRAIGO; solo R2+R3 — --incluir-todo para comparar)');
 
 if (desde) {
   const post = rows.filter((r) => r.dia >= desde);
