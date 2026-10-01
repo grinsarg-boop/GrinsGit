@@ -2,7 +2,7 @@
 --
 -- Al 01/10/2026 las preguntas se contestaban a mano con una mediana de ~21 h (de 20 min a 71 h, medido
 -- sobre las últimas 30 respondidas), y los reclamos se miraban cuando alguien se acordaba. /api/monitor/ml-postventa
--- corre cada 10 min: decide cada pregunta (responder / borrar / escalar / ignorar) y fotografía cada
+-- corre una vez por hora: decide cada pregunta (responder / borrar / escalar / ignorar) y fotografía cada
 -- reclamo abierto. Esta tabla es su memoria — para no volver a decidir la misma pregunta en cada corrida —
 -- y la fuente del aviso: el workflow salud lee `cambio_at` y falla (→ mail) con lo nuevo de la última hora.
 

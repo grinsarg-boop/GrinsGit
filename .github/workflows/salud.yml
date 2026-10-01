@@ -137,11 +137,11 @@ jobs:
             exit 1
           fi
 
-      # Agente de post-venta de ML (migración 102; /api/monitor/ml-postventa corre cada 10 min desde
+      # Agente de post-venta de ML (migración 102; /api/monitor/ml-postventa corre a las :50 de cada hora desde
       # vercel.json). Falla (→ mail) con lo que le pide algo a Pancho y apareció en la última hora:
       # preguntas en borrador o escaladas, errores al publicar, reclamos nuevos o que cambiaron de
       # etapa/acciones, y reclamos a 48 h de vencer una acción obligatoria. Lo ya avisado no repite.
-      # También falla si el agente lleva más de 30 min sin correr (no está en salud_sistema()).
+      # También falla si el agente lleva más de 75 min sin correr (no está en salud_sistema()).
       - name: Post-venta ML (preguntas y reclamos)
         if: always()
         env:
@@ -165,7 +165,7 @@ jobs:
             union all
             select 'el agente no corre desde ' || coalesce(to_char(max(started_at) at time zone 'America/Argentina/Buenos_Aires', 'DD/MM HH24:MI'), 'nunca')
             from sync_runs where connector = 'ml-postventa'
-            having coalesce(max(started_at), 'epoch') < now() - interval '30 minutes'
+            having coalesce(max(started_at), 'epoch') < now() - interval '75 minutes'
           " > postventa.txt
 
           {

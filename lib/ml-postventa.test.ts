@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { candadoSalida, huellaReclamo, ORIGINALIDAD, reglaFija } from "./ml-postventa";
 
 describe("reglaFija (reglas de Pancho 21/09 y 30/09/2026)", () => {
-  it("ANMAT / RNPA / Factura A → ignorar, aunque también pregunte por originalidad", () => {
-    for (const q of ["Esta avalado por anmat?", "Está autorizado por Anmat ?", "Es el original? Esta aprobado x ANMAT?", "Hacen factura A ?"])
-      expect(reglaFija(q)?.accion).toBe("ignorar");
+  it("ANMAT / RNPA → borrar (01/10), aunque también pregunte por originalidad", () => {
+    for (const q of ["Esta avalado por anmat?", "Está autorizado por Anmat ?", "Es el original? Esta aprobado x ANMAT?", "Tiene RNPA?"])
+      expect(reglaFija(q)?.accion).toBe("borrar");
+  });
+  it("Factura A → ignorar (21/09)", () => {
+    expect(reglaFija("Hacen factura A ?")?.accion).toBe("ignorar");
   });
   it("originalidad → texto fijo, nunca 'es el original'", () => {
     expect(reglaFija("Si es original")).toMatchObject({ accion: "responder", texto: ORIGINALIDAD });

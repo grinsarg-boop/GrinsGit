@@ -18,8 +18,11 @@ export type Decision = { accion: Accion; texto: string; motivo: string };
 export const ORIGINALIDAD =
   "¡Hola! Este producto lo elaboramos y despachamos nosotros. No tenemos relación con otras páginas que venden productos con nombre parecido. Cualquier duda, escribinos.";
 
-// Regla 21/09/2026: se ignoran sin responder (ANMAT/RNPA, "cambiaron la fórmula", Factura A).
-const IGNORAR = /anmat|rnpa|registro sanitario|cambiaron la f[oó]rmula|factura\s*a\b/i;
+// ANMAT/RNPA/"cambiaron la fórmula": se ignoraban (regla 21/09) y quedaban sin responder para siempre,
+// pesando en el tiempo de respuesta → desde el 01/10/2026 se BORRAN (decisión de Pancho). Factura A
+// sigue ignorándose (regla 21/09, no se revisó).
+const BORRAR = /anmat|rnpa|registro sanitario|cambiaron la f[oó]rmula/i;
+const IGNORAR = /factura\s*a\b/i;
 const ORIGINAL = /original|trucho|imitaci[oó]n|falsificad|r[eé]plica/i;
 // "compré y me llegó distinto" no es una duda de originalidad, es post-venta: la decide el modelo (escala).
 const YA_COMPRO = /compr[eé]|me lleg[oó]|recib[ií]|mi pedido|devol|reembols/i;
@@ -34,7 +37,8 @@ const PROHIBIDO_EN_RESPUESTA = [
 
 // Candado de entrada: lo que se decide sin preguntarle al modelo.
 export function reglaFija(pregunta: string): Decision | null {
-  if (IGNORAR.test(pregunta)) return { accion: "ignorar", texto: "", motivo: "regla 21/09: ANMAT/RNPA/fórmula/Factura A no se responde" };
+  if (BORRAR.test(pregunta)) return { accion: "borrar", texto: "", motivo: "regla 01/10: ANMAT/RNPA/fórmula se borra" };
+  if (IGNORAR.test(pregunta)) return { accion: "ignorar", texto: "", motivo: "regla 21/09: Factura A no se responde" };
   if (ORIGINAL.test(pregunta) && !YA_COMPRO.test(pregunta)) return { accion: "responder", texto: ORIGINALIDAD, motivo: "regla 30/09: originalidad, texto fijo" };
   return null;
 }

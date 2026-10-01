@@ -5,6 +5,6 @@
     { "path": "/api/sync/ml?days=3&enrich=300", "schedule": "45 */4 * * *" },
     { "path": "/api/sync/ml?days=0.25&enrich=60&light=1", "schedule": "*/15 * * * *" },
     { "path": "/api/monitor/ad-review", "schedule": "0 10 * * *" },
-    { "path": "/api/monitor/ml-postventa", "schedule": "2-59/10 * * * *" }
+    { "path": "/api/monitor/ml-postventa", "schedule": "50 * * * *" }
   ]
 }
