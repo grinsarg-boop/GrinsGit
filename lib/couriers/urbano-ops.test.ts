@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRescateBody, rescateUrbano } from "./urbano-ops";
+import { buildRescateBody, parseRescateResponse, rescateUrbano } from "./urbano-ops";
 
 // El body operativo se manda tal cual a Urbano: si el shape se desalinea, redirige mal un envío real.
 // Este check fija el contrato (sin red, sin env). auth NO va acá (se agrega server-side en el envío).
@@ -44,4 +44,24 @@ describe("buildRescateBody", () => {
 it("rescateUrbano apunta a POST /rescate/ (doc 06-03-2026), no a /wbs/rescate/", async () => {
   const r = await rescateUrbano({ tipo: "devolucion", piece: "BLABS1" }, { dryRun: true });
   expect(r.dryRun && new URL(r.url).pathname).toBe("/rescate/");
+});
+
+// Respuesta real del primer rescate (BLABS27078, 01/10/2026). Antes se leía `json.status` → "unknown",
+// y un rejected se mostraba como "OK".
+describe("parseRescateResponse", () => {
+  const real = { success: true, message: "OK", code: 200, details: {
+    succeeded: [{ piece: "BLABS27078", message: "Solicitud de rescate de Redireccion generada correctamente" }],
+    rejected: [], failed: [], errors: [] } };
+  it("succeeded sale del bucket de details", () => {
+    expect(parseRescateResponse(real, 200)).toEqual({
+      status: "succeeded", message: "Solicitud de rescate de Redireccion generada correctamente" });
+  });
+  it("rejected con HTTP 200 NO es éxito", () => {
+    const r = { ...real, details: { ...real.details, succeeded: [], rejected: [{ piece: "X", message: "ya tiene rescate" }] } };
+    expect(parseRescateResponse(r, 200)).toEqual({ status: "rejected", message: "ya tiene rescate" });
+  });
+  it("sin details (auth) → failed con el message", () => {
+    expect(parseRescateResponse({ success: false, message: "Se requiere autentificacion" }, 400))
+      .toEqual({ status: "failed", message: "Se requiere autentificacion" });
+  });
 });

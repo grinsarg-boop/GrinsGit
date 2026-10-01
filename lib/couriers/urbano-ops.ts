@@ -4,7 +4,9 @@
 // Doc (integrate.urbano.com.ar/docs/api/es, "Rescate de Órdenes", 06-03-2026): POST /rescate/
 // (testing: testing-apis.urbano.com.ar/rescate/). Hasta el 30/09/2026 apuntaba a /wbs/rescate/, que
 // da 404 → el botón de /trabados nunca funcionó. Body { auth:{shipper,password}, pieces:[..],
-// tipoRescate, destinatario?, domicilio? }; respuesta { status: "succeeded|rejected|failed", message }.
+// tipoRescate, destinatario?, domicilio? }. Respuesta REAL (BLABS27078, 01/10/2026, primer uso):
+// { success, message:"OK", code, details:{ succeeded:[{piece,message}], rejected:[], failed:[], errors:[] } }
+// → el resultado vive en el bucket de details, NO en un campo `status` (ver parseRescateResponse).
 // `pieces` = códigos de SEGUIMIENTO (codigoSeguimiento: BLABS<order_number>, o el shopify_id para
 // despachos hasta el 03/08 — ver urbano.ts), no la guía. Una pieza acepta UN solo rescate.
 const API_BASE = (process.env.URBANO_API_URL ?? "https://apis.urbano.com.ar/").replace(/\/$/, "");
@@ -50,11 +52,19 @@ export async function rescateUrbano(input: RescateInput, opts?: { dryRun?: boole
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ auth, ...body }),
   });
-  const json = (await res.json().catch(() => ({}))) as { status?: string; message?: string };
-  return {
-    dryRun: false,
-    httpOk: res.ok,
-    status: String(json.status ?? (res.ok ? "unknown" : "failed")),
-    message: String(json.message ?? `HTTP ${res.status}`),
-  };
+  const json = await res.json().catch(() => ({}));
+  return { dryRun: false, httpOk: res.ok, ...parseRescateResponse(json, res.status) };
+}
+
+type Bucket = { piece?: string; message?: string };
+// El estado de la pieza = el bucket de details donde aparece. Sin bucket (auth, 4xx/5xx, shape nuevo)
+// → "failed" con el message de arriba: nunca "succeeded" por default.
+export function parseRescateResponse(json: unknown, httpStatus: number): { status: string; message: string } {
+  const j = (json ?? {}) as { message?: string; details?: Record<string, Bucket[] | unknown[]> };
+  for (const status of ["succeeded", "rejected", "failed"] as const) {
+    const hit = j.details?.[status]?.[0] as Bucket | undefined;
+    if (hit) return { status, message: String(hit.message ?? j.message ?? "") };
+  }
+  const err = j.details?.errors?.[0];
+  return { status: "failed", message: String((err && JSON.stringify(err)) ?? j.message ?? `HTTP ${httpStatus}`) };
 }
