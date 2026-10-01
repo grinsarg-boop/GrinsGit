@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRescateBody } from "./urbano-ops";
+import { buildRescateBody, rescateUrbano } from "./urbano-ops";
 
 // El body operativo se manda tal cual a Urbano: si el shape se desalinea, redirige mal un envío real.
 // Este check fija el contrato (sin red, sin env). auth NO va acá (se agrega server-side en el envío).
@@ -38,4 +38,10 @@ describe("buildRescateBody", () => {
       pieces: ["231556548"], tipoRescate: "devolucion",
     });
   });
+});
+
+// /wbs/rescate/ da 404 (medido 30/09/2026): el botón de /trabados falló siempre sin que nada lo marcara.
+it("rescateUrbano apunta a POST /rescate/ (doc 06-03-2026), no a /wbs/rescate/", async () => {
+  const r = await rescateUrbano({ tipo: "devolucion", piece: "BLABS1" }, { dryRun: true });
+  expect(r.dryRun && new URL(r.url).pathname).toBe("/rescate/");
 });

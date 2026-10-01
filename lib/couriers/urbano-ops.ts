@@ -1,11 +1,14 @@
-// Acciones OPERATIVAS de Urbano (POST /wbs/rescate/). Separado a propósito del adapter de tracking
+// Acciones OPERATIVAS de Urbano (POST /rescate/). Separado a propósito del adapter de tracking
 // (urbano.ts, read-only): el guardrail de .env.example permite operaciones SOLO desde flujos
 // explícitos, server-side, confirmados y logueados — NUNCA desde el sync ni el browser.
-// Doc (integrate.urbano.com.ar): body { auth:{shipper,password}, pieces:[..], tipoRescate,
-// destinatario?, domicilio? }; respuesta { status: "succeeded|rejected|failed", message }.
-// OJO: `pieces` puede ser la guía de Urbano o el codigoSeguimiento — validar en el primer uso real.
+// Doc (integrate.urbano.com.ar/docs/api/es, "Rescate de Órdenes", 06-03-2026): POST /rescate/
+// (testing: testing-apis.urbano.com.ar/rescate/). Hasta el 30/09/2026 apuntaba a /wbs/rescate/, que
+// da 404 → el botón de /trabados nunca funcionó. Body { auth:{shipper,password}, pieces:[..],
+// tipoRescate, destinatario?, domicilio? }; respuesta { status: "succeeded|rejected|failed", message }.
+// `pieces` = códigos de SEGUIMIENTO (codigoSeguimiento: BLABS<order_number>, o el shopify_id para
+// despachos hasta el 03/08 — ver urbano.ts), no la guía. Una pieza acepta UN solo rescate.
 const API_BASE = (process.env.URBANO_API_URL ?? "https://apis.urbano.com.ar/").replace(/\/$/, "");
-const RESCATE_URL = `${API_BASE}/wbs/rescate/`;
+const RESCATE_URL = `${API_BASE}/rescate/`;
 
 export type Domicilio = {
   direccion: string; altura: string; codigoPostal: string; localidad: string; provincia: string;

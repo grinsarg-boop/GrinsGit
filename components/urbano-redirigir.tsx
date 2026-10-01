@@ -6,11 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { redirigirUrbano } from "@/app/(dash)/trabados/actions";
 
-// Redirección de una pieza Urbano en tránsito a una dirección corregida (wbs/rescate). Dos pasos:
+// Redirección de una pieza Urbano en tránsito a una dirección corregida (POST /rescate/). Dos pasos:
 // "Previsualizar" muestra el JSON EXACTO que se envía (sin password); "Confirmar y enviar" recién
 // ahí llama la API. Editar un campo borra el preview → obliga a re-previsualizar antes de mandar.
 const FIELDS: readonly (readonly [string, string])[] = [
-  ["piece", "Guía / código de pieza"], ["nombre", "Destinatario (nombre)"],
+  ["piece", "Código de seguimiento (BLABS…)"], ["nombre", "Destinatario (nombre)"],
   ["direccion", "Calle"], ["altura", "Altura"], ["codigoPostal", "CP (4 dígitos)"],
   ["localidad", "Localidad"], ["provincia", "Provincia"],
   ["piso", "Piso (opc.)"], ["departamento", "Depto (opc.)"], ["observaciones", "Observaciones (opc.)"],
@@ -54,9 +54,9 @@ export function UrbanoRedirigir() {
       <CardContent className="space-y-3 pt-6">
         <div className="text-sm font-medium">Redirigir dirección (Urbano)</div>
         <p className="text-xs text-muted-foreground">
-          Redirige una pieza <b>en tránsito</b> a una dirección corregida (wbs/rescate). Previsualizás
-          el envío exacto y recién ahí confirmás. <b>Piece = número de guía de Urbano</b> — confirmá cuál
-          identificador acepta en el primer uso real.
+          Redirige una pieza <b>en tránsito</b> a una dirección corregida. Previsualizás
+          el envío exacto y recién ahí confirmás. <b>Va el código de seguimiento</b> (BLABS + nº de pedido;
+          despachos hasta el 03/08: el id de Shopify), no la guía. <b>Una pieza acepta UN solo rescate.</b>
         </p>
 
         <div className="grid grid-cols-2 gap-2">

@@ -2,7 +2,7 @@
 
 import { rescateUrbano, type Domicilio, type RescateInput } from "@/lib/couriers/urbano-ops";
 
-// Redirección de una pieza Urbano en tránsito (wbs/rescate). Server action → pasa por el middleware
+// Redirección de una pieza Urbano en tránsito (POST /rescate/). Server action → pasa por el middleware
 // de auth (solo mails permitidos) y la password nunca toca el browser. Dos pasos DELIBERADOS: sin
 // `confirmar` devuelve el PREVIEW exacto (sin password) para revisar; con `confirmar` recién ahí
 // envía de verdad y loguea. Nunca se dispara una operación sin que el operador vea el preview.
@@ -14,7 +14,7 @@ export type RedirResult =
 export async function redirigirUrbano(fd: FormData): Promise<RedirResult> {
   const s = (k: string) => String(fd.get(k) ?? "").trim();
   const piece = s("piece");
-  if (!piece) return { ok: false, error: "Falta el código de la pieza (guía)." };
+  if (!piece) return { ok: false, error: "Falta el código de seguimiento (BLABS<nº de pedido>)." };
 
   const dom: Domicilio = {
     direccion: s("direccion"), altura: s("altura"), codigoPostal: s("codigoPostal"),
