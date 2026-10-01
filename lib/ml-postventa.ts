@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { getMlAccessToken } from "@/lib/ml";
+import { getMlAccessToken, parseMlPack } from "@/lib/ml";
 import { supabaseAdmin } from "@/lib/supabase";
 
 // Agente de post-venta de ML (migración 102): contesta / borra / escala preguntas pre-venta y
@@ -108,16 +108,84 @@ async function decidirConModelo(client: Anthropic, contexto: string, pregunta: s
 
 type Pregunta = { id: number; item_id: string; text: string; date_created: string };
 type Reclamo = {
-  id: number; resource_id: number; type: string; stage: string; status: string; reason_id: string;
+  id: number; resource: string; resource_id: number; type: string; stage: string; status: string;
+  reason_id: string; quantity_type?: string;
   players?: { type: string; available_actions?: { action: string; due_date?: string | null; mandatory?: boolean }[] }[];
 };
+type Mensaje = { sender_role: string; message?: string; date_created: string };
 
-// Huella de un reclamo: cuando cambia (etapa, estado o lo que el vendedor puede/debe hacer), avisa.
-export function huellaReclamo(c: Reclamo): { estado: string; vence: string | null } {
+// Huella de un reclamo: cuando cambia (etapa, estado, lo que el vendedor puede/debe hacer o un mensaje
+// nuevo del mediador), se analiza de nuevo y avisa. En `dispute` el mediador es el bot de ML: cada
+// mensaje suyo es una pregunta o un menú que espera respuesta.
+export function huellaReclamo(c: Reclamo, ultimoMediador = ""): { estado: string; vence: string | null } {
   const acciones = c.players?.find((p) => p.type === "seller")?.available_actions ?? [];
   const obligatorias = acciones.filter((a) => a.mandatory && a.due_date).map((a) => a.due_date!).sort();
   const nombres = acciones.map((a) => a.action + (a.mandatory ? "!" : "")).sort().join(",");
-  return { estado: `${c.stage}|${c.status}|${nombres}`, vence: obligatorias[0] ?? null };
+  return { estado: `${c.stage}|${c.status}|${nombres}|${ultimoMediador}`, vence: obligatorias[0] ?? null };
+}
+
+// Rotos: 9972/9946 = embalaje sano (afectó la reputación 17 de 18 veces), 9973/9947 = embalaje dañado
+// (21 de 21 sin afectar). docs/ml-claims-api-2026-10-01.md §1 y §4.
+export const ROTO = new Set(["PDD9972", "PDD9973", "PDD9946", "PDD9947"]);
+
+// Número de opción del menú del bot mediador ("4. **Reembolso parcial sin devolución** — …").
+export function opcionDelMenu(menu: string, tipo: "parcial" | "total"): number | null {
+  const m = menu.match(new RegExp(`^\\s*(\\d+)\\.\\s*\\*\\*Reembolso ${tipo} sin devoluci[oó]n\\*\\*`, "im"));
+  return m ? Number(m[1]) : null;
+}
+
+// Regla de Pancho (01/10/2026) para rotos: reintegro SIN devolución por la proporción de frascos rotos
+// (1 de 2 → 50%) y pelea por la reputación culpando al transporte. La elección va PRIMERO en el mensaje:
+// el bot ejecuta la primera opción que entiende y cada mensaje es una decisión irreversible (§3).
+export function planRoto(rotos: number, total: number, menu: string): { texto: string; pct: number } | { escalar: string } {
+  if (!Number.isInteger(rotos) || rotos < 1 || rotos > total) return { escalar: `no se pudo leer cuántos frascos rotos (${rotos} de ${total})` };
+  const pct = Math.round((rotos / total) * 100);
+  const tipo = pct === 100 ? "total" : "parcial";
+  const n = opcionDelMenu(menu, tipo);
+  if (!n) return { escalar: `el menú del mediador no ofrece reembolso ${tipo} sin devolución` };
+  const eleccion = tipo === "total"
+    ? `Elegimos la opción ${n}: reembolso total sin devolución`
+    : `Elegimos la opción ${n}: reembolso parcial sin devolución del ${pct}%`;
+  return {
+    pct,
+    texto: `${eleccion}, por ${rotos} de ${total} frascos rotos. Los goteros salen de nuestro depósito sellados y bien embalados: la rotura ocurrió en el transporte, por maltrato del paquete en la logística. Pedimos que este reclamo no afecte nuestra reputación.`,
+  };
+}
+
+const SISTEMA_RECLAMO = `Analizás reclamos de compradores de BioLabs en MercadoLibre Argentina (suplementos en gotero, frascos de vidrio de 30 ml). Te paso el motivo, la orden y los últimos mensajes. En la etapa "dispute" el mediador es el asistente virtual de ML, que propone un menú numerado de soluciones con un plazo.
+
+Devolvé:
+- "analisis": máximo 3 líneas para el dueño del negocio: qué reclama el comprador, qué opciones y qué plazo da ML, y qué conviene hacer. Sin datos personales del comprador (nombre, teléfono, dirección).
+- "rotos": si el reclamo es porque llegaron frascos rotos, derramados o dañados, cuántos FRASCOS llegaron rotos según lo que describen el comprador o el mediador. 0 si el reclamo no es por rotura o si el número no está claro.`;
+
+const FORMATO_RECLAMO = {
+  type: "json_schema" as const,
+  schema: {
+    type: "object",
+    properties: { analisis: { type: "string" }, rotos: { type: "integer" } },
+    required: ["analisis", "rotos"],
+    additionalProperties: false,
+  },
+};
+
+export async function analizarReclamo(client: Anthropic, contexto: string): Promise<{ analisis: string; rotos: number }> {
+  const r = await client.beta.messages.create({
+    model: "claude-opus-5-5",
+    max_tokens: 2000,
+    betas: ["server-side-fallback-2026-06-01"],
+    fallbacks: [{ model: "claude-opus-4-8" }],
+    output_config: { effort: "medium", format: FORMATO_RECLAMO },
+    system: SISTEMA_RECLAMO,
+    messages: [{ role: "user", content: contexto }],
+  });
+  const txt = r.content.find((b) => b.type === "text");
+  try {
+    const a = JSON.parse(txt && txt.type === "text" ? txt.text : "");
+    // El análisis termina en el log de GitHub Actions: un teléfono (10-11 dígitos) no sale de la base.
+    return { ...a, analisis: String(a.analisis).replace(/\b\d{10,11}\b/g, "[tel]") };
+  } catch {
+    return { analisis: `sin análisis (stop: ${r.stop_reason})`, rotos: 0 };
+  }
 }
 
 export async function correrPostventa(db: Db = supabaseAdmin()) {
@@ -210,14 +278,54 @@ export async function correrPostventa(db: Db = supabaseAdmin()) {
 
   for (const c of abiertos) {
     const id = `c:${c.id}`;
-    const h = huellaReclamo(c);
-    if (antes.get(id) === h.estado) continue;
-    const { error } = await db.from("ml_postventa").upsert({
-      id, tipo: "reclamo", recurso: String(c.resource_id), texto: `${c.type} · ${c.reason_id}`,
-      estado: h.estado, vence: h.vence, cambio_at: new Date().toISOString(),
-    });
-    if (error) throw new Error(`ml_postventa: ${error.message}`);
-    cambios.push({ id, ...h });
+    try {
+      const r = await get(`/post-purchase/v1/claims/${c.id}/messages`);
+      const msgs = ((Array.isArray(r) ? r : r.data ?? []) as Mensaje[]) // vienen del más nuevo al más viejo
+        .sort((a, b) => a.date_created.localeCompare(b.date_created));
+      const menu = msgs.findLast((m) => m.sender_role === "mediator");
+      const h = huellaReclamo(c, menu?.date_created ?? "");
+      if (antes.get(id) === h.estado) continue;
+
+      const [orden, razon] = await Promise.all([
+        c.resource === "order" ? get(`/orders/${c.resource_id}`) : null,
+        get(`/post-purchase/v1/claims/reasons/${c.reason_id}`).catch(() => ({})),
+      ]);
+      const items = ((orden?.order_items ?? []) as { quantity: number; item: { id: string; title: string } }[]);
+      const frascos = items.reduce((s, i) => s + i.quantity * parseMlPack(i.item.title, i.item.id), 0);
+      const contexto = `MOTIVO: ${c.reason_id} ${razon.name ?? ""} — ${razon.detail ?? ""}\nETAPA: ${c.stage} · ${c.status}\n` +
+        `ORDEN: ${items.map((i) => `${i.quantity} × ${i.item.title}`).join(" + ") || "?"} (${frascos} frascos en total)\n\n` +
+        `MENSAJES (del más viejo al más nuevo):\n${msgs.slice(-6).map((m) => `[${m.sender_role} ${m.date_created.slice(0, 16)}] ${m.message ?? ""}`).join("\n\n")}`;
+      const a = await analizarReclamo(client, contexto);
+
+      const { error } = await db.from("ml_postventa").upsert({
+        id, tipo: "reclamo", recurso: String(c.resource_id), texto: `${c.reason_id} ${razon.name ?? c.type}`,
+        motivo: a.analisis, estado: h.estado, vence: h.vence, cambio_at: new Date().toISOString(),
+      });
+      if (error) throw new Error(`ml_postventa: ${error.message}`);
+      cambios.push({ id, ...h });
+
+      // Rotos en mediación: UN solo mensaje automático por reclamo, nunca más (accion queda marcada).
+      // Lo que el bot conteste después lo ve Pancho en el aviso: una segunda respuesta automática
+      // sería otra decisión irreversible tomada a ciegas.
+      // ponytail: solo `dispute` y reclamo total — en `claim` (allow_partial_refund) o parcial, escala.
+      if (!auto || !ROTO.has(c.reason_id) || c.stage !== "dispute" || c.quantity_type !== "total" || !menu?.message) continue;
+      const p = planRoto(a.rotos, frascos, menu.message);
+      if ("escalar" in p) {
+        await db.from("ml_postventa").update({ motivo: `${a.analisis} · NO SE RESPONDIÓ SOLO: ${p.escalar}` }).eq("id", id);
+        continue;
+      }
+      const { data: tomado } = await db.from("ml_postventa").update({ accion: "procesando" }).eq("id", id).is("accion", null).select("id");
+      if (!tomado?.length) continue;
+      const w = await escribir("POST", `/post-purchase/v1/claims/${c.id}/actions/send-message`, { receiver_role: "mediator", message: p.texto });
+      await db.from("ml_postventa").update({
+        accion: w.ok ? `reintegro ${p.pct}%` : "error",
+        respuesta: p.texto,
+        motivo: w.ok ? a.analisis : `${a.analisis} · ML ${w.status}: ${(await w.text()).slice(0, 150)}`,
+        cambio_at: new Date().toISOString(),
+      }).eq("id", id);
+    } catch (e) {
+      errores.push(`${id}: ${String(e).slice(0, 200)}`);
+    }
   }
   // Los que ya no están abiertos se cierran (sin aviso: lo que importa es lo que pide acción).
   const vivos = abiertos.map((c) => `c:${c.id}`);
