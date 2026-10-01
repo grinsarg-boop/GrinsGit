@@ -96,3 +96,13 @@ Eso sí, el objetivo práctico (saber qué significa cada código que nos llega)
 > Necesitamos saber cuáles son terminales (entregada / devuelta / anulada) y cuáles son visita fallida.
 > También: el webhook api/v2/integracion.json, ¿manda el mismo codigo_estado numérico o el alfanumérico (ej. "ENT")?
 > Y si existe un estado para "no admitido / no retirado en origen" distinto del 41 y del 116. Gracias.
+
+## Catálogo oficial de Fixy (xls de Sebastián Fernández, 28/09/2026), cruzado el 01/10/2026
+
+Fixy mandó la lista `estados-finales-o-no-28-9-2026.xls`, con estado, código alfanumérico y "Final SI/NO". No trae el código numérico que llega por `seguimiento.json`, así que se cruzó por nombre contra `raw.estado` y `courier_status_map`. Nuestro "final" son los canónicos entregado, devuelto, siniestro y cancelado (`TERMINALES` en `lib/couriers/sync.ts`).
+
+- **Coinciden todos los códigos vistos en prod salvo uno**: 39, 139, 184, 104, 79 y 123 son finales en los dos lados. 127, 52, 51, 48, 134, 129, 135, 63, 42, 142, 183, 117, 144, 64, 145, 125, 126, 121 y 82 no son finales en ninguno de los dos. Los prefijos alfanuméricos de la carga vieja (POD-, CSYDV-, CANC-, ROBO-, ANULADO-, EPR-, RAD-, REPRO-) también coinciden.
+- **51 "DESTINATARIO RECHAZA EL ENVIO" es NO final para Fixy**, y para nosotros también: `rehusado` no está en TERMINALES y la guía se sigue hasta la devolución (139/184).
+- **La diferencia: 116 "NO RETIRADO"**. Para Fixy es **final** ("retiro no retirado"); nosotros lo mapeamos `incidencia`. Hay 13 eventos y 0 guías con estado actual 116.
+- **No figuran en el catálogo:** 70 "Ruteado para su entrega" (el catálogo dice "Ruteado para su entrega", RC, NO; es el mismo con doble espacio), 41 "SOLICITUD PENDIENTE DE RETIRO", 182, 202 y 140.
+- **Están en el catálogo y nunca aparecieron en prod:** CANCELADO, NO ENTREGADA, Armado, Stock Reservado, Pendiente de Armado, Falta Confirmación de Transferencia, Contra reembolso y Devolución con Cobro de servicio (SI), Cancelado por comprador (SI), Zona restringida por paro, Reorganización de envíos, Solicitud Confirmada, Devolución/Rendición Generada, Envío Cancelado en Base, Envío extraviado (SI) y En tránsito.
