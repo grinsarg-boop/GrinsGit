@@ -39,6 +39,7 @@ import { buildCsv, needsSucursal, normalizeRow, parseCsv, rowErrors } from "../l
 import { codigoDeposito, pickingOrders } from "../lib/picking.ts";
 import { shopifyFetch } from "../lib/shopify.ts";
 import { htmlToPdf } from "./html2pdf.mjs";
+import pg from "pg";
 
 const CONFIRMAR = process.argv.includes("--confirmar");
 const DESPACHAR = process.argv.includes("--despachar");
@@ -205,12 +206,44 @@ if (DESPACHAR) {
   const listos: { carrier: string; pedidoId: number; guia: string; horas: number; cliente: string }[] = [];
   const esperando: number[] = [];
   const nuevos: number[] = [];   // vistos por primera vez: se les anota la hora y se marcan en la próxima corrida
+  const retenidos: string[] = [];
+  const RX_CANCEL = /cancel|anular|anulad|no enviar|no despachar|devolver plata|reembols/i;  // = chequeo-dup-cancel.mts
+  const SIN_ESCANEO: Record<string, string[]> = { urbano: ["PI"], fixy: ["41"] };            // alta hecha, el courier no lo tocó
+
+  // Estado en la base de cada guía del ledger: sirve para no preguntarle a Veltron por lo que ya salió
+  // (respaldo de abajo) y para retener cancelados y bultos que el courier todavía no tocó.
+  const db = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  await db.connect(); await db.query("set default_transaction_read_only = on");
+  const { rows } = await db.query(`select s.tracking, o.cancelled_at, o.tags, o.raw->>'note' nota, s.status_raw
+    from shipments s join orders o on o.id = s.order_id where s.tracking = any($1)`, [Object.values(led).map((v) => v.guia).filter(Boolean)]);
+  await db.end();
+  const base = new Map(rows.map((r) => [r.tracking, r]));
+  const yaSalio = (guia: string) => /(^|, )despachado(,|$)/.test(base.get(guia)?.tags ?? "");
 
   for (const carrier of ["fixy", "urbano", "andreani"]) {
-    for (let page = 1, paginas = 1; page <= paginas && page <= 20; page++) {
-      const r = await mcp("listar_pedidos", { carrier, estado: ["preparando"], preset: "30d", page, page_size: 100 });
-      paginas = Number(r.paginas ?? 1);
-      for (const p of r.pedidos ?? []) {
+    const pedidos: any[] = [];
+    try {
+      for (let page = 1, paginas = 1; page <= paginas && page <= 20; page++) {
+        const r = await mcp("listar_pedidos", { carrier, estado: ["preparando"], preset: "30d", page, page_size: 100 });
+        paginas = Number(r.paginas ?? 1);
+        pedidos.push(...(r.pedidos ?? []));
+      }
+    } catch (e: any) {
+      // 29/09/2026: listar_pedidos tira 400 "Vista inválida" y este modo se caía entero: del 28 al
+      // 30/09 quedaron ~300 pedidos en `preparando` sin WhatsApp de despacho. Respaldo: lo que el
+      // ledger anotó en los últimos 7 días y la base no da por despachado, de a uno por ver_pedido.
+      console.error(`  ⚠️ ${carrier}: listar_pedidos falló (${String(e.message).slice(0, 80)}) — se sigue con el ledger + ver_pedido`);
+      const piso = Date.now() - 7 * 86_400_000;
+      for (const [k, v] of Object.entries(led) as [string, any][]) {
+        const [c, id] = k.split(":");
+        if (c !== carrier || !v.guia || Date.parse(v.generada ?? v.visto ?? 0) < piso || yaSalio(v.guia)) continue;
+        const r = await mcp("ver_pedido", { pedido_id: Number(id), carrier }).catch(() => null);
+        const p = r?.pedido ?? r;
+        if (p?.estado === "preparando") pedidos.push({ ...p, id: Number(id), guia: p.guia ?? v.guia });
+      }
+    }
+    {
+      for (const p of pedidos) {
         if (!p.guia) continue;
         const k = `${carrier}:${p.id}`;
         // La hora de la etiqueta sólo la sabemos si la anotamos: la API de Veltron no expone
@@ -226,8 +259,15 @@ if (DESPACHAR) {
           continue;
         }
         const horas = (Date.now() - Date.parse(desde)) / 3_600_000;
-        if (horas >= HORAS) listos.push({ carrier, pedidoId: p.id, guia: p.guia, horas, cliente: p.cliente_nombre ?? "" });
-        else esperando.push(p.id);
+        if (horas < HORAS) { esperando.push(p.id); continue; }
+        // Las 16 h son un proxy de "salió del depósito"; el escaneo del courier es el dato. Sin él, o
+        // cancelado, no se avisa (andreani no tiene esos estados en la base: queda con la regla de horas).
+        const b = base.get(p.guia);
+        const motivo = carrier === "andreani" ? null : !b ? "guía sin fila en shipments" : b.cancelled_at ? "cancelada en Shopify"
+          : RX_CANCEL.test(`${b.tags} ${b.nota ?? ""}`) ? "tag/nota de cancelar"
+          : SIN_ESCANEO[carrier]?.includes(b.status_raw) ? `sin escaneo del courier (${b.status_raw})` : null;
+        if (motivo) retenidos.push(`  RETENER ${carrier} id:${p.id} ${p.guia} — ${motivo}`);
+        else listos.push({ carrier, pedidoId: p.id, guia: p.guia, horas, cliente: p.cliente_nombre ?? "" });
       }
     }
   }
@@ -241,7 +281,8 @@ if (DESPACHAR) {
     console.error(`⚠️ No se encontró NINGÚN pedido en preparando con guía. O no hay nada, o listar_pedidos`);
     console.error(`   está devolviendo 0 (pasó el 04/09/2026). Chequealo antes de dar por hecho que no hay nada.`);
   }
-  console.log(`${listos.length} listo(s) · ${esperando.length} esperando · ${nuevos.length} sin hora conocida (anotados ahora, entran en la próxima corrida)`);
+  console.log(`${listos.length} listo(s) · ${esperando.length} esperando · ${retenidos.length} retenido(s) · ${nuevos.length} sin hora conocida (anotados ahora, entran en la próxima corrida)`);
+  for (const r of retenidos) console.log(r);
   for (const l of listos) console.log(`  ${l.carrier.padEnd(8)} id:${String(l.pedidoId).padEnd(6)} ${l.guia.padEnd(12)} ${l.horas.toFixed(0)}h  ${l.cliente}`);
 
   if (!CONFIRMAR) {
