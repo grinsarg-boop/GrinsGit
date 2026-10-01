@@ -136,3 +136,44 @@ jobs:
             echo "$resp" | jq -r '.cambios[] | select(.status != "ACTIVE") | "::error title=cuenta \(.name) \(.status)::pasó de \(.prev_status) a \(.status)\(if .status == "UNSETTLED" then " — saldo impago, NO es sanción: se paga y vuelve, no quemes una cuenta de respaldo" else " — baneo real: rotar a la de respaldo (env en Vercel + backfill del período ciego + redeploy)" end)"'
             exit 1
           fi
+
+      # Agente de post-venta de ML (migración 102; /api/monitor/ml-postventa corre cada 10 min desde
+      # vercel.json). Falla (→ mail) con lo que le pide algo a Pancho y apareció en la última hora:
+      # preguntas en borrador o escaladas, errores al publicar, reclamos nuevos o que cambiaron de
+      # etapa/acciones, y reclamos a 48 h de vencer una acción obligatoria. Lo ya avisado no repite.
+      # También falla si el agente lleva más de 30 min sin correr (no está en salud_sistema()).
+      - name: Post-venta ML (preguntas y reclamos)
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -o pipefail
+          psql "$DATABASE_URL" -At -c "
+            select case when tipo = 'pregunta' then 'pregunta ' || estado else 'reclamo' end
+                   || ' · ' || id || ' · ' || regexp_replace(left(coalesce(texto, ''), 140), '\s+', ' ', 'g')
+                   || coalesce(' → ' || regexp_replace(left(coalesce(respuesta, motivo), 300), '\s+', ' ', 'g'), '')
+                   || case when tipo = 'reclamo' then ' · acciones: ' || coalesce(nullif(split_part(estado, '|', 3), ''), 'ninguna') else '' end
+            from ml_postventa
+            where cambio_at > now() - interval '65 minutes'
+              and ((tipo = 'pregunta' and estado in ('borrador', 'escalada', 'error')) or (tipo = 'reclamo' and estado <> 'cerrado'))
+            union all
+            select 'reclamo vence ' || to_char(vence at time zone 'America/Argentina/Buenos_Aires', 'DD/MM HH24:MI')
+                   || ' ART · ' || id || ' · ' || texto || ' · acciones: ' || split_part(estado, '|', 3)
+            from ml_postventa
+            where tipo = 'reclamo' and estado <> 'cerrado'
+              and vence - interval '48 hours' between now() - interval '65 minutes' and now()
+            union all
+            select 'el agente no corre desde ' || coalesce(to_char(max(started_at) at time zone 'America/Argentina/Buenos_Aires', 'DD/MM HH24:MI'), 'nunca')
+            from sync_runs where connector = 'ml-postventa'
+            having coalesce(max(started_at), 'epoch') < now() - interval '30 minutes'
+          " > postventa.txt
+
+          {
+            echo "## Post-venta ML"
+            if [ -s postventa.txt ]; then sed 's/^/- /' postventa.txt; else echo "✅ Nada nuevo."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -s postventa.txt ]; then
+            while IFS= read -r l; do echo "::error title=post-venta ML::$l"; done < postventa.txt
+            exit 1
+          fi
