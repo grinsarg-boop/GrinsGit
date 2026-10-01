@@ -18,7 +18,7 @@ import pg from "pg";
 const DONDE_CARGAR = "formulario fixy.epresis.com/contacto/formulario (Reprogramación de envíos / Modificar guía / Novedad) o WhatsApp de atención de Fixy +54 9 11 3381-0216 (L-V 9-18, sáb 10-16)";
 const FALLAS = ["127", "51", "52", "48", "63"];                          // disparan la fila
 const VISITA = [...FALLAS, "125", "145", "121", "64"];                   // cuentan como intento
-const TERMINAL = ["39", "139", "184", "140", "123", "79"];                // entregada / devuelta / anulada / robada
+const TERMINAL = ["39", "139", "184", "123", "79"];                       // entregada / devuelta / anulada / robada (140 no: la guía sigue, migración 103)
 const GESTION_FIXY = ["183", "117", "144"];                              // Fixy registró una reprogramación
 const MIN = { reprogramar: 3, corregir_direccion: 4, actualizar_telefono: 2, cancelar: 4, confirmar_rechazo: 5, contactar_cliente: 6, revisar: 4, verificar: 1 };
 const VB = "https://ecomdash-board-platform-production.up.railway.app";
