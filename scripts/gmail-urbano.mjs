@@ -68,7 +68,11 @@ if (process.argv.includes('--auth')) {
     });
   const t = await token({ code, redirect_uri: REDIR, grant_type: 'authorization_code' });
   if (!t.refresh_token) { console.error('❌ Google no devolvió refresh_token — revocá el acceso y reintentá'); process.exit(1); }
-  appendFileSync(ENV, `\n${KEY}=${t.refresh_token}\n`);
+  // Reemplaza la línea si ya existe: los lectores (gmail-enviar/leer) toman la PRIMERA coincidencia, así que
+  // agregar al final dejaba vivo el token viejo (02/10/2026: el re-auth de biolabs seguía mandando como Francisco).
+  const prev = readFileSync(ENV, 'utf8'), linea = `${KEY}=${t.refresh_token}`, rx = new RegExp(`^${KEY}=.*$`, 'gm');
+  if (rx.test(prev)) writeFileSync(ENV, prev.replace(rx, '').replace(/\n{3,}/g, '\n\n') + `${linea}\n`);
+  else appendFileSync(ENV, `\n${linea}\n`);
   console.log(`✅ ${KEY} guardado en .env.local`);
   process.exit(0);
 }
