@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Agente de mail → Veltron (scripts/mail-clientes.mjs), cada hora en punto de 8 a 20 (hora local).
+     Escribe notas en Veltron, cancela solo con la regla del script (tel + email coinciden y no salió),
+     manda el resumen a Caro y avisa por notificación. Log: etiquetas/mail-clientes.log.
+
+     Instalar:
+       cp scripts/com.biolabs.mail-clientes.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.biolabs.mail-clientes.plist
+     Probar sin esperar:  launchctl start com.biolabs.mail-clientes
+     Sacar:               launchctl unload ~/Library/LaunchAgents/com.biolabs.mail-clientes.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.biolabs.mail-clientes</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <!-- Por node y no zsh directo: macOS le dio a node el permiso de Descargas y los hijos lo heredan (igual que despacho-nocturno). -->
+    <string>/usr/local/bin/node</string>
+    <string>-e</string>
+    <string>require("child_process").execFileSync("/bin/zsh",["-lc",process.argv[1]],{stdio:"inherit"})</string>
+    <string>cd "$HOME/Downloads/ProyectoEco" &amp;&amp; mkdir -p etiquetas &amp;&amp; set -a &amp;&amp; . ./.env.local &amp;&amp; set +a &amp;&amp; node scripts/mail-clientes.mjs &gt;&gt; etiquetas/mail-clientes.log 2&gt;&amp;1 || osascript -e 'display notification "Falló: mirar etiquetas/mail-clientes.log" with title "BioLabs mail"'</string>
+  </array>
+
+  <!-- Si la Mac estaba dormida a esa hora, launchd lo corre al despertar (una vez, no las que se perdió). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

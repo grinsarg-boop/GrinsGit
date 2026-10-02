@@ -28,6 +28,10 @@ const quien = (o: any) => {
 };
 const items = (o: any) => (o.line_items ?? []).map((l: any) => `${l.title}×${l.quantity}`).sort().join(" + ");
 const RX_CANCEL = /cancel|anular|anulad|no enviar|no despachar|devolver plata|reembols/i;
+// Pidieron anular por el formulario web y mail-clientes.mjs no los canceló (no cumplían su regla). La nota que
+// deja ese agente es de Veltron y no llega a Shopify, así que RX_CANCEL no la ve: va por este archivo.
+const ANULAR = new URL("../etiquetas/.mail-clientes-anular.json", import.meta.url);
+const pideAnular: Record<string, { fecha: string; texto: string }> = fs.existsSync(ANULAR) ? JSON.parse(fs.readFileSync(ANULAR, "utf8")) : {};
 
 // Base: qué hermanos ya tienen guía (y en qué estado).
 const numsHermanos = orders.map((o) => String(o.order_number));
@@ -59,6 +63,8 @@ for (const l of lote) {
   if (["voided", "refunded"].includes(o.financial_status)) { excluir.push({ order: l.order, carrier: l.carrier, motivo: `financial_status=${o.financial_status}` }); continue; }
   const txt = `${o.tags ?? ""} ${o.note ?? ""}`;
   if (RX_CANCEL.test(txt)) { excluir.push({ order: l.order, carrier: l.carrier, motivo: `a cancelar: "${txt.trim().slice(0, 90)}"` }); continue; }
+  const pa = pideAnular[l.order];
+  if (pa) { excluir.push({ order: l.order, carrier: l.carrier, motivo: `pidió anular por el formulario web el ${pa.fecha.slice(0, 10)}: "${pa.texto}" (si va igual, sacarlo de etiquetas/.mail-clientes-anular.json)` }); continue; }
 
   // 3) duplicado: mismo cliente (teléfono o nombre+CP) con otra orden viva en 21 días
   const t = tel(o), q = quien(o);
