@@ -152,6 +152,35 @@ export function planRoto(rotos: number, total: number, menu: string): { texto: s
   };
 }
 
+// Textos aprobados por Pancho (02/10/2026). Nunca "es el original" (regla 30/09).
+export const NO_ORIGINAL =
+  "Hola. Este producto lo elaboramos y despachamos nosotros, y lo enviado coincide con la publicación: frasco de 30 ml, la etiqueta de las fotos y la composición de la descripción. Cada frasco sale sellado con su precinto. No tenemos relación con otras páginas que venden productos con nombre parecido. Pedimos que este reclamo no afecte nuestra reputación, porque entregamos lo publicado.";
+// Sin mencionar la devolución ni ofrecer nada (Pancho, 02/10/2026).
+export const NO_HACE_NADA =
+  "¡Hola! Lamentamos que todavía no notes cambios. Es un suplemento herbal y los resultados varían según cada persona: se aprecian con uso constante. Te recomendamos 15 gotas por día en ayunas, diluidas en agua, jugo o infusión, y desde la segunda semana 15-20 gotas dos veces por día. Cualquier duda, escribinos por acá.";
+// Un arrepentimiento que no es por eficacia ("me equivoqué de sabor") no lleva el texto de B.
+const DICE_QUE_NO_ANDA = /no (me )?(hace|funciona|sirve|anda)|no (not[eé]|veo|siento)|sin (efecto|resultado|cambio)|ning[uú]n (efecto|resultado|cambio)/i;
+
+// Qué le escribe el agente a un reclamo (una sola vez por reclamo): rotos en mediación (regla 01/10),
+// "no es original" cuando ML habilita escribirle al mediador, y arrepentimiento "no hace nada" antes
+// de la mediación (reglas 02/10). Sin canal habilitado no hay mensaje: la API daría 400.
+export function respuestaReclamo(c: Reclamo, msgs: Mensaje[], rotos: number, frascos: number):
+  { rol: "mediator" | "complainant"; texto: string; accion: string } | { escalar: string } | null {
+  const acciones = (c.players?.find((p) => p.type === "seller")?.available_actions ?? []).map((a) => a.action);
+  if (ROTO.has(c.reason_id)) {
+    // ponytail: solo `dispute` y reclamo total — en `claim` (allow_partial_refund) o parcial, escala.
+    if (c.stage !== "dispute" || c.quantity_type !== "total") return { escalar: `roto en etapa ${c.stage} / reclamo ${c.quantity_type}: lo decide Pancho` };
+    const p = planRoto(rotos, frascos, msgs.findLast((m) => m.sender_role === "mediator")?.message ?? "");
+    return "escalar" in p ? p : { rol: "mediator", texto: p.texto, accion: `reintegro ${p.pct}%` };
+  }
+  if (c.reason_id === "PDD9943" && acciones.includes("send_message_to_mediator"))
+    return { rol: "mediator", texto: NO_ORIGINAL, accion: "respuesta no original" };
+  const comprador = msgs.filter((m) => m.sender_role === "complainant").map((m) => m.message ?? "").join(" ");
+  if (c.reason_id === "PDD9939" && acciones.includes("send_message_to_complainant") && DICE_QUE_NO_ANDA.test(comprador))
+    return { rol: "complainant", texto: NO_HACE_NADA, accion: "respuesta no hace nada" };
+  return null;
+}
+
 const SISTEMA_RECLAMO = `Analizás reclamos de compradores de BioLabs en MercadoLibre Argentina (suplementos en gotero, frascos de vidrio de 30 ml). Te paso el motivo, la orden y los últimos mensajes. En la etapa "dispute" el mediador es el asistente virtual de ML, que propone un menú numerado de soluciones con un plazo.
 
 Devolvé:
@@ -304,21 +333,21 @@ export async function correrPostventa(db: Db = supabaseAdmin()) {
       if (error) throw new Error(`ml_postventa: ${error.message}`);
       cambios.push({ id, ...h });
 
-      // Rotos en mediación: UN solo mensaje automático por reclamo, nunca más (accion queda marcada).
-      // Lo que el bot conteste después lo ve Pancho en el aviso: una segunda respuesta automática
-      // sería otra decisión irreversible tomada a ciegas.
-      // ponytail: solo `dispute` y reclamo total — en `claim` (allow_partial_refund) o parcial, escala.
-      if (!auto || !ROTO.has(c.reason_id) || c.stage !== "dispute" || c.quantity_type !== "total" || !menu?.message) continue;
-      const p = planRoto(a.rotos, frascos, menu.message);
+      // UN solo mensaje automático por reclamo, nunca más (accion queda marcada). Lo que conteste el
+      // bot o el comprador lo ve Pancho en el aviso: una segunda respuesta automática sería otra
+      // decisión tomada a ciegas (con el bot mediador, irreversible).
+      if (!auto) continue;
+      const p = respuestaReclamo(c, msgs, a.rotos, frascos);
+      if (!p) continue;
       if ("escalar" in p) {
         await db.from("ml_postventa").update({ motivo: `${a.analisis} · NO SE RESPONDIÓ SOLO: ${p.escalar}` }).eq("id", id);
         continue;
       }
       const { data: tomado } = await db.from("ml_postventa").update({ accion: "procesando" }).eq("id", id).is("accion", null).select("id");
       if (!tomado?.length) continue;
-      const w = await escribir("POST", `/post-purchase/v1/claims/${c.id}/actions/send-message`, { receiver_role: "mediator", message: p.texto });
+      const w = await escribir("POST", `/post-purchase/v1/claims/${c.id}/actions/send-message`, { receiver_role: p.rol, message: p.texto });
       await db.from("ml_postventa").update({
-        accion: w.ok ? `reintegro ${p.pct}%` : "error",
+        accion: w.ok ? p.accion : "error",
         respuesta: p.texto,
         motivo: w.ok ? a.analisis : `${a.analisis} · ML ${w.status}: ${(await w.text()).slice(0, 150)}`,
         cambio_at: new Date().toISOString(),

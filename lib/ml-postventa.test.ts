@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candadoSalida, huellaReclamo, opcionDelMenu, ORIGINALIDAD, planRoto, reglaFija, ROTO } from "./ml-postventa";
+import { candadoSalida, huellaReclamo, NO_HACE_NADA, NO_ORIGINAL, opcionDelMenu, ORIGINALIDAD, planRoto, reglaFija, respuestaReclamo, ROTO } from "./ml-postventa";
 
 describe("reglaFija (reglas de Pancho 21/09 y 30/09/2026)", () => {
   it("ANMAT / RNPA → borrar (01/10), aunque también pregunte por originalidad", () => {
@@ -89,5 +89,30 @@ describe("rotos: reintegro sin devolución por la proporción de frascos rotos (
   it("los 4 motivos de rotura", () => {
     for (const r of ["PDD9972", "PDD9973", "PDD9946", "PDD9947"]) expect(ROTO.has(r)).toBe(true);
     expect(ROTO.has("PDD9943")).toBe(false);
+  });
+});
+
+describe("respuestaReclamo: textos fijos de Pancho (02/10) solo con canal habilitado", () => {
+  const rec = (reason_id: string, stage: string, acciones: string[]) => ({
+    id: 1, resource: "order", resource_id: 2, type: "mediations", stage, status: "opened", reason_id, quantity_type: "total",
+    players: [{ type: "seller", available_actions: acciones.map((action) => ({ action })) }],
+  });
+  const dice = (message: string) => [{ sender_role: "complainant", message, date_created: "2026-10-01T23:39" }];
+  it("no es original → al mediador solo si ML deja escribirle", () => {
+    expect(respuestaReclamo(rec("PDD9943", "dispute", []), [], 0, 2)).toBeNull();
+    expect(respuestaReclamo(rec("PDD9943", "dispute", ["send_message_to_mediator"]), [], 0, 2))
+      .toMatchObject({ rol: "mediator", texto: NO_ORIGINAL });
+  });
+  it("arrepentimiento 'no hace nada' → a la compradora; otro motivo de arrepentimiento, nada", () => {
+    const r = rec("PDD9939", "claim", ["send_message_to_complainant", "refund", "allow_partial_refund"]);
+    expect(respuestaReclamo(r, dice("No hace nada.."), 0, 2)).toMatchObject({ rol: "complainant", texto: NO_HACE_NADA });
+    expect(respuestaReclamo(r, dice("Me equivoqué de sabor"), 0, 2)).toBeNull();
+    expect(respuestaReclamo(rec("PDD9939", "dispute", []), dice("No hace nada"), 0, 2)).toBeNull();
+  });
+  it("los textos no dicen 'es el original', no mencionan devolución y entran en el largo que ML aceptó", () => {
+    expect(NO_ORIGINAL).not.toMatch(/es (el )?original/i);
+    expect(NO_HACE_NADA).not.toMatch(/devol|reembols|reintegr/i);
+    expect(NO_ORIGINAL.length).toBeLessThan(387);
+    expect(NO_HACE_NADA.length).toBeLessThan(387);
   });
 });
