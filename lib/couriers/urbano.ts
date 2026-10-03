@@ -24,9 +24,15 @@ function parseUrbanoDate(s: string): string | null {
   return m ? `${m[3]}-${m[2]}-${m[1]}T12:00:00Z` : null;
 }
 
-// Código de seguimiento → referencia de pedido. `BLABS18942` → `18942` (order_number); un shopify_id
-// vuelve intacto. Es lo único que separa el código nuevo del viejo en todo el ingest.
-export const pelar = (codigo: string) => codigo.replace(/^BLABS/i, "");
+// Código de seguimiento → referencia de pedido. `BLABS18942` y `BLABSA27789` (cuenta anticipada) →
+// el order_number; un shopify_id vuelve intacto. La `A?` va adentro y es greedy: con `BLABS|BLABSA` la
+// alternativa corta gana primero y deja "A27789", que no matchea ningún pedido (guía huérfana).
+export const pelar = (codigo: string) => codigo.replace(/^BLABSA?/i, "");
+
+// Desde el 03/10/2026 el pago anticipado sale por OTRA cuenta de Urbano (shipper 4565, servicio E, sin
+// contrareembolso) con código BLABSA<order_number>. Cada cuenta sólo ve sus guías y con la clave de la
+// otra la masiva contesta "credenciales inválidas" → se consulta por separado, eligiendo por prefijo.
+export const esAnticipado = (codigo: string) => /^BLABSA/i.test(codigo);
 
 function decodeEntities(s: string): string {
   return s.replace(/&quot;/g, '"').replace(/&#039;/g, "'")
@@ -83,9 +89,11 @@ export function parseUrbanoMasivo(item: MasivoItem, cliCodigo: string): CourierE
   // tag, 013). `order_ref` = el código PELADO, porque es lo que matchea contra orders en 006:
   // "BLABS18942" no es ni shopify_id (^\d{10,}$) ni order_number → la guía quedaría huérfana.
   const orderRef = pelar(cliCodigo);
+  // La guía anticipada va a su propio courier (104): ya está cobrada, no entra a tasas COD ni cobranza.
+  const courier = esAnticipado(cliCodigo) ? "urbano_ant" : "urbano";
   const ciclo = parseUrbanoDate(item.fecha ?? "");
   if (ciclo) {
-    events.push({ courier: "urbano", tracking: cliCodigo, order_ref: orderRef,
+    events.push({ courier, tracking: cliCodigo, order_ref: orderRef,
       status_raw: CICLO_STATUS, occurred_at: ciclo, raw: { fecha: item.fecha, producto: item.producto } });
   }
   let maxAt: string | null = null, maxCode = "", maxCount = 0;
@@ -93,7 +101,7 @@ export function parseUrbanoMasivo(item: MasivoItem, cliCodigo: string): CourierE
     const at = parseUrbanoDate(m.checkFecha ?? "");
     const code = (m.check ?? "").trim().toUpperCase();
     if (code && at) {
-      events.push({ courier: "urbano", tracking: cliCodigo, order_ref: orderRef,
+      events.push({ courier, tracking: cliCodigo, order_ref: orderRef,
         status_raw: code, occurred_at: at,
         raw: { descripcion: (m.descripcion ?? "").trim(), codigo_motivo: m.codigo_motivo, estado_actual: item.estado } });
       if (maxAt === null || at > maxAt) { maxAt = at; maxCode = code; maxCount = 1; }  // nuevo máximo
@@ -111,19 +119,22 @@ export function parseUrbanoMasivo(item: MasivoItem, cliCodigo: string): CourierE
   // matchea el código → no se emite.
   const estadoCode = /^([A-Za-z0-9]+)\s*-/.exec((item.estado ?? "").trim())?.[1]?.toUpperCase();
   if (estadoCode && maxAt && (estadoCode !== maxCode || maxCount > 1)) {
-    events.push({ courier: "urbano", tracking: cliCodigo, order_ref: orderRef,
+    events.push({ courier, tracking: cliCodigo, order_ref: orderRef,
       status_raw: estadoCode, occurred_at: maxAt.replace("T12:00:00Z", "T23:59:59Z"),
       raw: { estado_actual: item.estado, sintetico: "estado" } });
   }
   return events;
 }
 
-async function fetchMasivo(codigos: string[]): Promise<MasivoItem[]> {
+async function fetchMasivo(codigos: string[], anticipado: boolean): Promise<MasivoItem[]> {
+  const autentificacion = anticipado
+    ? { shipper: Number(process.env.URBANO_ANT_SHIPPER), password: process.env.URBANO_ANT_PASSWORD }
+    : { shipper: Number(process.env.URBANO_SHIPPER), password: process.env.URBANO_PASSWORD };
   const res = await fetch(MASIVO_URL, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      autentificacion: { shipper: Number(process.env.URBANO_SHIPPER), password: process.env.URBANO_PASSWORD },
+      autentificacion,
       datos: codigos.map((c) => ({ codigoSeguimiento: c })),
     }),
   });
@@ -132,20 +143,23 @@ async function fetchMasivo(codigos: string[]): Promise<MasivoItem[]> {
   return Array.isArray(body) ? body : [];
 }
 
-// trackings = ids de pedido Shopify. Tandas de BATCH (la masiva es bulk → una llamada por tanda).
-// Un fallo de tanda no aborta el resto (se reintenta en el próximo sync, §5.4).
+// trackings = códigos de seguimiento (BLABS/BLABSA<order_number>, o shopify_id lo previo al 04/08).
+// Tandas de BATCH por cuenta (la masiva es bulk → una llamada por tanda). Un fallo de tanda no aborta
+// el resto (se reintenta en el próximo sync, §5.4).
 export const urbano: CourierClient = {
   async fetchStatuses(trackings: string[]): Promise<FetchStatusesResult> {
     const events: CourierEvent[] = [];
     const warnings: unknown[] = [];
-    for (let i = 0; i < trackings.length; i += BATCH) {
-      const chunk = trackings.slice(i, i + BATCH);
-      try {
-        const items = await fetchMasivo(chunk);
-        for (const it of items) events.push(...parseUrbanoMasivo(it, String(it.codGestion ?? "")));
-      } catch (e) {
-        // Antes se tragaba a console.error → el warning de sync.ts era código muerto (audit A#7).
-        warnings.push({ courier: "urbano", tanda: i / BATCH, error: String(e).slice(0, 150) });
+    for (const anticipado of [false, true]) {
+      const codigos = trackings.filter((c) => esAnticipado(c) === anticipado);
+      for (let i = 0; i < codigos.length; i += BATCH) {
+        try {
+          const items = await fetchMasivo(codigos.slice(i, i + BATCH), anticipado);
+          for (const it of items) events.push(...parseUrbanoMasivo(it, String(it.codGestion ?? "")));
+        } catch (e) {
+          // Antes se tragaba a console.error → el warning de sync.ts era código muerto (audit A#7).
+          warnings.push({ courier: "urbano", anticipado, tanda: i / BATCH, error: String(e).slice(0, 150) });
+        }
       }
     }
     return { events, warnings };

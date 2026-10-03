@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
+import { esAnticipado } from "@/lib/couriers/urbano";
 
 export const SHOPIFY_API_VERSION = "2024-10";
 
@@ -87,7 +88,9 @@ export async function upsertShipmentFromFulfillment(
   if (!order) return null; // el backfill de las 03:00 reconcilia (§5.2)
 
   const company = (f.tracking_company ?? "").toLowerCase();
-  const courier = company.includes("urbano") ? "urbano"
+  // BLABSA = cuenta anticipada de Urbano: courier propio, fuera de las tasas COD (104).
+  const courier = esAnticipado(String(tracking)) ? "urbano_ant"
+    : company.includes("urbano") ? "urbano"
     : company.includes("fixy") ? "fixy"
     : order.courier; // ya clasificado por provincia/CP en upsert_order
 

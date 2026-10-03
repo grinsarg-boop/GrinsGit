@@ -1,6 +1,6 @@
 // El único adapter del proyecto (SPEC §5.4): dos implementaciones reales desde el día 1.
 export type CourierEvent = {
-  courier: "urbano" | "fixy";
+  courier: "urbano" | "urbano_ant" | "fixy";   // urbano_ant = cuenta de pago anticipado (104)
   tracking: string;
   order_ref?: string;
   province?: string;

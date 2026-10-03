@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CICLO_STATUS, parseUrbanoMasivo, parseUrbanoResponse } from "./urbano";
+import { CICLO_STATUS, esAnticipado, parseUrbanoMasivo, parseUrbanoResponse, pelar } from "./urbano";
 
 // R7 — mock con responses REALES del WS (datos/urbano_ws_samples/, entity-encoded tal cual).
 // El <tr data="{...}"> es la única parte que el parser lee; embebida acá para no depender
@@ -94,6 +94,23 @@ describe("parseUrbanoMasivo", () => {
     for (const e of ev) {
       expect(e.tracking).toBe("BLABS18942");
       expect(e.order_ref).toBe("18942");
+    }
+  });
+
+  // 03/10/2026: la cuenta anticipada (4565) usa BLABSA<order_number>. Si pelar sacara sólo "BLABS"
+  // quedaría "A27789" → huérfana; y la cuenta se elige por el mismo prefijo.
+  it("código BLABSA (anticipado): order_ref pelado entero y cuenta por prefijo", () => {
+    expect(pelar("BLABSA27789")).toBe("27789");
+    expect(pelar("blabsa27789")).toBe("27789");
+    expect(pelar("BLABS18942")).toBe("18942");
+    expect(pelar("7069439328496")).toBe("7069439328496");
+    expect(esAnticipado("BLABSA27789")).toBe(true);
+    expect(esAnticipado("BLABS18942")).toBe(false);
+    const ev = parseUrbanoMasivo({ ...masivoRC, codGestion: "BLABSA27789" }, "BLABSA27789");
+    expect(ev.length).toBeGreaterThan(0);
+    for (const e of ev) {
+      expect(e.order_ref).toBe("27789");
+      expect(e.courier).toBe("urbano_ant");   // courier propio: fuera de tasas COD y cobranza (104)
     }
   });
 

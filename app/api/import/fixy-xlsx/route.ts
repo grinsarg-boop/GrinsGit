@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     }
     const events = parseFixyXlsx(Buffer.from(await file.arrayBuffer()));
     const rows = await upsertEvents(events);
-    const warnings = await estadosSinMapear("fixy");
+    const warnings = await estadosSinMapear(["fixy"]);
     const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
     await supabaseAdmin().rpc("recompute_daily_pnl", { p_from: cutoff, p_to: today() });
     await logSyncRun("fixy-xlsx", "ok", rows, warnings);

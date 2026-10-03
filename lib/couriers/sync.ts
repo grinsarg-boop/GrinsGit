@@ -22,15 +22,18 @@ export const esFallaDeConexion = (w: unknown) => (w as { http?: number })?.http 
 // guías activas dan la vuelta en 2 corridas de 15 min. Subir más pide medir antes: el techo son 300s.
 export async function runCourierSync(courier: "urbano" | "fixy", client: CourierClient, limit = 100) {
   const db = supabaseAdmin();
+  // El sync de urbano refresca también la cuenta anticipada (104): misma API, el client elige la clave
+  // por el prefijo BLABSA del tracking.
+  const couriers = courier === "urbano" ? ["urbano", "urbano_ant"] : [courier];
   const started = Date.now();
   try {
     const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
     const notTerminal = `(${TERMINALES.join(",")})`;
     const orDate = `dispatched_at.gte.${cutoff},dispatched_at.is.null`;
     const { count: total } = await db.from("shipments").select("*", { count: "exact", head: true })
-      .eq("courier", courier).not("status_canonical", "in", notTerminal).or(orDate);
+      .in("courier", couriers).not("status_canonical", "in", notTerminal).or(orDate);
     const { data, error } = await db.from("shipments").select("id, tracking, order_ref")
-      .eq("courier", courier).not("status_canonical", "in", notTerminal).or(orDate)
+      .in("courier", couriers).not("status_canonical", "in", notTerminal).or(orDate)
       .order("updated_at", { ascending: true, nullsFirst: true }).limit(limit);
     if (error) throw new Error(error.message);
     // Urbano se consulta por tracking (= shopify_id, la masiva); Fixy por order_ref (= remito).
@@ -71,7 +74,7 @@ export async function runCourierSync(courier: "urbano" | "fixy", client: Courier
     const ids = (data ?? []).map((s) => s.id);
     if (ids.length) await db.from("shipments").update({ updated_at: new Date().toISOString() }).in("id", ids);
 
-    warnings.push(...(await estadosSinMapear(courier)));
+    warnings.push(...(await estadosSinMapear(couriers)));
     // supabase-js no tira: devuelve { error }. Sin leerlo, el recompute de 60 d moría a los 8 s en cada
     // corrida y el P&L de cohortes quedó congelado ~16/09→23/09 sin que nada avisara.
     const { error: recErr } = await db.rpc("recompute_daily_pnl", { p_from: cutoff, p_to: today() });
@@ -107,7 +110,7 @@ export async function discoverUrbano(
   const since = new Date(Date.now() - sinceDays * 86400_000).toISOString();
   const { data, error } = await db.rpc("urbano_sin_guia", { p_since: since, p_limit: limit });
   if (error) throw new Error(error.message);
-  const pedidos = (data ?? []) as { shopify_id: number | string; order_number: string }[];
+  const pedidos = (data ?? []) as { shopify_id: number | string; order_number: string; anticipado: boolean }[];
   if (!pedidos.length) return { consultadas: 0, recuperadas: 0, rows: 0, warnings: [] };
   // Consultar + upsertear + MARCAR POR CHUNK: (1) si el presupuesto de 60s se agota a mitad, lo persistido
   // queda firme (upsert idempotente) y el resto sigue el próximo ciclo — nunca "todo o nada"; (2) marcar
@@ -121,7 +124,11 @@ export async function discoverUrbano(
     // Se consultan los DOS códigos por pedido: el nuevo (BLABS<order_number>, desde el 04/08/2026) y el
     // viejo (shopify_id, que Urbano sigue respondiendo para lo despachado antes). El que no existe vuelve
     // codError 5 → parseUrbanoMasivo devuelve [] y no cuesta nada: la masiva es bulk, un request por chunk.
-    const codigos = batch.flatMap((p) => [`BLABS${p.order_number}`, String(p.shopify_id)]);
+    // El anticipado (cuotas_3 pagado, desde el 03/10/2026) va por la otra cuenta con BLABSA<order_number>
+    // (104); fetchStatuses elige la cuenta por el prefijo.
+    const codigos = batch.flatMap((p) => p.anticipado
+      ? [`BLABSA${p.order_number}`]
+      : [`BLABS${p.order_number}`, String(p.shopify_id)]);
     const { events, warnings: w } = await client.fetchStatuses(codigos);
     if (w.length) warnings.push(...w);
     for (const e of events) recuperadas.add(e.tracking);
@@ -150,11 +157,11 @@ export async function upsertEvents(events: CourierEvent[]): Promise<number> {
   return n;
 }
 
-export async function estadosSinMapear(courier: string): Promise<unknown[]> {
+export async function estadosSinMapear(couriers: string[]): Promise<unknown[]> {
   const { data } = await supabaseAdmin()
     .from("v_estados_sin_mapear")
     .select("*")
-    .eq("courier", courier);
+    .in("courier", couriers);
   return (data ?? []).map((r) => ({ estado_sin_mapear: r.status_raw }));
 }
 
