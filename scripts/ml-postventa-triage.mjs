@@ -17,7 +17,7 @@ async function one(pack) {
   const s = shipId ? (await ml(`/shipments/${shipId}`)).body : {};
   const msgs = (th.messages || []).map(m => ({
     who: m.from?.user_id == ME ? 'yo' : 'cli', at: m.message_date?.created?.slice(0, 16), text: (m.text || '').replace(/\s+/g, ' ').trim(),
-  }));
+  })).sort((a, b) => (a.at || '').localeCompare(b.at || '')); // la API devuelve el más nuevo primero; abajo se asume cronológico
   rows.push({
     pack, orderId, buyer: o.buyer?.nickname, item: o.order_items?.map(i => `${i.quantity}x ${i.item?.title}`).join(' + '),
     orderDate: o.date_created?.slice(0, 10), orderStatus: o.status,

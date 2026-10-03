@@ -21,7 +21,30 @@
       "Bash(gh codespace list*)",
       "Bash(gh codespace ssh -c bug-free-happiness-p7j75rwp4qpjf799p*)",
       "Bash(gh pr list*)",
-      "Bash(gh pr view*)"
+      "Bash(gh pr view*)",
+      "Bash(node --env-file=.env.local scripts/redespacho.mjs*)",
+      "Bash(npx tsx scripts/despacho-etiquetas.mts*)",
+      "Bash(npx tsx scripts/reimprimir-urbano.mts*)",
+      "Bash(node --env-file=.env.local scripts/veltron.mjs tools/list*)",
+      "Bash(node --env-file=.env.local scripts/veltron.mjs ver_pedido*)",
+      "Bash(node --env-file=.env.local scripts/veltron.mjs listar_pedidos*)",
+      "Bash(node --env-file=.env.local scripts/veltron.mjs reporte_pedidos*)",
+      "Bash(node --env-file=.env.local scripts/veltron.mjs reimprimir_etiqueta*)",
+      "Bash(node --env-file=.env.local scripts/veltron.mjs generar_etiqueta*)",
+      "Bash(node --env-file=.env.local scripts/veltron.mjs editar_guia*)",
+      "Bash(node --env-file=.env.local scripts/veltron.mjs agregar_nota*)",
+      "Bash(node --env-file=.env.local scripts/veltron.mjs enviar_plantilla*)",
+      "Bash(node scripts/ml-postventa-responder.mjs docs/postventa-2026-09-24/plan.json --send)",
+      "Bash(node scripts/_ml-cerrar-lote.mjs docs/postventa-2026-09-24/marcar.json)",
+      "Bash(node --input-type=module -e ' *)",
+      "Bash(node scripts/_q.mjs)",
+      "Bash(grep -n \"^#\\\\{1,4\\\\} .*6 \\\\\\(nonies\\\\|decies\\\\|undecies\\\\\\)\\\\|§6 undecies\\\\|^## \\\\|^### 6\" Runbook-Lanzar-Anuncios-API.md)",
+      "Bash(awk -F: '$1>833')",
+      "Bash(node /private/tmp/claude-501/-Users-franciscoandreudegasperi-Downloads-ProyectoEco/6d7ea478-dded-49d0-8b07-bb02ced1c370/scratchpad/q0.mjs)",
+      "Bash(node -e ' *)",
+      "Bash(node -e 'const r=JSON.parse\\(require\\(\"fs\"\\).readFileSync\\(0\\)\\);for\\(const x of r\\)console.log\\(x.d,x.cta,x.g,x.nom,x.pz\\)')",
+      "Bash(node scripts/marginal.mjs --desde 2026-09-25)",
+      "Bash(node scripts/marginal.mjs 5 --desde 2026-09-25)"
     ]
   }
 }

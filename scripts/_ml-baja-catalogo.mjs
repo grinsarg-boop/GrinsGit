@@ -5,6 +5,7 @@
 //
 // Uso:  node scripts/_ml-baja-catalogo.mjs            <- dry-run, no escribe
 //       node scripts/_ml-baja-catalogo.mjs --aplicar  <- escribe
+//       node scripts/_ml-baja-catalogo.mjs MLA2055177767 [--aplicar]  <- un solo item
 import { ml, TOKEN } from './_ml.mjs';
 
 const APLICAR = process.argv.includes('--aplicar');
@@ -35,7 +36,12 @@ const fee = async (cat, tipo, precio) => {
   return { monto: f?.sale_fee_amount, pct: (f?.sale_fee_amount / precio) * 100, det: f?.sale_fee_details };
 };
 
-for (const [id, { precio: objetivo, pack }] of Object.entries(OBJETIVO)) {
+// 28/09/2026: sin filtro, --aplicar corre los 5 items; los de precio fijo se tocarian aunque el
+// pedido fuera por uno solo.
+const SOLO = process.argv.find((a) => a.startsWith('MLA'));
+if (SOLO && !(SOLO in OBJETIVO)) throw new Error(`${SOLO} no esta en OBJETIVO`);
+
+for (const [id, { precio: objetivo, pack }] of Object.entries(OBJETIVO).filter(([k]) => !SOLO || k === SOLO)) {
   const it = (await ml(`/items/${id}`, {}, '2')).body;
   const ptw = it.catalog_listing ? (await ml(`/items/${id}/price_to_win`, {}, '2')).body : null;
 
@@ -59,6 +65,10 @@ for (const [id, { precio: objetivo, pack }] of Object.entries(OBJETIVO)) {
   if (nuevo < 33000) { console.log('  ABORTA: abajo de $33.000 (zona muerta)'); continue; }
   if (nuevo < it.price * (1 - CAIDA_MAX)) { console.log(`  ABORTA: baja de ${(((nuevo / it.price) - 1) * -100).toFixed(1)}%, arriba del tope de ${CAIDA_MAX * 100}%`); continue; }
   if (ptw && nuevo > ptw.price_to_win) { console.log('  ABORTA: el ptw se movio, ya no alcanza'); continue; }
+  // 23/09/2026: `price_to_win` devuelve un numero AUNQUE ya estes ganando la caja. El x4 estaba
+  // `winning` con visit_share:maximum a $60.000 y el script propuso bajarlo a $51.990 (-13,35%):
+  // $8.010 por venta regalados para comprar algo que ya teniamos. Si la caja es nuestra, no se toca.
+  if (ptw && ptw.status === 'winning') { console.log(`  ABORTA: ya gana la caja (${ptw.status}/${ptw.visit_share}); bajar es regalar $${Math.round(it.price - nuevo)}/venta`); continue; }
 
   if (!APLICAR) { console.log('  [dry-run] listo para aplicar'); continue; }
 

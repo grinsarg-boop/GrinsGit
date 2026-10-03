@@ -23,8 +23,10 @@
        cantar un lote que el script justamente NO propuso. -->
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/zsh</string>
-    <string>-lc</string>
+    <!-- Por node y no zsh directo: macOS le dio a node el permiso de Descargas y los hijos lo heredan (igual que local.fixy-mail). -->
+    <string>/usr/local/bin/node</string>
+    <string>-e</string>
+    <string>require("child_process").execFileSync("/bin/zsh",["-lc",process.argv[1]],{stdio:"inherit"})</string>
     <string>cd "$HOME/Downloads/ProyectoEco" &amp;&amp; mkdir -p etiquetas &amp;&amp; set -a &amp;&amp; . ./.env.local &amp;&amp; set +a &amp;&amp; node scripts/despacho-nocturno.mjs &gt;&gt; etiquetas/despacho-nocturno.log 2&gt;&amp;1; C=$?; if [ $C -eq 0 ]; then M=$(node -e 'const l=require("./.despacho-propuesta.json").lote; console.log(`Fixy ${l.fixy.length} · Urbano ${l.urbano.length} · Correo ${l.andreani.length}`)' 2&gt;/dev/null); osascript -e "display notification \"Propuesta lista — $M\" with title \"BioLabs 20:00\""; else osascript -e "display notification \"Revisar: la propuesta no cerró (tope o error) — etiquetas/despacho-nocturno.log\" with title \"BioLabs 20:00\""; fi</string>
   </array>
 

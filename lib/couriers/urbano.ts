@@ -19,6 +19,13 @@ const BATCH = 200;          // la masiva es bulk; tandas de 200 por request
 export const CICLO_STATUS = "CICLO - Despacho";
 
 // "DD-MM-YYYY" → ISO a mediodía UTC (evita corrimiento de día por timezone).
+// Se queda con el DÍA y descarta la hora a propósito. El WS sí manda `movimientos[].hora` (con
+// `utc_offset: -03:00`), pero ningún consumidor la usa: la ventana de cobranza de Urbano corta a
+// nivel día y eso se midió (29/08/2026, 2.117 guías pagadas de 11 giros: la ventana es martes 00:00
+// → lunes 23:59 y NO hay corte adentro del lunes — el lunes entra a su liquidación en 94,4%, igual
+// que miércoles y viernes). 12:00Z cae el mismo día en ART, así que el cast a fecha no se corre.
+// Si algún día hace falta ordenar movimientos del mismo día por hora real, el dato está en el WS y
+// se saca de acá — es lo que haría innecesario el evento sintético de `item.estado` de más abajo.
 function parseUrbanoDate(s: string): string | null {
   const m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(s.trim());
   return m ? `${m[3]}-${m[2]}-${m[1]}T12:00:00Z` : null;
@@ -110,10 +117,10 @@ export function parseUrbanoMasivo(item: MasivoItem, cliCodigo: string): CourierE
   }
 
   // item.estado ("CÓDIGO - desc") es el estado ACTUAL autoritativo de Urbano; los movimientos son
-  // historia y su ORDEN no es confiable (ej. AR llega después de RM pero estado=RM). Urbano colapsa
-  // los movimientos del día a 12:00Z, así que cuando varios caen el mismo día el "último por
-  // occurred_at" del ingest es arbitrario (RM/DV pierde contra AR → el envío quedaba en_transito y no
-  // maduraba). Emitir el estado como evento al cierre del día del último movimiento (23:59 > 12:00) lo
+  // historia y su ORDEN no es confiable (ej. AR llega después de RM pero estado=RM). Los colapsa a
+  // 12:00Z `parseUrbanoDate` — NO Urbano, que sí manda la hora (ver ahí) —, así que cuando varios
+  // caen el mismo día el "último por occurred_at" del ingest es arbitrario (RM/DV pierde contra AR →
+  // el envío quedaba en_transito y no maduraba). Emitir el estado como evento al cierre del día del último movimiento (23:59 > 12:00) lo
   // hace ganar SIEMPRE. Se emite si difiere del último movimiento O si hubo empate ese día (>1). Si
   // coincide y es único (sin empate) ya gana solo → no se emite (evita ruido). estado vacío (" - ") no
   // matchea el código → no se emite.

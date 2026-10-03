@@ -15,7 +15,7 @@ const DRY = process.argv.includes("--dry");
 const COURIER = arg("courier");
 const PEDIDOS = String(arg("pedidos", "")).split(",").map((s) => s.trim()).filter(Boolean);
 if (!["fixy", "urbano"].includes(COURIER) || !PEDIDOS.length) {
-  console.error("uso: --courier fixy|urbano --pedidos 18267,18273 [--dry] [--out DIR]");
+  console.error("uso: --courier fixy|urbano --pedidos 18267,18273 [--dry] [--out DIR] [--marca R1] [--servicio B|E] [--cod N] [--unidades N] [--cp NNNN]");
   process.exit(1);
 }
 const OUT = arg("out", path.join(process.cwd(), "etiquetas"));
@@ -61,6 +61,12 @@ for (const o of rows) {
   o.marca_deposito = c.code;
   o.unidades = c.unidades;
   if (!c.code) console.error(`⚠️ ${o.order_number}: sin código de depósito — ${c.nota}`);
+}
+// --cod N / --unidades N: reenvío parcial o reposición (ej. 1 de 2 goteros con COD 0). Pisa la fila
+// entera de la corrida (COD, unidades y marca de depósito P2→P1), así que va un pedido por corrida.
+for (const o of rows) {
+  if (arg("cod") !== undefined) o.cod_amount = Number(arg("cod"));
+  if (arg("unidades") !== undefined) { o.unidades = Number(arg("unidades")); if (o.marca_deposito) o.marca_deposito = o.marca_deposito[0] + o.unidades; }
 }
 const faltan = PEDIDOS.filter((p) => !rows.some((r) => r.order_number === p));
 if (faltan.length) { console.error("pedidos que no existen en la base:", faltan.join(",")); process.exit(1); }
@@ -133,7 +139,7 @@ function bodyUrbano(o) {
     productos: [{
       largo: 20, alto: 15, ancho: 15, peso: 1,     // cm/kg enteros, como el flujo de producción
       valor: 0,
-      valorContrareembolso: Math.round(Number(o.cod_amount)),
+      valorContrareembolso: Math.round(Number(o.cod_amount)),   // --cod ya aplicado sobre la fila
       cantidad: 1,
       descripcionProducto: o.producto ?? "Producto",
     }],
@@ -150,9 +156,12 @@ function bodyUrbano(o) {
       codigoPostal: Number(arg("cp", "") || String(o.cp).match(/\d{4}/)?.[0]), localidad: o.localidad, provincia: o.provincia,
     },
     // Campo de ENTRADA: acá se fija el tracking, y es único de por vida. Para rehacer una guía va
-    // --marca R → BLABSR<pedido>. OJO: la marca va ADELANTE del número; BLABS<pedido>R lo lee como
-    // BLABS<pedido> y rebota con "Codigo Cliente Existente".
-    codigoSeguimiento: `BLABS${arg("marca", "")}${o.order_number}`,
+    // --marca R1 → BLABS<pedido>R1 (sufijo). Medido 20/09/2026: BLABS<n>R1 es pieza DISTINTA en
+    // Urbano (BLABS20924 / BLABS20924R1 conviven) y es lo que Veltron y el sync entienden; la marca
+    // adelante (BLABSR<n>, convención vieja) deja la guía invisible al sync: BLABSR18619 tiene 24
+    // movimientos en Urbano y 0 filas en shipments. Lo que rebotaba con "Codigo Cliente Existente"
+    // era la R sola (BLABS<pedido>R), no R1.
+    codigoSeguimiento: `BLABS${o.order_number}${arg("marca", "")}`,
     servicio: arg("servicio", "B"),                 // B = contrareembolso
   };
 }

@@ -18,7 +18,7 @@ import { dirname, join } from 'node:path';
 const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = join(RAIZ, 'datos', 'reclamos');
 const HOY = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);   // ART
-const COMISION = 0.05547;                                                     // 4,3% × 1,29 (migr 033)
+const COMISION = 0.05418;                                                     // 4,3% × 1,26 desde el giro del 08/09/2026 (antes ×1,29, migr 033)
 const dry = process.argv.includes('--dry');
 const $ = (n) => '$' + Math.round(n).toLocaleString('es-AR');
 
@@ -126,7 +126,7 @@ console.log(`   ⚠️ = falta un formato (A+B es la liquidación completa de la
 
 console.log(`\n② GUÍAS ENTREGADAS QUE NO FIGURAN EN NINGÚN RESUMEN`);
 console.log(`   plata faltante (la semana además cierra en rojo): ${String(firmes.length).padStart(3)} guías  ${$(suma(firmes))}` +
-            (firmes.length ? `  (neto −5,547%: ${$(suma(firmes) * (1 - COMISION))})` : ''));
+            (firmes.length ? `  (neto −5,418%: ${$(suma(firmes) * (1 - COMISION))})` : ''));
 console.log(`   deriva de fecha (la semana cuadra: pedir en qué resumen se pagaron): ` +
             `${String(deriva.length).padStart(3)} guías  ${$(suma(deriva))}`);
 console.log(`   sin poder auditar (falta un formato del resumen): ${String(aConfirmar.length).padStart(3)} guías  ` +

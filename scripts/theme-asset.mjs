@@ -42,7 +42,7 @@ const actual = (await api(q)).asset.value;
 
 if (cmd === 'get') {
   if (file) { writeFileSync(file, actual); console.log(`✅ ${key} → ${file} (${actual.length} bytes)`); }
-  else process.stdout.write(actual);
+  else await new Promise((r) => process.stdout.write(actual, r)); // stdout a un pipe es async: exit() sin esperar trunca la salida
   process.exit(0);
 }
 
