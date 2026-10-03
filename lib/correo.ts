@@ -35,6 +35,11 @@ export function splitPhone(raw: string): { area: string; cel: string } | null {
   if (d.startsWith("54")) d = d.slice(2);
   if (d.length === 11 && d.startsWith("9")) d = d.slice(1);
   if (d.startsWith("0")) d = d.slice(1);
+  // "0351 15 412-3456" (área + 15 + número, 12 dígitos), como lo escribe un comprador a mano: el 15 sobra.
+  if (d.length === 12) {
+    const a = d.startsWith("11") ? 2 : AREAS_3.has(d.slice(0, 3)) ? 3 : 4;
+    if (d.slice(a, a + 2) === "15") d = d.slice(0, a) + d.slice(a + 2);
+  }
   if (d.length !== 10) return null;
   const area = d.startsWith("11") ? "11" : AREAS_3.has(d.slice(0, 3)) ? d.slice(0, 3) : d.slice(0, 4);
   let cel = d.slice(area.length);

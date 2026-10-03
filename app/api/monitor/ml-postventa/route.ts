@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   if (unauth) return unauth;
   try {
     const r = await correrPostventa();
-    await logSyncRun("ml-postventa", r.errores.length ? "error" : "ok", r.preguntas.length + r.cambios.length, r.errores);
+    await logSyncRun("ml-postventa", r.errores.length ? "error" : "ok", r.preguntas.length + r.cambios.length + r.packs.length, r.errores);
     return Response.json({ ok: true, ...r });
   } catch (e) {
     await logSyncRun("ml-postventa", "error", 0, [], String(e));

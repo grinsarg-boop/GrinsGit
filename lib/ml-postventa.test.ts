@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candadoSalida, huellaReclamo, NO_HACE_NADA, NO_ORIGINAL, opcionDelMenu, ORIGINALIDAD, planRoto, reglaFija, respuestaReclamo, ROTO } from "./ml-postventa";
+import { candadoSalida, contactoDe, huellaReclamo, NO_HACE_NADA, NO_ORIGINAL, opcionDelMenu, ORIGINALIDAD, PEDIDO_DATOS, PIDE_REPOSICION, planRoto, reglaFija, respuestaReclamo, ROTO, sinContacto, textoSeguimiento } from "./ml-postventa";
 
 describe("reglaFija (reglas de Pancho 21/09 y 30/09/2026)", () => {
   it("ANMAT / RNPA → borrar (01/10), aunque también pregunte por originalidad", () => {
@@ -114,5 +114,47 @@ describe("respuestaReclamo: textos fijos de Pancho (02/10) solo con canal habili
     expect(NO_HACE_NADA).not.toMatch(/devol|reembols|reintegr/i);
     expect(NO_ORIGINAL.length).toBeLessThan(387);
     expect(NO_HACE_NADA.length).toBeLessThan(387);
+  });
+});
+
+describe("reposición: pedir celular y mail mientras el canal está abierto (Pancho 02-03/10)", () => {
+  it("PDD9952 en claim con canal al comprador → PEDIDO_DATOS; en dispute o sin canal, nada", () => {
+    const r = (stage: string, acciones: string[]) => ({
+      id: 1, resource: "order", resource_id: 2, type: "mediations", stage, status: "opened", reason_id: "PDD9952", quantity_type: "partial",
+      players: [{ type: "seller", available_actions: acciones.map((action) => ({ action })) }],
+    });
+    expect(respuestaReclamo(r("claim", ["send_message_to_complainant"]), [], 0, 3)).toMatchObject({ rol: "complainant", texto: PEDIDO_DATOS, accion: "pedido datos" });
+    expect(respuestaReclamo(r("claim", []), [], 0, 3)).toBeNull();
+    expect(respuestaReclamo(r("dispute", ["send_message_to_mediator"]), [], 0, 3)).toBeNull();
+  });
+  it("detecta el reporte de faltante/roto/volcado y no la duda o el agradecimiento", () => {
+    for (const t of ["Me llegó un frasco roto", "llegó volcado", "compré 3 y me faltan dos frascos", "vino solo 1 gotero", "se rompió en el viaje", "llegó incompleto"])
+      expect(PIDE_REPOSICION.test(t), t).toBe(true);
+    for (const t of ["¿cuándo llega?", "Gracias, llegó perfecto", "me falta saber la dosis", "¿Cómo se toma?"])
+      expect(PIDE_REPOSICION.test(t), t).toBe(false);
+  });
+  it("captura mail y celular en los formatos que escribe la gente; sin código de área no adivina", () => {
+    expect(contactoDe("mi mail es Ana.Perez@Gmail.com y cel 11 2345-6789")).toEqual({ email: "ana.perez@gmail.com", area: "11", cel: "23456789" });
+    expect(contactoDe("0351 15 412-3456")).toEqual({ area: "351", cel: "4123456" });
+    expect(contactoDe("+54 9 11 2345 6789")).toEqual({ area: "11", cel: "23456789" });
+    expect(contactoDe("tel 2345-6789")).toEqual({});
+    expect(contactoDe("orden 2000018526183678")).toEqual({});
+  });
+  it("el texto que sale en el aviso no lleva mail ni teléfono; el pedido entra en 350 y pasa sin nombrar courier", () => {
+    expect(sinContacto("soy ana@x.com, 11 2345-6789")).toBe("soy [mail], [tel]");
+    expect(PEDIDO_DATOS.length).toBeLessThanOrEqual(350);
+    expect(PEDIDO_DATOS).not.toMatch(/correo argentino|urbano|whats|https?:/i);
+  });
+});
+
+describe("seguimiento de la reposición por Urbano 2 (cuenta 4565, 03/10)", () => {
+  it("arma el código que acepta urbano.com.ar/segui-tu-envio y rechaza lo que no es BLABSA", () => {
+    const t = textoSeguimiento("BLABSA27789")!;
+    expect(t).toContain("4565BLABSA27789");
+    expect(textoSeguimiento("4565blabsa27789")).toBe(t);
+    expect(t.length).toBeLessThanOrEqual(350);
+    expect(t).not.toMatch(/https?:|whats/i);
+    expect(textoSeguimiento("HC123456789AR")).toBeNull();
+    expect(textoSeguimiento("0001494211379I3IC212901")).toBeNull();
   });
 });

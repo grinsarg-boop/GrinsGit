@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { splitPhone } from "@/lib/correo";
 import { getMlAccessToken, parseMlPack } from "@/lib/ml";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -113,6 +114,7 @@ type Reclamo = {
   players?: { type: string; available_actions?: { action: string; due_date?: string | null; mandatory?: boolean }[] }[];
 };
 type Mensaje = { sender_role: string; message?: string; date_created: string };
+type MensajePack = { id: string; from: { user_id: number }; text?: string; message_date: { created: string } };
 
 // Huella de un reclamo: cuando cambia (etapa, estado, lo que el vendedor puede/debe hacer o un mensaje
 // nuevo del mediador), se analiza de nuevo y avisa. En `dispute` el mediador es el bot de ML: cada
@@ -161,6 +163,37 @@ export const NO_HACE_NADA =
 // Un arrepentimiento que no es por eficacia ("me equivoqué de sabor") no lleva el texto de B.
 const DICE_QUE_NO_ANDA = /no (me )?(hace|funciona|sirve|anda)|no (not[eé]|veo|siento)|sin (efecto|resultado|cambio)|ning[uú]n (efecto|resultado|cambio)/i;
 
+// Reposición (faltante, roto, volcado): ML nunca da celular ni mail del comprador y sin ellos el courier
+// no le avisa nada (regla 01/10). El canal existe solo mientras el comprador escribe — el vendedor no
+// puede iniciar (403 blocked_by_conversation_initiated_by_seller_limited, 02/10) —, así que se piden en
+// esa misma corrida. No nombra courier: desde el 03/10 el anticipado sale por Urbano, no por Correo.
+export const PEDIDO_DATOS =
+  "¡Hola! Te lo reponemos sin costo. Para coordinar la entrega, pasanos por acá tu celular con código de área y tu mail, y confirmanos si el domicilio es el mismo de la compra. ¡Gracias!";
+export const PIDE_REPOSICION =
+  /\brot[oa]s?\b|\brompi|volcad|derramad|perdiendo|incomplet|falt(a|an|aba|aron|[oó])\s+(un|uno|dos|1|2|frasco|gotero)|s[oó]lo\s+(1|uno|un frasco|un gotero)\b|\b(1|uno|un frasco)\s+s[oó]lo\b|lleg[oó]\s+vac[ií]o/i;
+
+// La reposición sale por Urbano 2 (cuenta 4565, guía BLABSA<orden>, desde el 03/10). El rastreo público
+// pide cuenta + guía pegadas: segui-tu-envio arma cespecifica?shi_codigo=00<4 primeros>&cli_codigo=<resto>
+// (verificado con BLABSA27789 el 03/10, sin captcha). Nunca link con https: solo el dominio.
+export function textoSeguimiento(guia: string): string | null {
+  const g = guia.trim().toUpperCase().replace(/^4565/, "");
+  if (!/^BLABSA\d+$/.test(g)) return null;
+  return `¡Hola! Tu reposición ya salió por Urbano. Código de seguimiento: 4565${g}. Lo seguís en urbano.com.ar/segui-tu-envio. ¡Saludos!`;
+}
+
+export type Contacto = { orden?: string; email?: string; area?: string; cel?: string; guia?: string };
+const MAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/;
+const TEL = /\+?\d[\d\s().-]{7,}\d/g;
+// Celular y mail que escribió el comprador. ponytail: un celular sin código de área no se adivina —
+// queda "datos incompletos" y lo ve Pancho en el aviso.
+export function contactoDe(t: string): Contacto {
+  const email = t.match(MAIL)?.[0].toLowerCase();
+  const tel = (t.match(TEL) ?? []).map(splitPhone).find(Boolean);
+  return { ...(email ? { email } : {}), ...(tel ? { area: tel.area, cel: tel.cel } : {}) };
+}
+// `texto` sale en el mail de salud (log de GitHub Actions): sin mail ni teléfono del comprador.
+export const sinContacto = (t: string) => t.replace(new RegExp(MAIL, "g"), "[mail]").replace(TEL, "[tel]");
+
 // Qué le escribe el agente a un reclamo (una sola vez por reclamo): rotos en mediación (regla 01/10),
 // "no es original" cuando ML habilita escribirle al mediador, y arrepentimiento "no hace nada" antes
 // de la mediación (reglas 02/10). Sin canal habilitado no hay mensaje: la API daría 400.
@@ -175,6 +208,10 @@ export function respuestaReclamo(c: Reclamo, msgs: Mensaje[], rotos: number, fra
   }
   if (c.reason_id === "PDD9943" && acciones.includes("send_message_to_mediator"))
     return { rol: "mediator", texto: NO_ORIGINAL, accion: "respuesta no original" };
+  // Faltan frascos (PDD9952) antes de la mediación: se repone, y el canal con el comprador está abierto
+  // (Pancho, 03/10). Los rotos no: en `dispute` la regla es reintegro sin devolución.
+  if (c.reason_id === "PDD9952" && c.stage === "claim" && acciones.includes("send_message_to_complainant"))
+    return { rol: "complainant", texto: PEDIDO_DATOS, accion: "pedido datos" };
   const comprador = msgs.filter((m) => m.sender_role === "complainant").map((m) => m.message ?? "").join(" ");
   if (c.reason_id === "PDD9939" && acciones.includes("send_message_to_complainant") && DICE_QUE_NO_ANDA.test(comprador))
     return { rol: "complainant", texto: NO_HACE_NADA, accion: "respuesta no hace nada" };
@@ -301,9 +338,24 @@ export async function correrPostventa(db: Db = supabaseAdmin()) {
     abiertos.push(...(r.data ?? []));
     if ((r.data ?? []).length < 50) break;
   }
-  const { data: previos } = await db.from("ml_postventa").select("id, estado").eq("tipo", "reclamo");
+  const { data: previos } = await db.from("ml_postventa").select("id, estado, accion, contacto").eq("tipo", "reclamo");
   const antes = new Map((previos ?? []).map((p) => [p.id, p.estado as string]));
+  const previo = new Map((previos ?? []).map((p) => [p.id, p]));
   const cambios: { id: string; estado: string; vence: string | null }[] = [];
+
+  // Respuesta a PEDIDO_DATOS: suma lo nuevo a lo ya capturado y, si cambió, lo guarda y avisa.
+  const ESPERA_DATOS = ["pedido datos", "datos incompletos"];
+  const capturar = async (id: string, ya: Contacto | null, texto: string) => {
+    const c: Contacto = { ...(ya ?? {}), ...contactoDe(texto) };
+    if ((["email", "area", "cel"] as const).every((k) => c[k] === ya?.[k])) return;
+    const ok = c.email && c.cel;
+    await db.from("ml_postventa").update({
+      contacto: c,
+      accion: ok ? "datos ok" : "datos incompletos",
+      motivo: ok ? "celular y mail capturados (columna contacto)" : `falta ${c.email ? "el celular con código de área" : c.cel ? "el mail" : "celular y mail"}`,
+      cambio_at: new Date().toISOString(),
+    }).eq("id", id);
+  };
 
   for (const c of abiertos) {
     const id = `c:${c.id}`;
@@ -311,6 +363,10 @@ export async function correrPostventa(db: Db = supabaseAdmin()) {
       const r = await get(`/post-purchase/v1/claims/${c.id}/messages`);
       const msgs = ((Array.isArray(r) ? r : r.data ?? []) as Mensaje[]) // vienen del más nuevo al más viejo
         .sort((a, b) => a.date_created.localeCompare(b.date_created));
+      // La huella mira solo al mediador: la respuesta del comprador a PEDIDO_DATOS se lee acá.
+      const pv = previo.get(id);
+      if (ESPERA_DATOS.includes(pv?.accion ?? ""))
+        await capturar(id, pv?.contacto ?? null, msgs.filter((m) => m.sender_role === "complainant").map((m) => m.message ?? "").join(" "));
       const menu = msgs.findLast((m) => m.sender_role === "mediator");
       const h = huellaReclamo(c, menu?.date_created ?? "");
       if (antes.get(id) === h.estado) continue;
@@ -361,5 +417,100 @@ export async function correrPostventa(db: Db = supabaseAdmin()) {
   const cerrar = [...antes].filter(([id, e]) => e !== "cerrado" && !vivos.includes(id)).map(([id]) => id);
   if (cerrar.length) await db.from("ml_postventa").update({ estado: "cerrado" }).in("id", cerrar);
 
-  return { modo: auto ? "auto" : "borrador", sinResponder: questions.length, preguntas, errores, reclamos: abiertos.length, cambios, cerrados: cerrar.length };
+  // --- Mensajes post-venta (packs) -------------------------------------------------------------
+  // Se contestan a mano con OK de Pancho sobre el lote (regla 21/09): el agente solo avisa. Única
+  // excepción (02/10): un faltante/roto/volcado reportado desde la última corrida, con el pedido ya
+  // entregado, recibe PEDIDO_DATOS en el acto. Más viejo que eso es backlog: solo aviso.
+  const { results: noLeidos = [] } = (await get(`/messages/unread?role=seller&tag=post_sale`)) as { results?: { resource: string }[] };
+  const { data: packsPrev } = await db.from("ml_postventa").select("id, estado, accion, contacto").eq("tipo", "pack");
+  const packAntes = new Map((packsPrev ?? []).map((p) => [p.id, p]));
+  // Los que esperan datos se leen aunque ya no figuren sin leer (alguien abrió el chat en ML).
+  const packIds = new Set([
+    ...noLeidos.map((u) => u.resource.match(/packs\/(\d+)/)?.[1]).filter((x): x is string => !!x),
+    ...(packsPrev ?? []).filter((p) => ESPERA_DATOS.includes(p.accion ?? "")).map((p) => p.id.slice(2)),
+  ]);
+  const packs: { id: string; accion: string | null }[] = [];
+
+  for (const pack of packIds) {
+    const id = `p:${pack}`;
+    try {
+      const t = await get(`/messages/packs/${pack}/sellers/${seller}?tag=post_sale&mark_as_read=false`);
+      const msgs = ((t.messages ?? []) as MensajePack[]).sort((a, b) => a.message_date.created.localeCompare(b.message_date.created));
+      const delComprador = msgs.filter((m) => String(m.from.user_id) !== seller);
+      const ultimo = delComprador.at(-1);
+      const prev = packAntes.get(id);
+      if (!ultimo || prev?.estado === ultimo.id) continue; // huella: el último mensaje del comprador
+      const { error } = await db.from("ml_postventa").upsert({
+        id, tipo: "pack", recurso: pack, texto: sinContacto(ultimo.text ?? "").slice(0, 500), estado: ultimo.id,
+        motivo: "mensaje nuevo del comprador: se contesta a mano", cambio_at: new Date().toISOString(),
+      });
+      if (error) throw new Error(`ml_postventa: ${error.message}`);
+      packs.push({ id, accion: prev?.accion ?? null });
+
+      const textoComprador = delComprador.map((m) => m.text ?? "").join(" ");
+      if (ESPERA_DATOS.includes(prev?.accion ?? "")) {
+        await capturar(id, prev?.contacto ?? null, textoComprador);
+        continue;
+      }
+      if (!auto || prev?.accion || msgs.at(-1) !== ultimo || t.conversation_status?.status !== "active") continue;
+      if (!PIDE_REPOSICION.test(textoComprador) || Date.now() - Date.parse(ultimo.message_date.created) > 3 * 3600_000) continue;
+      const p = await get(`/packs/${pack}`).catch(() => null);
+      const orden = await get(`/orders/${p?.orders?.[0]?.id ?? pack}`);
+      if (!orden.tags?.includes("delivered")) continue; // antes de la entrega, "roto/falta" no es un reporte
+
+      const { data: tomado } = await db.from("ml_postventa").update({ accion: "procesando" }).eq("id", id).is("accion", null).select("id");
+      if (!tomado?.length) continue;
+      const w = await escribir("POST", `/messages/packs/${pack}/sellers/${seller}?tag=post_sale`, {
+        from: { user_id: Number(seller) }, to: { user_id: orden.buyer.id }, text: PEDIDO_DATOS,
+      });
+      const body = await w.json().catch(() => ({}));
+      await db.from("ml_postventa").update({
+        accion: w.ok ? "pedido datos" : "error",
+        respuesta: PEDIDO_DATOS,
+        contacto: { orden: String(orden.id) },
+        motivo: w.ok
+          ? `reposición: se pidieron celular y mail (moderación ${body.message_moderation?.status ?? "?"})`
+          : `ML ${w.status}: ${JSON.stringify(body).slice(0, 150)}`,
+        cambio_at: new Date().toISOString(),
+      }).eq("id", id);
+    } catch (e) {
+      errores.push(`${id}: ${String(e).slice(0, 200)}`);
+    }
+  }
+
+  // --- Seguimiento de la reposición -------------------------------------------------------------
+  // Quien da de alta la reposición en Urbano 2 deja la guía en contacto.guia; el agente la manda una
+  // sola vez en el mismo hilo (pack o reclamo) en la corrida siguiente.
+  const { data: conGuia } = await db.from("ml_postventa").select("id, accion, contacto")
+    .not("contacto->>guia", "is", null).or('accion.is.null,accion.not.in.("seguimiento enviado","error seguimiento")');
+  for (const r of auto ? conGuia ?? [] : []) {
+    const texto = textoSeguimiento(String(r.contacto.guia));
+    if (!texto) {
+      if (r.accion !== "error guia") await db.from("ml_postventa").update({ accion: "error guia", motivo: `guía "${r.contacto.guia}" no es BLABSA<número>`, cambio_at: new Date().toISOString() }).eq("id", r.id);
+      continue;
+    }
+    const toma = db.from("ml_postventa").update({ accion: "procesando" }).eq("id", r.id);
+    const { data: tomado } = await (r.accion === null ? toma.is("accion", null) : toma.eq("accion", r.accion)).select("id");
+    if (!tomado?.length) continue;
+    try {
+      const [tipo, rid] = [r.id.slice(0, 1), r.id.slice(2)];
+      const w = tipo === "c"
+        ? await escribir("POST", `/post-purchase/v1/claims/${rid}/actions/send-message`, { receiver_role: "complainant", message: texto })
+        : await escribir("POST", `/messages/packs/${rid}/sellers/${seller}?tag=post_sale`, {
+            from: { user_id: Number(seller) }, to: { user_id: (await get(`/orders/${r.contacto.orden ?? rid}`)).buyer.id }, text: texto,
+          });
+      const body = await w.json().catch(() => ({}));
+      await db.from("ml_postventa").update({
+        accion: w.ok ? "seguimiento enviado" : "error seguimiento", // un error no se reintenta solo: avisa una vez
+        respuesta: texto,
+        motivo: w.ok ? `seguimiento enviado (moderación ${body.message_moderation?.status ?? "?"})` : `seguimiento: ML ${w.status}: ${JSON.stringify(body).slice(0, 150)}`,
+        cambio_at: new Date().toISOString(),
+      }).eq("id", r.id);
+    } catch (e) {
+      await db.from("ml_postventa").update({ accion: r.accion }).eq("id", r.id); // se suelta: reintenta en la próxima
+      errores.push(`${r.id}: ${String(e).slice(0, 200)}`);
+    }
+  }
+
+  return { modo: auto ? "auto" : "borrador", sinResponder: questions.length, preguntas, errores, reclamos: abiertos.length, cambios, cerrados: cerrar.length, packs };
 }
