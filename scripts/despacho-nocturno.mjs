@@ -76,6 +76,30 @@ export function csvGuias(rows) {
   return ["referencia,carrier,guia", ...rows.map((r) => `${r.order_number},${r.carrier},${r.guia}`)].join("\r\n");
 }
 
+// Corre `fn` sobre `items` en tandas de `tam`, `paralelo` tandas a la vez, con hasta `intentos` por
+// tanda. Devuelve lo que contestó y los ítems de las tandas que fallaron todas las veces, para que el
+// aviso diga CUÁNTOS quedaron sin chequear y no sólo "no corrió".
+// Por qué estos números en la masiva de Urbano (medido 03/10/2026, cuenta 4362): el tiempo crece
+// lineal con la tanda — 10 códigos 6-7 s, 25 → 10 s, 50 → 13-28 s, 100 → 30-61 s (los que existen
+// tardan casi el doble que los que no). Con tandas de 100 y 30 s, la cola de 181 del 03/10 se
+// abortó entera. En paralelo no se degrada: 4×25 a la vez = 6,5 s en total, 8×25 = 8,6 s.
+export async function enTandas(items, { tam, paralelo, intentos }, fn) {
+  const tandas = [];
+  for (let i = 0; i < items.length; i += tam) tandas.push(items.slice(i, i + tam));
+  const resultados = [];
+  const fallidos = [];
+  let error = null;
+  for (let i = 0; i < tandas.length; i += paralelo) {
+    await Promise.all(tandas.slice(i, i + paralelo).map(async (t) => {
+      for (let k = 1; k <= intentos; k++) {
+        try { resultados.push(...await fn(t)); return; } catch (e) { error = e.message; }
+      }
+      fallidos.push(...t);
+    }));
+  }
+  return { resultados, fallidos, error };
+}
+
 // Acá se decide qué se propone y qué no, así que es una función y no diez líneas sueltas en el
 // cuerpo: --check la cubre con casos armados que una corrida real casi nunca alcanza (el arrastre
 // viejo, el pedido que está en Veltron y no en nuestra base, las unidades que no coinciden).
@@ -256,7 +280,19 @@ if (process.argv.includes("--check")) {
   const orden = repartir([ped({ order_number: "100", un: 3 }), ped({ order_number: "101", un: 1 })], { base: new Map(), hoy });
   a.deepEqual(orden.lote.fixy.map((o) => o.un), [1, 3]);
 
-  console.log("✓ despacho-nocturno: 37 casos OK");
+  // Guarda fresca en tandas: un timeout se reintenta, y si la tanda vuelve a fallar sus pedidos salen
+  // contados como sin chequear (el 03/10/2026 el aviso decía sólo "no corrió" con 181 en la cola).
+  const llamadas = new Map();
+  const t = await enTandas([1, 2, 3, 4, 5], { tam: 2, paralelo: 2, intentos: 2 }, async (lote) => {
+    const n = (llamadas.get(lote[0]) ?? 0) + 1;
+    llamadas.set(lote[0], n);
+    if (lote[0] === 1 && n === 1) throw new Error("timeout");  // falla una vez y el reintento contesta
+    if (lote[0] === 5) throw new Error("timeout");             // falla siempre
+    return lote;
+  });
+  a.deepEqual([t.resultados.sort(), t.fallidos, t.error, llamadas.get(5)], [[1, 2, 3, 4], [5], "timeout", 2]);
+
+  console.log("✓ despacho-nocturno: 38 casos OK");
   process.exit(0);
 }
 
@@ -388,19 +424,24 @@ for (const cta of CUENTAS_URBANO) {
   const urb = pendientesDe(cta.key);
   if (!urb.length || !process.env.URBANO_API_URL) continue;
   if (!cta.password) { avisos.push(`${cta.key}: falta la clave en .env.local — la guarda fresca no corrió`); continue; }
-  for (let i = 0; i < urb.length; i += 100) {
-    const lote = urb.slice(i, i + 100);
+  // Tandas de 25, 4 a la vez, 45 s y un reintento: ver la medición en enTandas().
+  const { resultados, fallidos, error } = await enTandas(urb, { tam: 25, paralelo: 4, intentos: 2 }, async (lote) => {
     const r = await fetch(`${process.env.URBANO_API_URL.replace(/\/$/, "")}/tracking/consultaTrackingMasivo/`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({
         autentificacion: { shipper: Number(cta.shipper), password: cta.password },
         datos: lote.map((o) => ({ codigoSeguimiento: `${cta.prefijo}${o.order_number}` })),
       }),
-      signal: AbortSignal.timeout(30_000),
-    }).then((x) => x.json()).catch((e) => (avisos.push(`Urbano (${cta.key}) no contestó el tracking masivo (${e.message}): la guarda fresca no corrió`), []));
-    for (const x of Array.isArray(r) ? r : []) {
-      if (x.codError === 0) vivasEnCourier.set(String(x.codGestion).slice(cta.prefijo.length), `Urbano ya tiene la pieza (${x.codGestion})`);
-    }
+      signal: AbortSignal.timeout(45_000),
+    }).then((x) => x.json());
+    if (!Array.isArray(r)) throw new Error(`respuesta inesperada: ${JSON.stringify(r).slice(0, 120)}`);
+    return r;
+  });
+  if (fallidos.length) {
+    avisos.push(`Urbano (${cta.key}) no contestó el tracking masivo (${error}): ${fallidos.length} de ${urb.length} pedidos quedaron SIN la guarda fresca — mirarlos antes del alta: ${fallidos.map((o) => o.order_number).join(", ")}`);
+  }
+  for (const x of resultados) {
+    if (x.codError === 0) vivasEnCourier.set(String(x.codGestion).slice(cta.prefijo.length), `Urbano ya tiene la pieza (${x.codGestion})`);
   }
 }
 
