@@ -20,9 +20,11 @@
     <string>/usr/local/bin/node</string>
     <string>-e</string>
     <string>require("child_process").execFileSync("/bin/zsh",["-lc",process.argv[1]],{stdio:"inherit"})</string>
-    <string>cd "$HOME/Downloads/ProyectoEco" &amp;&amp; mkdir -p etiquetas &amp;&amp; set -a &amp;&amp; . ./.env.local &amp;&amp; set +a &amp;&amp; node scripts/mail-clientes.mjs &gt;&gt; etiquetas/mail-clientes.log 2&gt;&amp;1 || osascript -e 'display notification "Falló: mirar etiquetas/mail-clientes.log" with title "BioLabs mail"'</string>
+    <string>cd "$HOME/Downloads/ProyectoEco" &amp;&amp; mkdir -p etiquetas &amp;&amp; set -a &amp;&amp; . ./.env.local &amp;&amp; set +a &amp;&amp; { node scripts/mail-clientes.mjs &gt;&gt; etiquetas/mail-clientes.log 2&gt;&amp;1 || { echo "== $(date -u +%FT%TZ) falló, reintento en 2 min" &gt;&gt; etiquetas/mail-clientes.log; sleep 120; node scripts/mail-clientes.mjs &gt;&gt; etiquetas/mail-clientes.log 2&gt;&amp;1; }; } || osascript -e 'display notification "Falló: mirar etiquetas/mail-clientes.log" with title "BioLabs mail"'</string>
   </array>
 
+  <!-- Reintento a los 2 min: al despertar la Mac la corrida arranca antes que la red (getaddrinfo ENOTFOUND,
+       14 corridas perdidas el 02-03/10/2026). El estado solo se guarda si la corrida termina, así que no se pierde nada. -->
   <!-- Si la Mac estaba dormida a esa hora, launchd lo corre al despertar (una vez, no las que se perdió). -->
   <key>StartCalendarInterval</key>
   <array>
