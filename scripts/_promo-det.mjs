@@ -1,0 +1,10 @@
+import { ml } from './_ml.mjs';
+const it = (await ml('/items/MLA3030676394')).body;
+console.log('MLA3030676394 cat', it.category_id, 'lt', it.listing_type_id, 'tags', JSON.stringify(it.tags), 'price', it.price);
+const lp = (await ml('/sites/MLA/listing_prices', { price: 32871.27, category_id: it.category_id, listing_type_id: 'gold_pro' })).body;
+console.log('listing_prices esa cat:', JSON.stringify(lp?.sale_fee_details), 'total', lp?.sale_fee_amount);
+const lp2 = (await ml('/sites/MLA/listing_prices', { price: 33001, category_id: it.category_id, listing_type_id: 'gold_pro' })).body;
+console.log('33001:', JSON.stringify(lp2?.sale_fee_details), 'total', lp2?.sale_fee_amount);
+console.log('=== user promotions ===');
+const u = await ml('/seller-promotions/users/232905186', { app_version: 'v2' });
+console.log(u.status, JSON.stringify(u.body, null, 1).slice(0, 4000));
