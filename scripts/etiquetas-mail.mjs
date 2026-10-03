@@ -37,6 +37,7 @@ function courierDe(f) {
   const n = path.basename(f).toLowerCase();
   if (n.includes('flex')) return 'ML Flex';
   if (n.startsWith('ml') || n.includes('dropoff')) return 'ML drop-off';
+  if (n.includes('anticipado')) return 'Urbano anticipado';  // antes que 'urbano': el nombre también lo contiene
   if (n.includes('urbano')) return 'Urbano';
   if (n.includes('fixy')) return 'Fixy';
   if (n.includes('correo')) return 'Correo';

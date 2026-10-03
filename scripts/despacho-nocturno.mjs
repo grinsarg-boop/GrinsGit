@@ -38,13 +38,13 @@ const TOPE = Number(arg("tope", 150));
 const DIAS_VIEJO = Number(arg("dias-viejo", 7));
 const VIEJOS = process.argv.includes("--viejos");
 
-// `andreani` es la clave interna de Veltron; el transportista es Correo Argentino y al cliente se le
-// dice Correo (lo dice el propio server MCP). El alta de Correo no toca ningún courier: Veltron
-// emite la fila del CSV de carga masiva, y ese CSV hay que limpiarlo en el panel antes de subirlo.
+// Desde el 03/10/2026 el pago anticipado no va más por Correo: lo lleva `urbano_anticipado`, otra
+// cuenta de Urbano (shipper 4565, servicio E, SIN cobro en la puerta) con guía `BLABSA<orden>`.
+// Veltron lo dice en ver_carriers → `pago_anticipado_lo_lleva`. Correo (`andreani`) quedó en 0.
 const CARRIERS = [
   { key: "fixy", nombre: "FIXY", alta: "courier" },
   { key: "urbano", nombre: "URBANO", alta: "courier" },
-  { key: "andreani", nombre: "CORREO", alta: "csv" },
+  { key: "urbano_anticipado", nombre: "URBANO ANTICIPADO", alta: "courier" },
 ];
 
 const TZ = "America/Argentina/Buenos_Aires";
@@ -82,7 +82,7 @@ export function csvGuias(rows) {
 // `base` es order_number → { producto, un, guias[] } y `vivas` order_number → por qué el courier ya
 // tiene la pieza. Ninguna de las dos manda sola: alcanza con que UNA diga que hay guía.
 export function repartir(filas, { base = new Map(), vivas = new Map(), hoy, diasViejo = 7, viejosAdentro = false, avisos = [] } = {}) {
-  const lote = { fixy: [], urbano: [], andreani: [] };
+  const lote = Object.fromEntries(CARRIERS.map((c) => [c.key, []]));
   const reparar = [];   // tiene guía de verdad: hay que devolvérsela a Veltron, no dar de alta otra
   const viejos = [];    // arrastre de más de diasViejo: se mira antes de despachar
   const sinBase = [];   // en la cola de Veltron pero no en nuestra base
@@ -100,6 +100,11 @@ export function repartir(filas, { base = new Map(), vivas = new Map(), hoy, dias
     // con --viejos: acá no se puede elegir el remito, así que lo único que se puede hacer es no
     // autorizar el alta.
     if (!f.order_number) { sinOrden.push(f); continue; }
+    // La cuenta anticipada no cobra en la puerta: un COD por ahí sale regalado. Fuera, siempre.
+    if (f.carrier === "urbano_anticipado" && f.cod) {
+      avisos.push(`#${f.order_number}: es COD (${f.pago}) y Veltron lo manda por Urbano anticipado, que NO cobra — fuera del lote, pasarlo a urbano`);
+      continue;
+    }
     if (!b) sinBase.push(f);
     if (f.un != null && f.un_base != null && Number(f.un) !== Number(f.un_base)) {
       avisos.push(`#${f.order_number}: Veltron dice ${f.un} u. y la base ${f.un_base} — el bulto se puede armar mal, mirar antes`);
@@ -224,6 +229,12 @@ if (process.argv.includes("--check")) {
   a.equal(huerfano.sinBase.length, 1);
   a.equal(huerfano.lote.fixy[0].producto, null, "sin base no hay producto: el código va a mano");
 
+  // COD por la cuenta anticipada: no cobra en la puerta, así que no se propone jamás.
+  const codAnt = repartir([ped({ carrier: "urbano_anticipado", cod: true, pago: "cod_efectivo" })], { base: conBase(), hoy });
+  a.equal(codAnt.lote.urbano_anticipado.length, 0, "un COD no sale por la cuenta que no cobra");
+  a.match(codAnt.avisos[0], /NO cobra/);
+  a.equal(repartir([ped({ carrier: "urbano_anticipado", cod: false })], { base: conBase(), hoy }).lote.urbano_anticipado.length, 1);
+
   // Unidades que no coinciden: el bulto se puede armar mal, así que sale aviso (pero se propone).
   const desacuerdo = repartir([ped({ un: 3 })], { base: conBase(), hoy });
   a.equal(desacuerdo.lote.fixy.length, 1);
@@ -245,7 +256,7 @@ if (process.argv.includes("--check")) {
   const orden = repartir([ped({ order_number: "100", un: 3 }), ped({ order_number: "101", un: 1 })], { base: new Map(), hoy });
   a.deepEqual(orden.lote.fixy.map((o) => o.un), [1, 3]);
 
-  console.log("✓ despacho-nocturno: 34 casos OK");
+  console.log("✓ despacho-nocturno: 37 casos OK");
   process.exit(0);
 }
 
@@ -367,20 +378,28 @@ if (numeros.length) {
 const vivasEnCourier = new Map(); // order_number → texto de por qué está viva
 const pendientesDe = (k) => filas.filter((f) => f.carrier === k && f.order_number && !base.get(f.order_number)?.guias.length);
 
-const urb = pendientesDe("urbano");
-if (urb.length && process.env.URBANO_API_URL) {
+// Las dos cuentas de Urbano: cada una con su clave y su prefijo (anticipado = `BLABSA<orden>`, visto
+// el 03/10/2026 en la guía BLABSA27789). Preguntar con la cuenta equivocada da "credenciales inválidas".
+const CUENTAS_URBANO = [
+  { key: "urbano", prefijo: "BLABS", shipper: process.env.URBANO_SHIPPER, password: process.env.URBANO_PASSWORD },
+  { key: "urbano_anticipado", prefijo: "BLABSA", shipper: process.env.URBANO_ANT_SHIPPER, password: process.env.URBANO_ANT_PASSWORD },
+];
+for (const cta of CUENTAS_URBANO) {
+  const urb = pendientesDe(cta.key);
+  if (!urb.length || !process.env.URBANO_API_URL) continue;
+  if (!cta.password) { avisos.push(`${cta.key}: falta la clave en .env.local — la guarda fresca no corrió`); continue; }
   for (let i = 0; i < urb.length; i += 100) {
     const lote = urb.slice(i, i + 100);
     const r = await fetch(`${process.env.URBANO_API_URL.replace(/\/$/, "")}/tracking/consultaTrackingMasivo/`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        autentificacion: { shipper: Number(process.env.URBANO_SHIPPER), password: process.env.URBANO_PASSWORD },
-        datos: lote.map((o) => ({ codigoSeguimiento: `BLABS${o.order_number}` })),
+        autentificacion: { shipper: Number(cta.shipper), password: cta.password },
+        datos: lote.map((o) => ({ codigoSeguimiento: `${cta.prefijo}${o.order_number}` })),
       }),
       signal: AbortSignal.timeout(30_000),
-    }).then((x) => x.json()).catch((e) => (avisos.push(`Urbano no contestó el tracking masivo (${e.message}): la guarda fresca no corrió`), []));
+    }).then((x) => x.json()).catch((e) => (avisos.push(`Urbano (${cta.key}) no contestó el tracking masivo (${e.message}): la guarda fresca no corrió`), []));
     for (const x of Array.isArray(r) ? r : []) {
-      if (x.codError === 0) vivasEnCourier.set(String(x.codGestion).replace(/^BLABS/i, ""), `Urbano ya tiene la pieza (${x.codGestion})`);
+      if (x.codError === 0) vivasEnCourier.set(String(x.codGestion).slice(cta.prefijo.length), `Urbano ya tiene la pieza (${x.codGestion})`);
     }
   }
 }
@@ -418,7 +437,7 @@ console.log(`\n=== Propuesta de despacho ${HOY} · ${totalLote} pedidos (${nCod}
 for (const c of CARRIERS) {
   const l = lote[c.key];
   if (!l.length) { console.log(`\n${c.nombre}: nada para despachar`); continue; }
-  console.log(`\n${c.nombre} — ${l.length} pedidos · ${u(l)} unidades${c.alta === "csv" ? " (alta = CSV de carga masiva, no toca courier)" : ""}`);
+  console.log(`\n${c.nombre} — ${l.length} pedidos · ${u(l)} unidades`);
   // Partido por medio de pago: el depósito arma igual, pero el COD se cobra en la puerta y el
   // prepago ya está cobrado. Mientras el prepago viva dentro de un courier COD, el corte tiene que
   // estar a la vista de quien aprueba el lote.
@@ -428,7 +447,7 @@ for (const c of CARRIERS) {
     if (l.some((o) => o.cod) && l.some((o) => !o.cod)) console.log(`  · ${titulo} — ${sub.length} pedidos · ${u(sub)} u.`);
     for (const o of sub) console.log(linea(o));
   }
-  const prepagoEnCOD = l.filter((o) => !o.cod && c.alta === "courier");
+  const prepagoEnCOD = l.filter((o) => !o.cod && c.key !== "urbano_anticipado");
   if (prepagoEnCOD.length) {
     console.log(`  ⚠️ ${prepagoEnCOD.length} PREPAGO por ${c.nombre}: la guía NO puede salir con valor de contrareembolso o el repartidor lo cobra de nuevo.`);
     console.log(`     Mirá la primera etiqueta antes de despachar el resto: ${prepagoEnCOD.map((o) => o.pedido_id).slice(0, 5).join(", ")}`);
@@ -486,7 +505,7 @@ if (csvRows.length) {
   console.log(`guías a devolverle a Veltron → ${csvPath}`);
 }
 
-const conAlta = lote.fixy.length + lote.urbano.length;
+const conAlta = Object.values(lote).reduce((n, l) => n + l.length, 0);
 if (conAlta > TOPE) {
   console.error(`\n🛑 ${conAlta} guías a dar de alta supera el tope de ${TOPE}. Revisá el lote antes de aprobar nada.`);
   console.error(`   Si es legítimo: --tope ${conAlta}`);
@@ -503,11 +522,6 @@ for (const c of CARRIERS) {
   if (!l.length) continue;
   const ids = l.map((o) => o.pedido_id);
   const colaLimpia = cola[c.key].length === l.length;
-  if (c.alta === "csv") {
-    console.log(`\n${c.nombre} (${l.length}): etiquetas_lote(carrier="andreani", pedido_ids=[${ids.join(",")}]) → CSV de carga masiva + los pasa a preparando.`);
-    console.log(`   El CSV que emite Veltron viene con signos en los campos de texto y Mi Correo rechaza el archivo ENTERO: limpiarlo en /logistica?t=correo antes de subirlo.`);
-    continue;
-  }
   console.log(`\n${c.nombre} (${l.length}):`);
   if (colaLimpia) {
     console.log(`   descargar_etiquetas_pendientes(carrier="${c.key}", generar=true, confirmar=true) — de a 20 por llamada, ${Math.ceil(l.length / 20)} llamada(s).`);
@@ -516,7 +530,7 @@ for (const c of CARRIERS) {
     console.log(`   🛑 NO usar descargar_etiquetas_pendientes(generar=true): la cola tiene ${cola[c.key].length} y el lote ${l.length} — la tool toma los primeros de la cola, no los aprobados.`);
     console.log(`   Ir de a uno, que es idempotente: generar_etiqueta(pedido_id=…, carrier="${c.key}") para ${ids.join(",")}`);
   }
-  if (c.key === "urbano") console.log(`   Etiquetas juntas: etiquetas_lote(carrier="urbano", pedido_ids=[${ids.join(",")}]) → un PDF. (Fixy no tiene lote: sale una por pedido.)`);
+  if (c.key.startsWith("urbano")) console.log(`   Etiquetas juntas: etiquetas_lote(carrier="${c.key}", pedido_ids=[${ids.join(",")}]) → un PDF. (Fixy no tiene lote: sale una por pedido.)`);
 }
 
 console.log("\nDespués del alta:");

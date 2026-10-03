@@ -75,6 +75,7 @@ function loteDeArgs(): Record<string, number[]> {
   return {
     fixy: (p.lote.fixy ?? []).map((o: any) => o.pedido_id),
     urbano: (p.lote.urbano ?? []).map((o: any) => o.pedido_id),
+    urbano_anticipado: (p.lote.urbano_anticipado ?? []).map((o: any) => o.pedido_id),
     andreani: (p.lote.andreani ?? []).map((o: any) => o.pedido_id),
   };
 }
@@ -178,8 +179,18 @@ async function paginasPorGuia(bytes: Uint8Array, guias: string[]): Promise<Map<s
 // La etiqueta de Urbano se puede pedir sólo con la guía, sin pasar por Veltron. Hace falta para
 // rehacer un PDF (--solo-etiquetas): ahí no hay alta, y la URL que devuelve `generar_etiqueta` no
 // existe. Es el mismo endpoint que usa Veltron (verificado 03/09/2026).
-const urlUrbano = (guia: string) =>
-  `https://apis.urbano.com.ar/impresionEtiqueta/?tipo=Z10X15&shipper=${process.env.URBANO_SHIPPER ?? "4362"}&codSeguimiento=${encodeURIComponent(guia)}`;
+// Cada cuenta con su shipper: contra entrega 4362, anticipado 4565 (sin COD, guía BLABSA<orden>).
+const SHIPPER: Record<string, string> = {
+  urbano: process.env.URBANO_SHIPPER ?? "4362",
+  urbano_anticipado: process.env.URBANO_ANT_SHIPPER ?? "4565",
+};
+const urlUrbano = (guia: string, carrier: string) =>
+  `https://apis.urbano.com.ar/impresionEtiqueta/?tipo=Z10X15&shipper=${SHIPPER[carrier]}&codSeguimiento=${encodeURIComponent(guia)}`;
+// Nombre del archivo y del courier en el mail (etiquetas-mail.mjs lee "anticipado" del nombre).
+const NOMBRE: Record<string, string> = { fixy: "Fixy", urbano: "Urbano", urbano_anticipado: "Urbano anticipado" };
+// Para estampar, la anticipada es la plantilla de Urbano: misma página 425×283 y el hueco de arriba a
+// la derecha libre (verificado 03/10/2026 rasterizando BLABSA27789).
+const stampCourier = (carrier: string) => (carrier === "urbano_anticipado" ? "urbano" : carrier);
 
 async function htmlAPdf(html: string): Promise<Uint8Array> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "etq-"));
@@ -208,7 +219,7 @@ if (DESPACHAR) {
   const nuevos: number[] = [];   // vistos por primera vez: se les anota la hora y se marcan en la próxima corrida
   const retenidos: string[] = [];
   const RX_CANCEL = /cancel|anular|anulad|no enviar|no despachar|devolver plata|reembols/i;  // = chequeo-dup-cancel.mts
-  const SIN_ESCANEO: Record<string, string[]> = { urbano: ["PI"], fixy: ["41"] };            // alta hecha, el courier no lo tocó
+  const SIN_ESCANEO: Record<string, string[]> = { urbano: ["PI"], urbano_anticipado: ["PI"], fixy: ["41"] };            // alta hecha, el courier no lo tocó
 
   // Estado en la base de cada guía del ledger: sirve para no preguntarle a Veltron por lo que ya salió
   // (respaldo de abajo) y para retener cancelados y bultos que el courier todavía no tocó.
@@ -218,9 +229,37 @@ if (DESPACHAR) {
     from shipments s join orders o on o.id = s.order_id where s.tracking = any($1)`, [Object.values(led).map((v) => v.guia).filter(Boolean)]);
   await db.end();
   const base = new Map(rows.map((r) => [r.tracking, r]));
+  // Urbano anticipado todavía no entra al sync (lib/couriers/urbano.ts usa sólo la cuenta 4362), así
+  // que no tiene fila en shipments: el escaneo se le pregunta a Urbano con la clave de esa cuenta y la
+  // cancelación a `orders` por nº de orden. Sin esto quedarían todos RETENIDOS por "sin fila".
+  const ant = (Object.values(led) as any[]).filter((v) => v.carrier === "urbano_anticipado" && v.guia && !base.has(v.guia)).map((v) => v.guia as string);
+  if (ant.length) {
+    const db2 = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    await db2.connect(); await db2.query("set default_transaction_read_only = on");
+    const ords = new Map((await db2.query(`select order_number, cancelled_at, tags, raw->>'note' nota from orders where order_number = any($1)`,
+      [ant.map((g) => g.replace(/^BLABSA/, ""))])).rows.map((r) => [r.order_number, r]));
+    await db2.end();
+    for (let i = 0; i < ant.length; i += 100) {
+      const r = await fetch(`${(process.env.URBANO_API_URL ?? "https://apis.urbano.com.ar/").replace(/\/$/, "")}/tracking/consultaTrackingMasivo/`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ autentificacion: { shipper: Number(SHIPPER.urbano_anticipado), password: process.env.URBANO_ANT_PASSWORD },
+          datos: ant.slice(i, i + 100).map((g) => ({ codigoSeguimiento: g })) }),
+        signal: AbortSignal.timeout(30_000),
+      }).then((x) => x.json()).catch(() => []);
+      for (const x of Array.isArray(r) ? r : []) {
+        if (x.codError !== 0) continue;
+        const o = ords.get(String(x.codGestion).replace(/^BLABSA/, ""));
+        if (!o) continue;   // sin la orden en la base no hay cómo saber si se canceló: queda "sin fila" y RETENIDO
+        // `estado` ("MA - …") es el autoritativo; viene " - " antes del primer escaneo y ahí manda el último movimiento.
+        const status_raw = String(x.estado ?? "").split(" - ")[0].trim() || x.movimientos?.at(-1)?.check || null;
+        base.set(x.codGestion, { tracking: x.codGestion, ...o, status_raw });
+      }
+    }
+  }
   const yaSalio = (guia: string) => /(^|, )despachado(,|$)/.test(base.get(guia)?.tags ?? "");
 
-  for (const carrier of ["fixy", "urbano", "andreani"]) {
+  // `andreani` (Correo) sigue acá sólo para cerrar los que quedaron en preparando antes del 03/10/2026.
+  for (const carrier of ["fixy", "urbano", "urbano_anticipado", "andreani"]) {
     const pedidos: any[] = [];
     try {
       for (let page = 1, paginas = 1; page <= paginas && page <= 20; page++) {
@@ -354,6 +393,11 @@ for (const [carrier, ids] of Object.entries(lote)) {
       console.error(`  ⛔ ${carrier}/${pedidoId} (${p.cliente_nombre ?? "?"}): sin nº de orden de Shopify — NO se da de alta, el remito saldría "null". Si es de prueba, cancelalo en Veltron.`);
       continue;
     }
+    // La cuenta anticipada no cobra en la puerta (servicio E): un COD por ahí sale sin cobrar.
+    if (carrier === "urbano_anticipado" && esCOD(p.metodo_pago)) {
+      console.error(`  ⛔ ${carrier}/${pedidoId} #${p.shopify_order_number}: es COD (${p.metodo_pago}) y Urbano anticipado NO cobra — NO se da de alta. Pasarlo a urbano en Veltron.`);
+      continue;
+    }
     items.push({
       carrier, pedidoId, sku: p.sku ?? null, guia: p.guia ?? null, producto: null, unidades: null,
       order_number: String(p.shopify_order_number).trim(),
@@ -384,7 +428,7 @@ if (sinCode.length) {
   console.log(`\n⚠️ ${sinCode.length} sin código: van al final, para revisar a mano.`);
   for (const it of sinCode) console.log(`   #${it.order_number} (${it.carrier}/${it.pedidoId}): ${it.nota}`);
 }
-const prepago = items.filter((i) => !i.cod);
+const prepago = items.filter((i) => !i.cod && i.carrier !== "urbano_anticipado");
 if (prepago.length) {
   console.log(`\n⚠️ ${prepago.length} PREPAGO por un courier de contra entrega: la guía NO puede salir con valor de`);
   console.log(`   contrareembolso o el repartidor lo cobra de nuevo. Mirá la primera etiqueta antes del resto.`);
@@ -458,8 +502,11 @@ const bytesPorPedido = new Map<number, Uint8Array>();
 
 // Urbano: `etiquetas_lote` devuelve UN PDF con hasta 100 etiquetas. Medido 04/09/2026: 12 etiquetas
 // en 1,4 s de llamada + 12,5 s de descarga, contra 2,5 s por cada una bajándolas de a una.
-const urb = conGuia.filter((it) => it.carrier !== "fixy");
 const loteBytes: { bytes: Uint8Array; paginas: Map<string, number> }[] = [];
+// Una pasada por cuenta: `etiquetas_lote` recibe un solo carrier, y una tanda mezclada pediría la
+// anticipada con la cuenta de contra entrega.
+for (const cuenta of ["urbano", "urbano_anticipado"]) {
+const urb = conGuia.filter((it) => it.carrier === cuenta);
 if (urb.length) {
   const tUrb = Date.now();
   // De a 50 y no de a 100: con 101 pedidos `etiquetas_lote` se pasó del timeout (04/09/2026).
@@ -474,7 +521,7 @@ if (urb.length) {
       // que una etiqueta con el código de otro pedido.
       for (const it of tanda) {
         if (paginas.has(guias.get(it.pedidoId)!)) continue;
-        const url = urls.get(it.pedidoId) ?? (it.carrier === "urbano" ? urlUrbano(guias.get(it.pedidoId)!) : undefined);
+        const url = urls.get(it.pedidoId) ?? urlUrbano(guias.get(it.pedidoId)!, it.carrier);
         const r2 = url ? await fetch(url, { signal: AbortSignal.timeout(60_000) }).catch(() => null) : null;
         if (r2?.ok) bytesPorPedido.set(it.pedidoId, new Uint8Array(await r2.arrayBuffer()));
         else fallidos.push({ it, motivo: "no está en el PDF del lote y no se pudo bajar suelta" });
@@ -483,7 +530,7 @@ if (urb.length) {
       console.error(`⚠️ ${tanda[0].carrier} en lote falló (${(e as Error).message.slice(0, 120)}). Bajo de a una.`);
       for (let j = 0; j < tanda.length; j += 5) {
         await Promise.all(tanda.slice(j, j + 5).map(async (it) => {
-          const url = urls.get(it.pedidoId) ?? (it.carrier === "urbano" ? urlUrbano(guias.get(it.pedidoId)!) : undefined);
+          const url = urls.get(it.pedidoId) ?? urlUrbano(guias.get(it.pedidoId)!, it.carrier);
           const r2 = url ? await fetch(url, { signal: AbortSignal.timeout(60_000) }).catch(() => null) : null;
           if (r2?.ok) bytesPorPedido.set(it.pedidoId, new Uint8Array(await r2.arrayBuffer()));
           else fallidos.push({ it, motivo: "la etiqueta no bajó" });
@@ -491,7 +538,8 @@ if (urb.length) {
       }
     }
   }
-  console.log(`etiquetas Urbano: ${urb.length} en ${seg(Date.now() - tUrb)}`);
+  console.log(`etiquetas ${NOMBRE[cuenta]}: ${urb.length} en ${seg(Date.now() - tUrb)}`);
+}
 }
 
 // Fixy no tiene lote en Veltron, pero SÍ en la API de Fixy: se piden todas las guías juntas a
@@ -538,6 +586,7 @@ if (fx.length) {
 // ---------------- el PDF ----------------
 const sources: ArrayBuffer[] = [];
 const pages: OutPage[] = [];
+const pageItems: Item[] = [];                       // el pedido de cada página (pages[i] ↔ pageItems[i])
 const idxLote = new Map<number, number>();          // índice de cada PDF de lote dentro de `sources`
 loteBytes.forEach((l, i) => { sources.push(arrayBuffer(l.bytes)); idxLote.set(i, i); });
 
@@ -545,7 +594,8 @@ for (const it of conGuia) {
   const guia = guias.get(it.pedidoId)!;
   const enLote = loteBytes.findIndex((l) => l.paginas.has(guia));
   if (enLote >= 0) {
-    pages.push({ file: idxLote.get(enLote)!, page: loteBytes[enLote].paginas.get(guia)!, courier: it.carrier as any, code: it.code });
+    pages.push({ file: idxLote.get(enLote)!, page: loteBytes[enLote].paginas.get(guia)!, courier: stampCourier(it.carrier) as any, code: it.code });
+    pageItems.push(it);
     continue;
   }
   const bytes = bytesPorPedido.get(it.pedidoId);
@@ -553,7 +603,8 @@ for (const it of conGuia) {
   const conTinta = await paginasConTinta(bytes);
   if (!conTinta.length) { fallidos.push({ it, motivo: "la etiqueta vino en blanco" }); continue; }
   sources.push(arrayBuffer(bytes));
-  pages.push({ file: sources.length - 1, page: conTinta[0], courier: it.carrier as any, code: it.code });
+  pages.push({ file: sources.length - 1, page: conTinta[0], courier: stampCourier(it.carrier) as any, code: it.code });
+  pageItems.push(it);
 }
 
 // Lote sólo de Correo: no hay páginas por definición y el CSV sale más abajo. Hasta el 11/09/2026
@@ -569,19 +620,20 @@ if (!pages.length && items.length) {
 const stamp = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Argentina/Buenos_Aires" });
 const ICLOUD = process.env.DESPACHO_ICLOUD_DIR ?? "";
 let sinEstampar = 0;
-if (pages.length) {
-  let pdf: Uint8Array;
-  ({ pdf, sinEstampar } = await buildPdf(sources, pages));
+// Un PDF por courier (Pancho, 29/09/2026): cada uno sale por su canal, y el anticipado no se puede
+// mezclar con el de contra entrega porque uno se cobra en la puerta y el otro no.
+for (const carrier of [...new Set(pageItems.map((it) => it.carrier))].sort()) {
+  const idx = pageItems.flatMap((it, i) => (it.carrier === carrier ? [i] : []));
+  const r = await buildPdf(sources, idx.map((i) => pages[i]));
+  sinEstampar += r.sinEstampar;
   fs.mkdirSync(OUT_DIR, { recursive: true });
   // Nunca pisar un PDF que ya existe: en un mismo día hay más de una tanda (la de la mañana y la de
   // la noche), y el 04/09/2026 la segunda corrida borró la primera. Cada tanda es un archivo.
-  // Nombre "Fixy - 27-09-2026.pdf" (pedido de Pancho 27/09/2026); lote mixto → "Fixy + Urbano - …".
-  const couriers = [...new Set(pages.map((pg) => String(pg.courier)))].sort()
-    .map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(" + ");
-  const base = `${couriers} - ${stamp.split("-").reverse().join("-")}`;
+  // Nombre "Fixy - 27-09-2026.pdf" (pedido de Pancho 27/09/2026).
+  const base = `${NOMBRE[carrier] ?? carrier} - ${stamp.split("-").reverse().join("-")}`;
   let destino = path.join(OUT_DIR, `${base}.pdf`);
   for (let n = 2; fs.existsSync(destino); n++) destino = path.join(OUT_DIR, `${base} (${n}).pdf`);
-  fs.writeFileSync(destino, pdf);
+  fs.writeFileSync(destino, r.pdf);
   // Índice al lado del PDF: qué pedido, qué guía y qué código hay en cada página. Sin esto, el mapa
   // vive sólo en el log de la corrida y rearmar o reordenar el PDF depende de no haberlo perdido
   // (04/09/2026: reconstruirlo a mano costó media hora).
@@ -589,19 +641,18 @@ if (pages.length) {
   fs.writeFileSync(indice, JSON.stringify({
     generado: new Date().toISOString(),
     pdf: path.basename(destino),
-    paginas: pages.map((pg, i) => {
-      const it = conGuia[i];
-      return { pagina: i + 1, pedido_id: it?.pedidoId, order_number: it?.order_number ?? null, carrier: it?.carrier, guia: it ? guias.get(it.pedidoId) : null, codigo: pg.code, producto: it?.producto, unidades: it?.unidades };
+    paginas: idx.map((i, n) => {
+      const it = pageItems[i];
+      return { pagina: n + 1, pedido_id: it.pedidoId, order_number: it.order_number, carrier: it.carrier, guia: guias.get(it.pedidoId), codigo: pages[i].code, producto: it.producto, unidades: it.unidades };
     }),
-    sin_etiqueta: fallidos.map((f) => ({ pedido_id: f.it.pedidoId, carrier: f.it.carrier, motivo: f.motivo })),
+    sin_etiqueta: fallidos.filter((f) => f.it.carrier === carrier).map((f) => ({ pedido_id: f.it.pedidoId, carrier: f.it.carrier, motivo: f.motivo })),
   }, null, 1));
 
-  console.log(`\netiquetas → ${destino} · ${pages.length} página(s) · total ${seg(Date.now() - t0)}`);
+  console.log(`\netiquetas → ${destino} · ${idx.length} página(s) · total ${seg(Date.now() - t0)}`);
   console.log(`índice     → ${path.basename(indice)} (pedido, guía y código de cada página)`);
 
   // Copia opcional a una carpeta sincronizada (iCloud, Drive) para mirar el PDF desde el teléfono.
-  // Apagada por default a pedido de Pancho (04/09/2026): el archivo bueno es el del repo y no hay que
-  // ensuciar iCloud con copias. Se prende poniendo DESPACHO_ICLOUD_DIR.
+  // Apagada por default a pedido de Pancho (04/09/2026). Se prende poniendo DESPACHO_ICLOUD_DIR.
   try {
     if (ICLOUD) {
       fs.mkdirSync(ICLOUD, { recursive: true });
