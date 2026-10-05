@@ -169,15 +169,22 @@ const DICE_QUE_NO_ANDA = /no (me )?(hace|funciona|sirve|anda)|no (not[eé]|veo|s
 // esa misma corrida. No nombra courier: desde el 03/10 el anticipado sale por Urbano, no por Correo.
 export const PEDIDO_DATOS =
   "¡Hola! Te lo reponemos sin costo. Para coordinar la entrega, pasanos por acá tu celular con código de área y tu mail, y confirmanos si el domicilio es el mismo de la compra. ¡Gracias!";
+// En mediación el canal es el mediador: se ofrece el envío y se le piden los datos del comprador.
+export const OFRECE_FALTANTE =
+  "Hola. Reconocemos el faltante y le enviamos al comprador lo que falta, sin costo, por Urbano a su domicilio. Para coordinar la entrega necesitamos que nos pase su celular con código de área y su mail, y que confirme si el domicilio es el mismo de la compra.";
+export const FALTANTE =
+  /incomplet|falt(a|an|aba|aron|[oó])\s+(un|uno|dos|1|2|frasco|gotero)|s[oó]lo\s+(1|uno|un frasco|un gotero)\b|\b(1|uno|un frasco)\s+s[oó]lo\b/i;
 export const PIDE_REPOSICION =
   /\brot[oa]s?\b|\brompi|volcad|derramad|perdiendo|incomplet|falt(a|an|aba|aron|[oó])\s+(un|uno|dos|1|2|frasco|gotero)|s[oó]lo\s+(1|uno|un frasco|un gotero)\b|\b(1|uno|un frasco)\s+s[oó]lo\b|lleg[oó]\s+vac[ií]o/i;
 
 // La reposición sale por Urbano 2 (cuenta 4565, guía BLABSA<orden>, desde el 03/10). El rastreo público
 // pide cuenta + guía pegadas: segui-tu-envio arma cespecifica?shi_codigo=00<4 primeros>&cli_codigo=<resto>
 // (verificado con BLABSA27789 el 03/10, sin captcha). Nunca link con https: solo el dominio.
+// Urbano corta el código a 16 caracteres sin avisar (05/10: BLABSA2000018620524242 quedó BLABSA2000018620):
+// una orden de ML entera no entra, va BLABSA<últimos 10 dígitos>. Más largo = no es la guía real.
 export function textoSeguimiento(guia: string): string | null {
   const g = guia.trim().toUpperCase().replace(/^4565/, "");
-  if (!/^BLABSA\d+$/.test(g)) return null;
+  if (!/^BLABSA\d{1,10}$/.test(g)) return null;
   return `¡Hola! Tu reposición ya salió por Urbano. Código de seguimiento: 4565${g}. Lo seguís en urbano.com.ar/segui-tu-envio. ¡Saludos!`;
 }
 
@@ -208,11 +215,14 @@ export function respuestaReclamo(c: Reclamo, msgs: Mensaje[], rotos: number, fra
   }
   if (c.reason_id === "PDD9943" && acciones.includes("send_message_to_mediator"))
     return { rol: "mediator", texto: NO_ORIGINAL, accion: "respuesta no original" };
-  // Faltan frascos (PDD9952) antes de la mediación: se repone, y el canal con el comprador está abierto
-  // (Pancho, 03/10). Los rotos no: en `dispute` la regla es reintegro sin devolución.
-  if (c.reason_id === "PDD9952" && c.stage === "claim" && acciones.includes("send_message_to_complainant"))
-    return { rol: "complainant", texto: PEDIDO_DATOS, accion: "pedido datos" };
+  // Faltante (PDD9952 o el comprador lo dice con otro motivo), en cualquier etapa: SIEMPRE se ofrece
+  // enviar lo que falta y se piden los datos (Pancho, 05/10). Los rotos no: van por la regla de arriba.
+  // Si ya le escribimos a mano (respondent), no se pisa lo que se dijo.
   const comprador = msgs.filter((m) => m.sender_role === "complainant").map((m) => m.message ?? "").join(" ");
+  if ((c.reason_id === "PDD9952" || FALTANTE.test(comprador)) && !msgs.some((m) => m.sender_role === "respondent")) {
+    if (acciones.includes("send_message_to_complainant")) return { rol: "complainant", texto: PEDIDO_DATOS, accion: "pedido datos" };
+    if (acciones.includes("send_message_to_mediator")) return { rol: "mediator", texto: OFRECE_FALTANTE, accion: "pedido datos" };
+  }
   if (c.reason_id === "PDD9939" && acciones.includes("send_message_to_complainant") && DICE_QUE_NO_ANDA.test(comprador))
     return { rol: "complainant", texto: NO_HACE_NADA, accion: "respuesta no hace nada" };
   return null;

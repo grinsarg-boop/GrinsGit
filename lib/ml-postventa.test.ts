@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candadoSalida, contactoDe, huellaReclamo, NO_HACE_NADA, NO_ORIGINAL, opcionDelMenu, ORIGINALIDAD, PEDIDO_DATOS, PIDE_REPOSICION, planRoto, reglaFija, respuestaReclamo, ROTO, sinContacto, textoSeguimiento } from "./ml-postventa";
+import { candadoSalida, contactoDe, huellaReclamo, NO_HACE_NADA, NO_ORIGINAL, OFRECE_FALTANTE, opcionDelMenu, ORIGINALIDAD, PEDIDO_DATOS, PIDE_REPOSICION, planRoto, reglaFija, respuestaReclamo, ROTO, sinContacto, textoSeguimiento } from "./ml-postventa";
 
 describe("reglaFija (reglas de Pancho 21/09 y 30/09/2026)", () => {
   it("ANMAT / RNPA → borrar (01/10), aunque también pregunte por originalidad", () => {
@@ -118,14 +118,21 @@ describe("respuestaReclamo: textos fijos de Pancho (02/10) solo con canal habili
 });
 
 describe("reposición: pedir celular y mail mientras el canal está abierto (Pancho 02-03/10)", () => {
-  it("PDD9952 en claim con canal al comprador → PEDIDO_DATOS; en dispute o sin canal, nada", () => {
+  it("faltante en cualquier etapa → ofrece el envío y pide datos; sin canal o ya respondido a mano, nada (Pancho 05/10)", () => {
     const r = (stage: string, acciones: string[]) => ({
       id: 1, resource: "order", resource_id: 2, type: "mediations", stage, status: "opened", reason_id: "PDD9952", quantity_type: "partial",
       players: [{ type: "seller", available_actions: acciones.map((action) => ({ action })) }],
     });
     expect(respuestaReclamo(r("claim", ["send_message_to_complainant"]), [], 0, 3)).toMatchObject({ rol: "complainant", texto: PEDIDO_DATOS, accion: "pedido datos" });
     expect(respuestaReclamo(r("claim", []), [], 0, 3)).toBeNull();
-    expect(respuestaReclamo(r("dispute", ["send_message_to_mediator"]), [], 0, 3)).toBeNull();
+    expect(respuestaReclamo(r("dispute", ["send_message_to_mediator"]), [], 0, 3)).toMatchObject({ rol: "mediator", texto: OFRECE_FALTANTE, accion: "pedido datos" });
+    const yaRespondido = [{ sender_role: "respondent", message: "Le volvimos a enviar los 2 goteros", date_created: "2026-10-03" }];
+    expect(respuestaReclamo(r("dispute", ["send_message_to_mediator"]), yaRespondido, 0, 3)).toBeNull();
+    const arrepentido = { ...r("claim", ["send_message_to_complainant"]), reason_id: "PDD9939" };
+    const dice = (t: string) => [{ sender_role: "complainant", message: t, date_created: "2026-10-05" }];
+    expect(respuestaReclamo(arrepentido, dice("me faltó un gotero, vinieron 2"), 0, 3)).toMatchObject({ texto: PEDIDO_DATOS });
+    expect(respuestaReclamo(arrepentido, dice("me equivoqué de sabor"), 0, 3)).toBeNull();
+    expect(OFRECE_FALTANTE).not.toMatch(/https?:|whats|anmat/i);
   });
   it("detecta el reporte de faltante/roto/volcado y no la duda o el agradecimiento", () => {
     for (const t of ["Me llegó un frasco roto", "llegó volcado", "compré 3 y me faltan dos frascos", "vino solo 1 gotero", "se rompió en el viaje", "llegó incompleto"])
@@ -156,5 +163,7 @@ describe("seguimiento de la reposición por Urbano 2 (cuenta 4565, 03/10)", () =
     expect(t).not.toMatch(/https?:|whats/i);
     expect(textoSeguimiento("HC123456789AR")).toBeNull();
     expect(textoSeguimiento("0001494211379I3IC212901")).toBeNull();
+    expect(textoSeguimiento("BLABSA2000018620524242")).toBeNull(); // Urbano lo corta a 16: no es la guía real
+    expect(textoSeguimiento("BLABSA2000018620")).toContain("4565BLABSA2000018620");
   });
 });
