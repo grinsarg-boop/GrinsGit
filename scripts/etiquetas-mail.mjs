@@ -1,6 +1,6 @@
 // Último paso de cada generación de etiquetas (Pancho, 29/09/2026): lee el código estampado de cada
 // página de los PDFs, arma el detalle de picking por courier (packs por código y frascos por producto),
-// descuenta esos frascos de la app Stock y manda todo por mail al depósito, desde biolabsarg@gmail.com
+// descuenta los INSUMOS de la app Stock y manda todo por mail al depósito, desde biolabsarg@gmail.com
 // a andreud.francisco@gmail.com (scripts/gmail-enviar.mjs, token GMAIL_SEND_TOKEN_BIOLABS).
 //
 //   node --env-file=.env.local scripts/etiquetas-mail.mjs <archivos...>          # descuenta y manda
@@ -10,10 +10,18 @@
 // El detalle sale del PDF que se imprime y no de un índice aparte: el código estampado (P2 = Pureza x2)
 // es el último texto de cada página en ML, Urbano, Fixy y Correo (verificado 29/09/2026).
 //
-// STOCK sin doble descuento: `.stock-etiquetas.json` (en la raíz) guarda cada etiqueta ya descontada por
-// courier + nº de pedido o venta. Un PDF regenerado, o el de Flex de la mañana que repite etiquetas de la
-// noche, sólo descuenta las nuevas. ponytail: la clave es el pedido y no la guía, así que un redespacho
-// del mismo pedido no se descuenta solo; si eso pasa seguido, sumar la guía a la clave.
+// STOCK = INSUMOS, no producto terminado (modelo decidido por Pancho el 04/10/2026): el producto
+// terminado queda en la foto del conteo; lo despachado se asume producido y consume insumos. Por
+// etiqueta: receta (`recetas`, material por unidad) × frascos + packaging del combo (`combo_packaging`
+// del combo producto×cantidad; si no hay combo para esa cantidad, el del combo más grande). Cada
+// material va a `movimientos` como 'ajuste_insumo' negativo y se PATCHea `materiales.stock`. Producto
+// sin receta en la app (hoy Calma, Arraigo) sólo avisa. `productos.stock` ya NO se toca.
+//
+// Sin doble descuento: `.stock-etiquetas.json` (en la raíz) guarda cada etiqueta ya descontada por
+// courier + nº de pedido o venta (ML: Pack ID/Venta; COD: #pedido, "Remito:" en Fixy, o BLABS<n> /
+// BLABSA<n> en la plantilla API de Urbano). Un PDF regenerado, o el de Flex de la mañana que repite
+// etiquetas de la noche, sólo descuenta las nuevas. ponytail: la clave es el pedido y no la guía, así
+// que un redespacho del mismo pedido (BLABS<n>R1) no se descuenta solo; si pasa seguido, sumar la guía.
 // Es el puente hasta A07-R2-T3 (job stock-despachos por guía despachada): cuando exista, se saca el
 // descuento de acá, porque si no se descuenta dos veces.
 import fs from 'node:fs';
@@ -59,7 +67,9 @@ for (const f of archivos.filter((a) => a.toLowerCase().endsWith('.pdf'))) {
     // COD y Correo: #pedido. (El "#262382468" del remitente de ML tiene 9 dígitos y no entra.)
     const ml = txt.match(/(?:Pack ID|Venta)\s*:?[\s|]*((?:\d+[\s|]*){1,3})/)?.[1]?.replace(/\D/g, '').slice(0, 16);
     // Fixy no trae #pedido: el nº de orden va en "Remito: 27867".
-    const ref = (ml?.length === 16 ? ml : null) ?? txt.match(/#(\d{4,6})\b/)?.[1] ?? txt.match(/Remito:[\s|]*(\d{4,6})\b/)?.[1] ?? null;
+    const ref = (ml?.length === 16 ? ml : null) ?? txt.match(/#(\d{4,6})\b/)?.[1] ?? txt.match(/Remito:[\s|]*(\d{4,6})\b/)?.[1]
+      // Plantilla API de Urbano: sólo trae el código de cliente BLABS<n> (BLABSA<n> = anticipado).
+      ?? txt.match(/BLABSA?(\d{4,6})/)?.[1] ?? null;
     if (!code) avisos.push(`${path.basename(f)} pág ${i}: sin código estampado, no entra al detalle ni al stock`);
     paginas.push({ code, ref, pag: i });
   }
@@ -107,29 +117,55 @@ for (const { code } of nuevas) { const p = PRODUCTO[code[0]] ?? code[0]; aDescon
 const repetidas = nEtiq - avisos.filter((a) => a.includes('sin código')).length - nuevas.length;
 
 const hoy = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' });
+const K = process.env.STOCK_SERVICE_KEY;
 const lineasStock = [];
-if (!Object.keys(aDescontar).length) lineasStock.push(`Stock: nada nuevo para descontar (${repetidas} etiquetas ya descontadas antes).`);
-else if (DRY) lineasStock.push(`Stock (dry-run, no se descontó): ${Object.entries(aDescontar).map(([p, u]) => `${corto(p)} −${u}`).join(' · ')}${repetidas ? ` · ${repetidas} ya descontadas antes` : ''}`);
+if (!nuevas.length) lineasStock.push(`Stock: nada nuevo para descontar (${repetidas} etiquetas ya descontadas antes).`);
+else if (DRY && !K) lineasStock.push(`Stock (dry-run, sin STOCK_SERVICE_KEY no se calculan insumos): ${Object.entries(aDescontar).map(([p, u]) => `${corto(p)} −${u} frascos`).join(' · ')}`);
 else {
-  const URL_ = 'https://fxltytovnfpgnwefoovx.supabase.co/rest/v1';
-  const K = process.env.STOCK_SERVICE_KEY;
   if (!K) throw new Error('falta STOCK_SERVICE_KEY (correr con --env-file=.env.local)');
+  const URL_ = 'https://fxltytovnfpgnwefoovx.supabase.co/rest/v1';
   const h = { apikey: K, authorization: `Bearer ${K}`, 'content-type': 'application/json' };
-  const prods = await fetch(`${URL_}/productos?select=id,nombre,stock`, { headers: h }).then((r) => r.json());
-  const nota = `etiquetas ${hoy} · ${grupos.map((g) => g.courier).join(' + ')}`;
-  lineasStock.push(`Stock descontado (${nota})${repetidas ? ` · ${repetidas} etiquetas ya estaban descontadas` : ''}:`);
-  for (const [nombre, u] of Object.entries(aDescontar)) {
+  const get = async (q) => { const r = await fetch(`${URL_}/${q}`, { headers: h }); if (!r.ok) throw new Error(`${q}: ${r.status} ${await r.text()}`); return r.json(); };
+  const [prods, mats, recetas, combos, cpack] = await Promise.all([
+    get('productos?select=id,nombre'), get('materiales?select=id,nombre,unidad,stock'),
+    get('recetas?select=producto_id,material_id,cantidad'), get('combos?select=id,producto_id,cantidad_producto'),
+    get('combo_packaging?select=combo_id,material_id,cantidad'),
+  ]);
+  const consumo = new Map(); // material_id → cantidad
+  const suma = (m, c) => consumo.set(m, (consumo.get(m) ?? 0) + Number(c));
+  const sinReceta = {};
+  for (const { code } of nuevas) {
+    const nombre = PRODUCTO[code[0]] ?? code[0];
+    const q = frascos(code);
     const p = prods.find((x) => x.nombre === nombre);
-    if (!p) { lineasStock.push(`  ⚠️ ${nombre} −${u}: no está en la app Stock, no se descontó`); continue; }
-    const r1 = await fetch(`${URL_}/movimientos`, { method: 'POST', headers: h, body: JSON.stringify({ tipo: 'salida_producto', producto_id: p.id, cantidad: -u, nota, usuario_email: 'claude (Pancho)' }) });
-    if (!r1.ok) throw new Error(`movimiento ${nombre}: ${r1.status} ${await r1.text()}`);
-    const queda = Number(p.stock) - u;
-    const r2 = await fetch(`${URL_}/productos?id=eq.${p.id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ stock: queda, updated_at: new Date().toISOString() }) });
-    if (!r2.ok) throw new Error(`stock ${nombre}: ${r2.status} ${await r2.text()}`);
-    lineasStock.push(`  ${corto(nombre)}: ${p.stock} − ${u} = ${queda}${queda < 0 ? '  ⚠️ negativo: falta cargar producción' : ''}`);
+    const rec = p ? recetas.filter((r) => r.producto_id === p.id) : [];
+    if (!rec.length) { sinReceta[nombre] = (sinReceta[nombre] ?? 0) + q; continue; }
+    for (const r of rec) suma(r.material_id, r.cantidad * q);
+    // ponytail: pack sin combo propio (P4, P5…) usa el packaging del combo más grande del producto.
+    const delProd = combos.filter((c) => c.producto_id === p.id).sort((x, y) => y.cantidad_producto - x.cantidad_producto);
+    const combo = delProd.find((c) => c.cantidad_producto === q) ?? delProd[0];
+    for (const x of combo ? cpack.filter((x) => x.combo_id === combo.id) : []) suma(x.material_id, x.cantidad);
   }
-  for (const { clave, code } of nuevas) if (clave) ledger[clave] = { code, fecha: hoy };
-  fs.writeFileSync(LEDGER, JSON.stringify(ledger, null, 1));
+  const nota = `etiquetas ${hoy} · consumo por receta`;
+  lineasStock.push(`${DRY ? 'Insumos (dry-run, no se descontó)' : `Insumos descontados (${nota})`}${repetidas ? ` · ${repetidas} etiquetas ya estaban descontadas` : ''}:`);
+  const r4 = (x) => Math.round(x * 1e4) / 1e4;
+  for (const [mid, c] of [...consumo].sort((x, y) => String(mats.find((m) => m.id === x[0])?.nombre).localeCompare(String(mats.find((m) => m.id === y[0])?.nombre)))) {
+    const m = mats.find((x) => x.id === mid);
+    if (!m) { lineasStock.push(`  ⚠️ material ${mid} −${r4(c)}: no está en materiales, no se descontó`); continue; }
+    const queda = r4(Number(m.stock) - c);
+    if (!DRY) {
+      const r1 = await fetch(`${URL_}/movimientos`, { method: 'POST', headers: h, body: JSON.stringify({ tipo: 'ajuste_insumo', material_id: mid, cantidad: -r4(c), nota, usuario_email: 'claude (Pancho)' }) });
+      if (!r1.ok) throw new Error(`movimiento ${m.nombre}: ${r1.status} ${await r1.text()}`);
+      const r2 = await fetch(`${URL_}/materiales?id=eq.${mid}`, { method: 'PATCH', headers: h, body: JSON.stringify({ stock: queda, updated_at: new Date().toISOString() }) });
+      if (!r2.ok) throw new Error(`stock ${m.nombre}: ${r2.status} ${await r2.text()}`);
+    }
+    lineasStock.push(`  ${m.nombre}: ${m.stock} − ${r4(c)} = ${queda} ${m.unidad ?? ''}${queda < 0 ? '  ⚠️ negativo: falta cargar un ingreso' : ''}`);
+  }
+  for (const [p, u] of Object.entries(sinReceta)) lineasStock.push(`  ⚠️ ${corto(p)} ${u} frascos: sin receta en la app Stock, no descuenta insumos`);
+  if (!DRY) {
+    for (const { clave, code } of nuevas) if (clave) ledger[clave] = { code, fecha: hoy };
+    fs.writeFileSync(LEDGER, JSON.stringify(ledger, null, 1));
+  }
 }
 
 const cuerpo = [...lineas, '', ...lineasStock, ...(avisos.length ? ['', ...avisos.map((a) => `⚠️ ${a}`)] : []),

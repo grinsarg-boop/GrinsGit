@@ -100,6 +100,9 @@ export async function enTandas(items, { tam, paralelo, intentos }, fn) {
   return { resultados, fallidos, error };
 }
 
+// Estados de shipments que NO cuentan como guía vigente (la pieza ya no está en la calle).
+const NO_VIGENTE = new Set(["devuelto", "cancelado"]);
+
 // Acá se decide qué se propone y qué no, así que es una función y no diez líneas sueltas en el
 // cuerpo: --check la cubre con casos armados que una corrida real casi nunca alcanza (el arrastre
 // viejo, el pedido que está en Veltron y no en nuestra base, las unidades que no coinciden).
@@ -134,7 +137,13 @@ export function repartir(filas, { base = new Map(), vivas = new Map(), hoy, dias
       avisos.push(`#${f.order_number}: Veltron dice ${f.un} u. y la base ${f.un_base} — el bulto se puede armar mal, mirar antes`);
     }
 
-    const guia = b?.guias?.[0];
+    // Una guía devuelta (o cancelada) no es guía vigente: el pedido que vuelve a la cola de Veltron
+    // es un REENVÍO pago (#22726, #23172, #25062 — 04/10/2026) y necesita alta nueva. Con `guias[0]`
+    // a secas salían como "ya tiene guía" y nunca se despachaban.
+    const guia = b?.guias?.find((g) => !NO_VIGENTE.has(g.estado));
+    if (!guia && b?.guias?.length) {
+      avisos.push(`#${f.order_number}: reenvío — la guía anterior (${b.guias.map((g) => `${g.tracking} ${g.estado}`).join(", ")}) no está vigente; el alta nueva necesita otro código (Urbano: BLABS${f.order_number}R1, ver redespacho.mjs) y conviene confirmar que no se haya reenviado ya por fuera`);
+    }
     if (guia) { reparar.push({ ...f, guia: guia.tracking, guia_courier: guia.courier, despachada: guia.despachada, estado: guia.estado, via: "shipments" }); continue; }
     if (f.order_number && vivas.has(f.order_number)) { reparar.push({ ...f, guia: null, via: vivas.get(f.order_number) }); continue; }
     // Sin fecha se trata como arrastre: no saber de cuándo es un pedido no es razón para despacharlo.
@@ -234,6 +243,18 @@ if (process.argv.includes("--check")) {
   a.equal(conGuia.reparar[0].guia, "1764787");
   a.equal(conGuia.reparar[0].via, "shipments");
 
+  // Reenvío: la única guía está devuelta → entra al lote para alta nueva, con aviso.
+  const reenvio = repartir([ped()], { base: conBase({ guias: [{ tracking: "BLABS22726", courier: "urbano", despachada: "2026-09-03", estado: "devuelto" }] }), hoy });
+  a.equal(reenvio.lote.fixy.length, 1, "una guía devuelta no es guía vigente");
+  a.equal(reenvio.reparar.length, 0);
+  a.match(reenvio.avisos[0], /reenvío/);
+  // Devuelta + la nueva ya dada de alta: manda la vigente, no se duplica.
+  const yaReenviado = repartir([ped()], { base: conBase({ guias: [
+    { tracking: "BLABS22726", courier: "urbano", estado: "devuelto" },
+    { tracking: "BLABS22726R1", courier: "urbano", estado: "en_transito" }] }), hoy });
+  a.equal(yaReenviado.lote.fixy.length, 0);
+  a.equal(yaReenviado.reparar[0].guia, "BLABS22726R1");
+
   // La base todavía no la tiene pero el courier sí: misma decisión, sin número de guía.
   const viva = repartir([ped()], { base: conBase(), vivas: new Map([["100", "Fixy ya tiene el remito (guía 999)"]]), hoy });
   a.equal(viva.lote.fixy.length, 0);
@@ -292,7 +313,7 @@ if (process.argv.includes("--check")) {
   });
   a.deepEqual([t.resultados.sort(), t.fallidos, t.error, llamadas.get(5)], [[1, 2, 3, 4], [5], "timeout", 2]);
 
-  console.log("✓ despacho-nocturno: 38 casos OK");
+  console.log("✓ despacho-nocturno: 44 casos OK");
   process.exit(0);
 }
 
@@ -412,6 +433,9 @@ if (numeros.length) {
 //  era falso — la de arriba filtra por `p.guia`, no por orden, y un pedido sin orden con fecha
 //  fresca entraba al lote derecho.)
 const vivasEnCourier = new Map(); // order_number → texto de por qué está viva
+// ponytail: un pedido con guía (aunque esté devuelta) no se consulta: el courier devolvería la misma
+// pieza vieja (BLABS<n> / remito n) y bloquearía el reenvío. El hueco: un reenvío dado de alta por
+// fuera y todavía no sincronizado — lo cubre el aviso de reenvío de repartir().
 const pendientesDe = (k) => filas.filter((f) => f.carrier === k && f.order_number && !base.get(f.order_number)?.guias.length);
 
 // Las dos cuentas de Urbano: cada una con su clave y su prefijo (anticipado = `BLABSA<orden>`, visto

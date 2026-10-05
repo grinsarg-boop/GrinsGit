@@ -56,6 +56,23 @@ begin
             from shipments s join orders o on o.id = s.order_id where o.shopify_id = 9004),
     '013 backfill: crea la guía de un pedido tageado que estaba sin shipment';
 
+  -- 107: el tag de ruteo manda sobre classify_courier (sin guía todavía). San Juan/CP 1417 → CP dice urbano.
+  perform upsert_order(jsonb_build_object(
+    'id', 9005, 'name', '#9005', 'created_at', current_date - 1, 'financial_status', 'pending',
+    'tags', 'cod-form, Confirmado, fixy', 'total_price', '40000',
+    'shipping_address', '{"province":"San Juan","city":"argentina","zip":"1417","name":"Cli T"}'::jsonb,
+    'line_items', '[{"title":"Natures","quantity":1,"price":"40000"}]'::jsonb));
+  assert (select courier from orders where shopify_id = 9005) = 'fixy', '107: tag fixy manda sobre el CP';
+  assert exists (select 1 from v_fixy_sin_guia v join orders o on o.id = v.id where o.shopify_id = 9005),
+    '107: el pedido tag fixy entra al discover de Fixy';
+  -- cuotas_3 no: sigue la clasificación por CP (rama anticipado, 104)
+  perform upsert_order(jsonb_build_object(
+    'id', 9006, 'name', '#9006', 'created_at', current_date - 1, 'financial_status', 'pending',
+    'tags', 'andreani, cuotas_3, Fixy', 'total_price', '40000',
+    'shipping_address', '{"province":"San Juan","city":"San Juan","zip":"5400","name":"Cli Q"}'::jsonb,
+    'line_items', '[{"title":"Natures","quantity":1,"price":"40000"}]'::jsonb));
+  assert (select courier from orders where shopify_id = 9006) = 'urbano', '107: cuotas_3 ignora el tag de ruteo';
+
   raise notice '013 tag-dispatch: todos los checks OK';
 end $t$;
 
