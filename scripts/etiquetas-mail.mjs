@@ -29,7 +29,7 @@ const TO = process.env.MAIL_TO ?? 'andreud.francisco@gmail.com';
 
 // Letra del código → producto de la app Stock. Misma regla que letraProducto (lib/correo.ts):
 // inicial del producto, salvo Arraigo = S.
-const PRODUCTO = { P: 'Gotero Pureza', B: 'Bee Venom', R: 'Revival Oil', M: 'M3', V: 'Veinguard', A: 'Altus', N: 'Gotero Natures', S: 'Arraigo' };
+const PRODUCTO = { P: 'Gotero Pureza', B: 'Bee Venom', R: 'Revival Oil', M: 'M3', V: 'Veinguard', A: 'Altus', N: 'Gotero Natures', S: 'Arraigo', C: 'Calma' };
 const nombreCorto = { 'Gotero Pureza': 'Pureza', 'Bee Venom': 'BeeVenom', 'Gotero Natures': 'Natures' };
 const corto = (p) => nombreCorto[p] ?? p;
 

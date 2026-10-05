@@ -19,8 +19,12 @@ const PRODUCT_KEYWORDS: [string, string][] = [
   // La keyword es la MARCA, no "romero": matchAllProducts corre sobre el texto entero de la
   // etiqueta de ML, que incluye el nombre del destinatario, y Romero es un apellido común — un
   // cliente apellidado así quedaría marcado como venta mixta.
-  // ⚠️ TODAVÍA NO está en la versión SQL ni en products: el P&L no lo atribuye (product_id NULL).
   ["arraigo", "Arraigo"],
+  // Calma (CALMA™ Serum Facial): COD desde octubre 2026; el 04/10 sus pedidos salieron sin código
+  // de depósito. Fin de palabra (\b) porque "calmante" es común en títulos de cosmética y
+  // matchAllProducts marcaría venta mixta. Las keywords son regex (las de solo letras = includes).
+  // En SQL: 106_producto_calma.sql ('calma\M').
+  ["calma\\b", "Calma"],
 ];
 
 // Nombres canónicos, para el test que chequea que no colisionen las letras del código de depósito.
@@ -28,14 +32,14 @@ export const PRODUCTOS = [...new Set(PRODUCT_KEYWORDS.map(([, name]) => name))];
 
 export function matchProduct(text: string): string | null {
   const t = text.toLowerCase();
-  for (const [kw, name] of PRODUCT_KEYWORDS) if (t.includes(kw)) return name;
+  for (const [kw, name] of PRODUCT_KEYWORDS) if (new RegExp(kw).test(t)) return name;
   return null;
 }
 
 // Todos los productos distintos presentes en el texto (para detectar etiquetas mixtas de ML).
 export function matchAllProducts(text: string): string[] {
   const t = text.toLowerCase();
-  return [...new Set(PRODUCT_KEYWORDS.filter(([kw]) => t.includes(kw)).map(([, name]) => name))];
+  return [...new Set(PRODUCT_KEYWORDS.filter(([kw]) => new RegExp(kw).test(t)).map(([, name]) => name))];
 }
 
 // Unidades físicas de un line item de Shopify. El checkout vende 1 línea por frasco (quantity = unidades;

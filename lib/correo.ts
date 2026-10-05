@@ -192,6 +192,7 @@ const UNIDADES_POR_PRECIO: Record<string, Record<number, number>> = {
   Altus: { 49000: 2, 59000: 3 },
   M3: { 67500: 3 },
   Arraigo: { 44900: 1, 49900: 1, 69900: 2, 89900: 3 },
+  Calma: { 49990: 1, 69990: 2, 89990: 3 }, // 5 pedidos al 04/10/2026, todos coinciden con quantity
 };
 
 export function unidadesGuiadas(producto: string | null, unidades: number, total?: number): number {

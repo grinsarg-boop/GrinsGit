@@ -24,6 +24,11 @@ describe("matchProduct", () => {
     expect(matchAllProducts("Venta ID 20000 111 1 Unidad Gotero Pureza Drenaje Destinatario: Juan Romero")).toEqual(["Pureza"]);
   });
 
+  it("Calma se matchea por la marca, y 'calmante' NO es Calma", () => {
+    expect(matchProduct("CALMA™ | Serum Facial que Empareja el tono y suaviza las marcas (3 Unidades)")).toBe("Calma");
+    expect(matchAllProducts("Bee Venom crema calmante")).toEqual(["BeeVenom"]);
+  });
+
   // El código del depósito es <letra><unidades> y lo lee una persona: dos productos con la misma
   // letra es un pedido armado mal. Arraigo ya chocaba con Altus (los dos empiezan con A).
   it("ningún producto comparte la letra del código de depósito", () => {
