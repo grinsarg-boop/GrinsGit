@@ -20,9 +20,10 @@ async function correo(tn) {
 async function urbano(guia) {
   const r = await fetch(`https://www.urbano.com.ar/webservice/cespecifica/?shi_codigo=4565&cli_codigo=${guia}`,
     { headers: { "User-Agent": "Mozilla/5.0" } });
-  // "... ENTREGA IF - 06-10-2026 ..." → código + fecha (PI = Urbano todavía no la admitió)
-  const m = texto(await r.text()).match(/PAQUETERIA \S+ (\w{2}) - (\d{2}-\d{2}-\d{4})/);
-  return m ? `${m[2]} ${m[1]}` : null;
+  // "PAQUETERIA ENTREGA IF - 06-10-2026" o "PAQUETERIA ENTREGA 06-10-2026 CO - Contenerizado 06-10-2026"
+  // → fecha + código (+ descripción si viene). PI = Urbano todavía no la admitió.
+  const m = texto(await r.text()).match(/PAQUETERIA .*?\b([A-Z]{2}) - ([^0-9]*?) ?(\d{2}-\d{2}-\d{4})/);
+  return m ? `${m[3]} ${m[1]}${m[2] ? ` ${m[2].trim()}` : ""}` : null;
 }
 
 const items = JSON.parse(fs.readFileSync(FILE, "utf8"));
