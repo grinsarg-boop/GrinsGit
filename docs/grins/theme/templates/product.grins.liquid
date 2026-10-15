@@ -1,0 +1,355 @@
+{% layout none %}
+{% comment %}
+  Landing Grins — template de producto autocontenido (no usa el layout de Horizon).
+  Se asigna al producto con template_suffix = "grins" → /products/grins
+  PEDIDO_URL: endpoint del "micro Veltron" (app/api/pedido del fork). Vacío = fallback
+  al checkout de Shopify con la dirección precargada (requiere pago manual "Contra entrega").
+{% endcomment %}
+{%- assign PEDIDO_URL = "" -%}
+{%- assign WHATSAPP = "" -%}
+{%- assign hero = product.images[0] -%}
+{%- assign lifestyle = product.images[1] | default: product.images[0] -%}
+{%- assign bundle = product.images[2] | default: product.images[0] -%}
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grins — Vitaminas + fibra en una gomita</title>
+<meta name="description" content="Grins junta vitaminas y fibra en una gomita por día. Envío gratis a todo el país, pagás al recibir.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+{{ content_for_header }}
+<style>
+:root{--bg:#070807;--bg2:#0f110f;--card:#141714;--line:#242824;--txt:#f4f6f3;--mut:#9aa39b;--g:#39e675;--g2:#1fb85a;--gd:#0c2a17;--r:18px}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--txt);font:16px/1.55 "Space Grotesk",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+img{max-width:100%;height:auto;display:block}
+a{color:inherit;text-decoration:none}
+.wrap{width:min(1120px,100% - 32px);margin-inline:auto}
+h1,h2,h3{line-height:1.08;letter-spacing:-.02em;font-weight:700}
+h1{font-size:clamp(38px,6.5vw,72px)}
+h2{font-size:clamp(28px,4.5vw,46px)}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;color:var(--g);font-weight:500;font-size:13px;letter-spacing:.12em;text-transform:uppercase}
+.eyebrow::before{content:"";width:22px;height:2px;background:var(--g)}
+.mut{color:var(--mut)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;background:var(--g);color:#06140b;font-weight:700;font-size:17px;padding:16px 28px;border-radius:999px;border:0;cursor:pointer;transition:transform .15s,box-shadow .15s,background .15s;box-shadow:0 0 0 0 rgba(57,230,117,.5)}
+.btn:hover{transform:translateY(-2px);box-shadow:0 10px 40px -10px rgba(57,230,117,.6)}
+.btn:active{transform:translateY(0)}
+.btn.sec{background:transparent;color:var(--txt);border:1px solid var(--line)}
+.rev{opacity:0;transform:translateY(22px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+.rev.in{opacity:1;transform:none}
+.rev.d1{transition-delay:.1s}.rev.d2{transition-delay:.2s}.rev.d3{transition-delay:.3s}
+/* top */
+.top{position:sticky;top:0;z-index:30;background:rgba(7,8,7,.75);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;justify-content:space-between;height:60px}
+.logo{font-weight:700;font-size:22px;letter-spacing:.04em}.logo b{color:var(--g)}
+.top .btn{padding:10px 18px;font-size:14px}
+.top .mut{font-size:13px}
+@media(max-width:700px){.top .mut{display:none}}
+/* hero */
+.hero{position:relative;padding:72px 0 40px;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:auto -20% -40% -20%;height:70%;background:radial-gradient(60% 60% at 50% 100%,rgba(57,230,117,.22),transparent 70%);pointer-events:none}
+.hero .wrap{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center}
+.hero p.lead{font-size:clamp(17px,2vw,20px);color:var(--mut);max-width:520px;margin:20px 0 28px}
+.hero ul{display:flex;flex-wrap:wrap;gap:10px 18px;margin:0 0 30px;list-style:none}
+.hero li{display:flex;align-items:center;gap:8px;font-size:15px}
+.hero li::before{content:"";width:18px;height:18px;border-radius:50%;background:var(--gd);border:1px solid var(--g2);flex:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2339e675' stroke-width='3'%3E%3Cpath d='M5 13l4 4L19 7'/%3E%3C/svg%3E");background-size:11px;background-position:center;background-repeat:no-repeat}
+.cta-row{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.price-from{font-size:14px;color:var(--mut)}.price-from b{color:var(--txt);font-size:20px;display:block}
+.hero-img{position:relative}
+.hero-img img{border-radius:28px;animation:float 6s ease-in-out infinite}
+.hero-img .tag{position:absolute;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 14px;font-size:13px;font-weight:500;box-shadow:0 20px 50px -20px #000;animation:float 7s ease-in-out infinite}
+.hero-img .t1{top:8%;left:-6%;animation-delay:-2s}.hero-img .t2{bottom:14%;right:-4%;animation-delay:-4s}
+.hero-img .tag b{color:var(--g);display:block;font-size:16px}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+@media(max-width:860px){.hero{padding-top:36px}.hero .wrap{grid-template-columns:1fr}.hero-img{order:-1;max-width:420px;margin-inline:auto}.hero-img .t1{left:0}.hero-img .t2{right:0}}
+/* marquee */
+.marq{border-block:1px solid var(--line);background:var(--bg2);overflow:hidden;padding:14px 0;white-space:nowrap}
+.marq div{display:inline-block;animation:marq 28s linear infinite}
+.marq span{display:inline-block;padding:0 28px;font-size:14px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut)}
+.marq span::after{content:"✦";color:var(--g);margin-left:28px}
+@keyframes marq{to{transform:translateX(-50%)}}
+/* sections */
+section{padding:88px 0}
+.head{max-width:640px;margin-bottom:44px}
+.head p{color:var(--mut);margin-top:14px;font-size:17px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+@media(max-width:900px){.grid4{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:640px){.grid3,.grid4{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:26px;transition:border-color .2s,transform .2s}
+.card:hover{border-color:var(--g2);transform:translateY(-3px)}
+.card .ic{width:46px;height:46px;border-radius:12px;background:var(--gd);display:grid;place-items:center;margin-bottom:18px;color:var(--g)}
+.card h3{font-size:20px;margin-bottom:8px}
+.card p{color:var(--mut);font-size:15px}
+.steps .card{position:relative;padding-top:34px}
+.steps .n{position:absolute;top:-16px;left:24px;width:34px;height:34px;border-radius:50%;background:var(--g);color:#06140b;display:grid;place-items:center;font-weight:700}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center}
+.split img{border-radius:28px}
+@media(max-width:860px){.split{grid-template-columns:1fr}}
+/* gifts */
+.gifts{background:var(--bg2);border-block:1px solid var(--line)}
+.gift{position:relative;text-align:center;padding:22px 18px 26px}
+.gift .img{aspect-ratio:1;border-radius:14px;background:#0b0d0b;display:grid;place-items:center;margin-bottom:16px;overflow:hidden;position:relative}
+.gift .img svg{width:42%;height:42%;color:var(--g)}
+.gift .val{position:absolute;top:-14px;left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px 12px;font-size:14px;color:var(--mut);text-decoration:line-through}
+.gift h3{font-size:19px}
+.gift .st{margin-top:8px;font-size:15px;color:var(--mut)}
+.gift.locked .img{filter:grayscale(1) brightness(.5)}
+.gift.locked .lock{position:absolute;inset:0;display:grid;place-items:center}
+.gift.locked .lock svg{width:44px;height:44px;color:#777;filter:none}
+.gift.on{border-color:var(--g)}
+.gift.on .st{color:var(--g);font-weight:700}
+.gift.on .lock{display:none}
+.gift.on .img{filter:none;animation:pop .5s}
+@keyframes pop{0%{transform:scale(.96)}60%{transform:scale(1.03)}100%{transform:scale(1)}}
+/* buy */
+.buy .wrap{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:start}
+@media(max-width:860px){.buy .wrap{grid-template-columns:1fr}}
+.packs{display:grid;gap:12px;margin-top:24px}
+.pack{display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center;background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:18px 20px;cursor:pointer;transition:border-color .2s,background .2s;position:relative}
+.pack input{appearance:none;width:22px;height:22px;border:2px solid var(--line);border-radius:50%;display:grid;place-items:center;transition:.2s;margin:0}
+.pack input::after{content:"";width:10px;height:10px;border-radius:50%;background:var(--g);transform:scale(0);transition:.2s}
+.pack input:checked::after{transform:scale(1)}
+.pack:has(input:checked){border-color:var(--g);background:#101810}
+.pack .ti{font-weight:700;font-size:18px}.pack .su{font-size:14px;color:var(--mut)}
+.pack .pr{text-align:right}.pack .pr b{font-size:20px;display:block}.pack .pr s{color:var(--mut);font-size:13px}
+.pack .badge{position:absolute;top:-11px;right:16px;background:var(--g);color:#06140b;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;border-radius:999px}
+.pack .badge.alt{background:#fff}
+.form{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:28px}
+.form h3{font-size:22px;margin-bottom:6px}
+.form .mut{font-size:14px;margin-bottom:22px}
+.f2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:480px){.f2{grid-template-columns:1fr}}
+.field{margin-bottom:12px}
+label{display:block;font-size:13px;color:var(--mut);margin-bottom:6px}
+input,select,textarea{width:100%;background:#0b0d0b;border:1.5px solid var(--line);border-radius:12px;color:var(--txt);padding:13px 14px;font:inherit;font-size:16px;transition:border-color .2s}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--g)}
+.hp{position:absolute;left:-9999px}
+.total{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:18px;margin:8px 0 16px}
+.total b{font-size:24px}
+.form .btn{width:100%;font-size:18px;padding:18px}
+.trust{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-top:14px;font-size:13px;color:var(--mut)}
+.ok{display:none;text-align:center;padding:30px 10px}
+.ok .big{width:72px;height:72px;border-radius:50%;background:var(--gd);border:1px solid var(--g2);display:grid;place-items:center;margin:0 auto 18px;color:var(--g)}
+.err{display:none;background:#2a1212;border:1px solid #6b2a2a;color:#ffb4b4;border-radius:12px;padding:12px 14px;font-size:14px;margin-bottom:12px}
+/* faq */
+details{border-bottom:1px solid var(--line);padding:18px 0}
+summary{cursor:pointer;font-weight:500;font-size:18px;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:16px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";color:var(--g);font-size:26px;transition:transform .2s}
+details[open] summary::after{transform:rotate(45deg)}
+details p{color:var(--mut);margin-top:10px;max-width:720px}
+/* footer */
+footer{border-top:1px solid var(--line);padding:40px 0 110px;font-size:13px;color:var(--mut)}
+footer .wrap{display:grid;gap:10px}
+/* sticky */
+.sticky{position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(7,8,7,.9);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;transform:translateY(110%);transition:transform .3s}
+.sticky.show{transform:none}
+.sticky .btn{padding:12px 20px;font-size:15px}
+@media(min-width:861px){.sticky{display:none}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.rev{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap">
+  <a class="logo" href="#">GRINS<b>.</b></a>
+  <span class="mut">Envío gratis a todo el país · Pagás al recibir</span>
+  <a class="btn" href="#comprar">Pedir ahora</a>
+</div></header>
+
+<section class="hero"><div class="wrap">
+  <div>
+    <span class="eyebrow rev">Vitaminas + fibra en gomitas</span>
+    <h1 class="rev d1" style="margin-top:18px">La fibra y las vitaminas que te faltan,<br>en una gomita.</h1>
+    <p class="lead rev d2">Grins junta vitaminas y fibra en una gomita por día. Sin cápsulas, sin agua, sin ritual: la masticás y seguís.</p>
+    <ul class="rev d2">
+      <li>Vitaminas</li><li>Fibra</li><li>30 gomitas por doypack</li><li>Una por día</li>
+    </ul>
+    <div class="cta-row rev d3">
+      <a class="btn" href="#comprar">Quiero el mío</a>
+      <span class="price-from">Desde <b>{{ product.price_min | money_without_trailing_zeros }}</b></span>
+    </div>
+  </div>
+  <div class="hero-img rev d1">
+    {% if hero %}<img src="{{ hero | image_url: width: 1000 }}" alt="Doypack Grins" width="1000" height="1250" fetchpriority="high">{% endif %}
+    <div class="tag t1"><b>1 por día</b>sin agua, sin vaso</div>
+    <div class="tag t2"><b>Pagás al recibir</b>sin tarjeta, sin adelantos</div>
+  </div>
+</div></section>
+
+<div class="marq"><div>
+  {% for i in (1..2) %}<span>Vitaminas</span><span>Fibra</span><span>Envío gratis</span><span>Pagás al recibir</span><span>30 gomitas</span><span>Una por día</span>{% endfor %}
+</div></div>
+
+<section><div class="wrap">
+  <div class="head rev"><span class="eyebrow">Por qué Grins</span><h2 style="margin-top:14px">Simple de sostener. Eso es lo que lo hace funcionar.</h2><p>Los hábitos que duran son los que no cuestan. Grins está pensado para que lo tomes todos los días sin pensarlo.</p></div>
+  <div class="grid4">
+    <div class="card rev"><div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="9"/></svg></div><h3>Vitaminas</h3><p>Un aporte diario de vitaminas en una sola toma, sin contar pastillas.</p></div>
+    <div class="card rev d1"><div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20c4-8 8-12 16-16M4 12c3-3 6-4 10-4"/></svg></div><h3>Fibra</h3><p>Fibra que suma a lo que comés en el día, en un formato fácil de tomar.</p></div>
+    <div class="card rev d2"><div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><h3>Sin agua, sin vaso</h3><p>Una gomita que masticás donde estés. No hay preparación ni horario.</p></div>
+    <div class="card rev d3"><div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div><h3>30 gomitas</h3><p>Un doypack es un mes. Tres doypacks, una temporada entera resuelta.</p></div>
+  </div>
+</div></section>
+
+<section class="steps" style="padding-top:0"><div class="wrap">
+  <div class="head rev"><span class="eyebrow">Cómo se usa</span><h2 style="margin-top:14px">Tres pasos, ningún esfuerzo.</h2></div>
+  <div class="grid3">
+    <div class="card rev"><span class="n">1</span><h3>Abrís el doypack</h3><p>Cierre zip: se guarda en cualquier lado y dura el mes.</p></div>
+    <div class="card rev d1"><span class="n">2</span><h3>Una gomita</h3><p>Una por día alcanza. A la mañana, con el café, o cuando te acuerdes.</p></div>
+    <div class="card rev d2"><span class="n">3</span><h3>Masticás y seguís</h3><p>Sin agua ni preparación. Eso es todo el ritual.</p></div>
+  </div>
+</div></section>
+
+<section style="padding-top:0"><div class="wrap split">
+  <img class="rev" src="{{ lifestyle | image_url: width: 900 }}" alt="Gomitas Grins" width="900" height="900" loading="lazy">
+  <div>
+    <span class="eyebrow rev">El hábito</span>
+    <h2 class="rev d1" style="margin:14px 0 18px">Una gomita a la mañana, y el resto del día corre solo.</h2>
+    <p class="mut rev d2" style="font-size:17px">No hace falta cambiar toda tu alimentación de golpe. Hace falta un gesto chico que se repita. Grins es ese gesto: una gomita, todos los días, sin excusas.</p>
+    <p class="rev d3" style="margin-top:22px"><a class="btn sec" href="#comprar">Ver packs y precios</a></p>
+  </div>
+</div></section>
+
+<section class="gifts"><div class="wrap">
+  <div class="head rev" style="text-align:center;margin-inline:auto"><span class="eyebrow">Regalos</span><h2 style="margin-top:14px">Regalos gratis mientras más te llevés</h2><p>Elegí tu pack abajo y mirá cómo se desbloquean.</p></div>
+  <div class="grid3" id="gifts">
+    <div class="card gift rev" data-min="1">
+      <span class="val">$8.000</span>
+      <div class="img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="1.6"/><circle cx="17" cy="18" r="1.6"/></svg><div class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg></div></div>
+      <h3>Envío gratis</h3><div class="st"></div>
+    </div>
+    <div class="card gift rev d1" data-min="2">
+      <span class="val">$5.500</span>
+      <div class="img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 4h9l5 5v11H5z"/><path d="M14 4v5h5M8 13h8M8 17h8"/></svg><div class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg></div></div>
+      <h3>E-book: Hábitos que duran</h3><div class="st"></div>
+    </div>
+    <div class="card gift rev d2" data-min="3">
+      <span class="val">$4.990</span>
+      <div class="img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="7" width="18" height="12" rx="3"/><path d="M3 11h18M8 7V5h8v2"/></svg><div class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg></div></div>
+      <h3>Porta-gomitas Grins</h3><div class="st"></div>
+    </div>
+  </div>
+</div></section>
+
+<section class="buy" id="comprar"><div class="wrap">
+  <div>
+    <span class="eyebrow rev">Elegí tu pack</span>
+    <h2 class="rev d1" style="margin-top:14px">Comprá más, ahorrá más.</h2>
+    <div class="packs rev d2" id="packs">
+      {%- for v in product.variants -%}
+      {%- assign n = forloop.index -%}
+      {%- assign unit = v.price | divided_by: n -%}
+      <label class="pack">
+        <input type="radio" name="pack" value="{{ v.id }}" data-n="{{ n }}" data-price="{{ v.price }}" data-title="{{ v.title }}" {% if n == 2 %}checked{% endif %}>
+        <span><span class="ti">{{ v.title | capitalize }} <span class="mut" style="font-weight:400;font-size:14px">· {{ n | times: 30 }} días</span></span><br><span class="su">{{ unit | money_without_trailing_zeros }} por doypack{% if n == 1 %} · envío gratis{% elsif n == 2 %} · + e-book{% else %} · + e-book + porta-gomitas{% endif %}</span></span>
+        <span class="pr"><b>{{ v.price | money_without_trailing_zeros }}</b>{% if v.compare_at_price > v.price %}<s>{{ v.compare_at_price | money_without_trailing_zeros }}</s>{% endif %}</span>
+        {% if n == 2 %}<span class="badge">Más elegido</span>{% elsif n == 3 %}<span class="badge alt">Mejor precio</span>{% endif %}
+      </label>
+      {%- endfor -%}
+    </div>
+    <img class="rev d3" src="{{ bundle | image_url: width: 900 }}" alt="Packs Grins" width="900" height="900" loading="lazy" style="border-radius:22px;margin-top:22px">
+  </div>
+
+  <form class="form rev d1" id="form" novalidate>
+    <h3>Completá tus datos</h3>
+    <p class="mut">Pagás en efectivo al recibir. Sin tarjeta, sin adelantos.</p>
+    <div class="err" id="err"></div>
+    <input class="hp" type="text" name="web" tabindex="-1" autocomplete="off">
+    <div class="field"><label>Nombre y apellido</label><input name="nombre" required autocomplete="name"></div>
+    <div class="f2">
+      <div class="field"><label>WhatsApp</label><input name="telefono" type="tel" required inputmode="tel" placeholder="11 2345 6789" autocomplete="tel"></div>
+      <div class="field"><label>DNI</label><input name="dni" required inputmode="numeric"></div>
+    </div>
+    <div class="field"><label>Calle y número (piso/depto si aplica)</label><input name="calle" required autocomplete="street-address"></div>
+    <div class="f2">
+      <div class="field"><label>Localidad</label><input name="localidad" required autocomplete="address-level2"></div>
+      <div class="field"><label>Código postal</label><input name="cp" required inputmode="numeric" autocomplete="postal-code"></div>
+    </div>
+    <div class="field"><label>Provincia</label><select name="provincia" required>
+      <option value="">Elegí tu provincia</option>
+      {%- assign provs = "Buenos Aires,CABA,Catamarca,Chaco,Chubut,Córdoba,Corrientes,Entre Ríos,Formosa,Jujuy,La Pampa,La Rioja,Mendoza,Misiones,Neuquén,Río Negro,Salta,San Juan,San Luis,Santa Cruz,Santa Fe,Santiago del Estero,Tierra del Fuego,Tucumán" | split: "," -%}
+      {%- for p in provs %}<option>{{ p }}</option>{% endfor -%}
+    </select></div>
+    <div class="field"><label>Aclaraciones para el repartidor (opcional)</label><input name="nota" placeholder="Timbre, horario, referencia"></div>
+    <div class="total"><span class="mut">Total a pagar al recibir<br><span id="ahorro" style="color:var(--g);font-size:13px"></span></span><b id="total"></b></div>
+    <button class="btn" type="submit" id="submit">Pedir contra entrega</button>
+    <div class="trust"><span>✓ Envío gratis</span><span>✓ Sin tarjeta</span><span>✓ Entrega en 2 a 5 días hábiles</span></div>
+    <div class="ok" id="ok">
+      <div class="big"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg></div>
+      <h3>¡Listo! Tu pedido entró.</h3>
+      <p class="mut" style="margin-top:8px">Número <b id="oknum"></b>. Te escribimos por WhatsApp para confirmar la entrega.</p>
+    </div>
+  </form>
+</div></section>
+
+<section style="padding-top:0"><div class="wrap">
+  <div class="head rev"><span class="eyebrow">Preguntas</span><h2 style="margin-top:14px">Lo que nos preguntan antes de pedir</h2></div>
+  <div class="rev d1">
+    <details><summary>¿Cómo pago?</summary><p>En efectivo cuando recibís el paquete. No pedimos tarjeta ni adelantos.</p></details>
+    <details><summary>¿Cuánto tarda en llegar?</summary><p>Entre 2 y 5 días hábiles según la zona. Te avisamos por WhatsApp el día de entrega.</p></details>
+    <details><summary>¿Qué es Grins?</summary><p>Un suplemento dietario en gomitas con vitaminas y fibra. Se toma una por día, sin agua.</p></details>
+    <details><summary>¿Reemplaza una comida o las verduras?</summary><p>No. Grins complementa una alimentación variada, no la reemplaza.</p></details>
+    <details><summary>¿Qué gusto tienen?</summary><p>Sabor frutal suave, sin dejar gusto raro. Se mastican como una gomita común.</p></details>
+    <details><summary>¿Cuánto dura un doypack?</summary><p>30 gomitas, o sea un mes tomando una por día.</p></details>
+    <details><summary>¿Puedo cancelar el pedido?</summary><p>Sí. Escribinos por WhatsApp antes de que salga y lo cancelamos sin cargo.</p></details>
+    <details><summary>¿Lo puede tomar cualquiera?</summary><p>Es para adultos. Si estás embarazada, amamantando o tomás medicación, consultá antes con tu médico.</p></details>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  <span class="logo">GRINS<b>.</b></span>
+  <span>Suplemento dietario. Consulte a su médico y/o farmacéutico. No utilizar en caso de embarazo, lactancia ni en niños, salvo indicación médica. Mantener fuera del alcance de los niños. No reemplaza una alimentación variada y equilibrada.</span>
+  <span>© {{ 'now' | date: "%Y" }} Grins · Argentina{% if WHATSAPP != "" %} · <a href="https://wa.me/{{ WHATSAPP }}">WhatsApp</a>{% endif %}</span>
+</div></footer>
+
+<div class="sticky" id="sticky"><div><span class="mut" style="font-size:12px">Pagás al recibir</span><br><b id="stickyPrice"></b></div><a class="btn" href="#comprar">Pedir ahora</a></div>
+
+<script>
+(()=>{
+const PEDIDO_URL={{ PEDIDO_URL | json }};
+const $=s=>document.querySelector(s);
+const fmt=n=>"$"+Math.round(n/100).toLocaleString("es-AR");
+// reveal
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add("in");io.unobserve(e.target)}}),{threshold:.12});
+document.querySelectorAll(".rev").forEach(el=>io.observe(el));
+// red de seguridad: si el observer no dispara (viewports emulados, webviews viejos), revelar lo que está en pantalla
+const revFallback=()=>document.querySelectorAll(".rev:not(.in)").forEach(el=>{if(el.getBoundingClientRect().top<innerHeight*0.95)el.classList.add("in")});
+setTimeout(revFallback,400);addEventListener("scroll",revFallback,{passive:true});
+// pack → regalos + total
+const packs=$("#packs"),gifts=[...document.querySelectorAll(".gift")];
+function sel(){const i=packs.querySelector("input:checked");const n=+i.dataset.n,price=+i.dataset.price;
+  gifts.forEach(g=>{const m=+g.dataset.min,on=n>=m;g.classList.toggle("on",on);g.classList.toggle("locked",!on);g.querySelector(".st").textContent=on?"Desbloqueado":"Se desbloquea con "+m});
+  $("#total").textContent=fmt(price);const base=+packs.querySelector("input[data-n=\"1\"]").dataset.price*n;$("#ahorro").textContent=base>price?"Estás ahorrando "+fmt(base-price):"";$("#stickyPrice").textContent=fmt(price)+" · "+i.dataset.title;return i}
+packs.addEventListener("change",sel);sel();
+// sticky
+const buy=$("#comprar");new IntersectionObserver(e=>$("#sticky").classList.toggle("show",!e[0].isIntersecting&&window.scrollY>400)).observe(buy);
+// submit
+const f=$("#form");f.addEventListener("submit",async ev=>{ev.preventDefault();
+  const err=$("#err");err.style.display="none";
+  if(!f.checkValidity()){f.reportValidity();return}
+  const d=Object.fromEntries(new FormData(f));if(d.web){return}
+  const v=sel();d.variant_id=v.value;d.pack=v.dataset.title;d.source="landing-grins";
+  if(!PEDIDO_URL){ // fallback: checkout de Shopify con la dirección precargada
+    const [nombre,...ap]=d.nombre.trim().split(" ");const q=new URLSearchParams({
+      "checkout[shipping_address][first_name]":nombre,"checkout[shipping_address][last_name]":ap.join(" ")||"-",
+      "checkout[shipping_address][address1]":d.calle,"checkout[shipping_address][city]":d.localidad,
+      "checkout[shipping_address][province]":d.provincia,"checkout[shipping_address][zip]":d.cp,
+      "checkout[shipping_address][country]":"Argentina","checkout[shipping_address][phone]":d.telefono,
+      "note":"DNI "+d.dni+(d.nota?" · "+d.nota:"")});
+    location.href="/cart/"+d.variant_id+":1?"+q;return}
+  const b=$("#submit");b.disabled=true;b.textContent="Enviando…";
+  try{const r=await fetch(PEDIDO_URL,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(d)});
+    const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||"No pudimos tomar el pedido");
+    f.querySelectorAll(".field,.f2,.total,#submit,.trust,h3,.mut").forEach(e=>e.style.display="none");
+    $("#oknum").textContent="#"+j.order_number;$("#ok").style.display="block";
+    window.fbq&&fbq("track","Purchase",{value:+v.dataset.price/100,currency:"ARS"});
+  }catch(e){err.textContent=e.message+". Probá de nuevo o escribinos por WhatsApp.";err.style.display="block";b.disabled=false;b.textContent="Pedir contra entrega"}
+});
+})();
+</script>
+</body>
+</html>
