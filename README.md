@@ -1,5 +1,13 @@
 # BioLabs Finanzas COD
 
+## Grins (fork)
+
+Este fork corre el mismo panel para **Grins** (suplemento, COD Argentina, tienda
+`br0uny-9s.myshopify.com`). Cuentas propias de GitHub, Supabase y Vercel. Todo el setup —
+cuentas, migraciones, env vars obligatorias vs. de BioLabs, crons y webhooks — está en
+[`docs/grins/infra-setup.md`](docs/grins/infra-setup.md); los webhooks de Shopify se registran
+con `node --env-file=.env.local scripts/grins/registrar-webhooks.mjs https://<dominio>`.
+
 P&L por día de despacho para venta contra reembolso (Shopify + Urbano + Fixy + Meta).
 Spec completa en [SPEC.md](SPEC.md). Stack: Next.js App Router + Supabase; **todas las
 fórmulas viven en SQL** (`supabase/migrations/002_rpcs.sql`).
