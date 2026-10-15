@@ -65,7 +65,7 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         order: {
           line_items: [{ variant_id: Number(d.variant_id), quantity: 1 }],
-          customer: { first_name, last_name, phone: tel },
+          // sin bloque customer: Shopify exige teléfono único por cliente y los recompradores lo repiten
           shipping_address: address,
           billing_address: address,
           phone: tel,
