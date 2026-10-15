@@ -15,6 +15,14 @@ export function OPTIONS() {
   return new Response(null, { status: 204, headers: cors });
 }
 
+// Diagnóstico sin secretos: qué env vars están cargadas en este deploy.
+export function GET() {
+  const vars = ["SHOPIFY_SHOP_DOMAIN", "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET", "SHOPIFY_WEBHOOK_SECRET",
+    "PEDIDO_ORIGIN", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY",
+    "DATABASE_URL", "ALLOWED_EMAILS", "CRON_SECRET"];
+  return Response.json(Object.fromEntries(vars.map((v) => [v, !!process.env[v]])), { headers: cors });
+}
+
 const REQ = ["variant_id", "nombre", "telefono", "dni", "calle", "localidad", "provincia", "cp"] as const;
 
 export async function POST(req: Request) {
@@ -42,11 +50,18 @@ export async function POST(req: Request) {
     zip: d.cp.trim(), country: "Argentina", country_code: "AR",
   };
 
+  let token: string;
+  try {
+    token = await getShopifyToken();
+  } catch (e) {
+    console.error("pedido: token", (e as Error).message);
+    return Response.json({ ok: false, error: "Shopify no configurado" }, { status: 502, headers: cors });
+  }
   const res = await fetch(
     `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/orders.json`,
     {
       method: "POST",
-      headers: { "X-Shopify-Access-Token": await getShopifyToken(), "content-type": "application/json" },
+      headers: { "X-Shopify-Access-Token": token, "content-type": "application/json" },
       body: JSON.stringify({
         order: {
           line_items: [{ variant_id: Number(d.variant_id), quantity: 1 }],
